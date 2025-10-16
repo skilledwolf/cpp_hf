@@ -32,7 +32,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install fftw cmake ninja pkg-config libomp boost || true
+          brew install fftw cmake ninja libomp boost || true
 
       - name: Build wheel (scikit-build-core)
         run: |

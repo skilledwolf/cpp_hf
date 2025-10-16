@@ -14,6 +14,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -37,6 +39,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Build wheels with cibuildwheel
         uses: pypa/cibuildwheel@v2.21.3
@@ -107,11 +111,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Homebrew deps
         run: |
           brew update
-          brew install fftw libomp boost cmake ninja pkg-config || true
+          brew install fftw libomp boost cmake ninja || true
 
       - name: Build wheels with cibuildwheel
         uses: pypa/cibuildwheel@v2.21.3

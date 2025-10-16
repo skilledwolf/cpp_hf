@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.21)
-project(cpp_hf VERSION 0.1.0 LANGUAGES CXX)
+
+# Prefer the project version provided by scikit-build-core when building wheels.
+# This lets you set the version in one place (pyproject.toml), and CMake picks it up
+# via the SKBUILD_PROJECT_VERSION cache variable. Fallback used for direct CMake builds.
+if (DEFINED SKBUILD_PROJECT_VERSION AND NOT "${SKBUILD_PROJECT_VERSION}" STREQUAL "")
+  set(CPP_HF_VERSION "${SKBUILD_PROJECT_VERSION}")
+else()
+  # Fallback for plain CMake builds without scikit-build-core
+  set(CPP_HF_VERSION "0.0")
+endif()
+
+project(cpp_hf VERSION ${CPP_HF_VERSION} LANGUAGES CXX)
 
 # Prefer CONFIG packages for Boost on newer CMake
 if (POLICY CMP0167)
