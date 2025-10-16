@@ -42,6 +42,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Enable QEMU so aarch64 manylinux containers can run on x86_64 runners
+      - name: Enable QEMU for cross-arch builds
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Build wheels with cibuildwheel
         uses: pypa/cibuildwheel@v2.21.3
         env:
@@ -49,6 +55,9 @@ jobs:
           CIBW_BUILD: cp310-* cp311-* cp312-*
           CIBW_SKIP: pp* *-musllinux_*
           CIBW_ARCHS_LINUX: x86_64 aarch64
+          # Use newer manylinux images for toolchain consistency
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           # Build FFTW from source and stage Boost headers for CMake
           CIBW_BEFORE_ALL_LINUX: |
             set -eux
@@ -123,8 +132,12 @@ jobs:
           fetch-depth: 0
 
       - name: Install Homebrew deps
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          brew update
+          # Clean any stale/partial downloads that can trip SHA checks
+          rm -f "$HOME/Library/Caches/Homebrew/downloads/"*libomp* || true
+          # Install without updating metadata to avoid transient API issues
           brew install fftw libomp boost cmake ninja || true
 
       - name: Build wheels with cibuildwheel
