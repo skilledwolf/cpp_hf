@@ -6,7 +6,7 @@ build-backend = "scikit_build_core.build"
 name = "cpp_hf"
 version = "0.1.0"
 description = "Hartree–Fock (k-grid) with FFTW + Eigen via pybind11"
-readme = "README.md"
+readme = "Readme.md"
 requires-python = ">=3.8"
 authors = [{name = "ContiMod contributors"}]
 license = {text = "MIT License"}
