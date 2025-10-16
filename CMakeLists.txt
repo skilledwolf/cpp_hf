@@ -35,8 +35,12 @@ if (NOT Eigen3_FOUND)
     GIT_TAG 3.4.0
   )
   FetchContent_MakeAvailable(Eigen)
-  add_library(Eigen3::Eigen INTERFACE IMPORTED)
-  target_include_directories(Eigen3::Eigen INTERFACE "${eigen_SOURCE_DIR}")
+  # Some Eigen builds already define Eigen3::Eigen; only create an interface
+  # target if it is missing (header-only include target).
+  if (NOT TARGET Eigen3::Eigen)
+    add_library(Eigen3::Eigen INTERFACE IMPORTED)
+    target_include_directories(Eigen3::Eigen INTERFACE "${eigen_SOURCE_DIR}")
+  endif()
 endif()
 
 # Boost headers (for Boost.Math). Try CONFIG first; fallback to include path.
