@@ -26,13 +26,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfftw3-dev cmake ninja-build
+          sudo apt-get install -y libfftw3-dev cmake ninja-build libboost-dev
 
       - name: Install system deps (macOS)
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install fftw cmake ninja || true
+          brew install fftw cmake ninja boost || true
 
       - name: Build wheel (scikit-build-core)
         run: |
