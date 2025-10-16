@@ -5,9 +5,14 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # Allow manual runs even if disabled via variable
+  workflow_dispatch:
 
 jobs:
   build:
+    # Skip on push/PR when repo variable DISABLE_BUILD_AND_TEST == 'true'.
+    # Still allow manual runs via the Actions tab.
+    if: ${{ vars.DISABLE_BUILD_AND_TEST != 'true' || github.event_name == 'workflow_dispatch' }}
     strategy:
       fail-fast: false
       matrix:
