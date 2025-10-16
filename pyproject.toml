@@ -34,9 +34,11 @@ Issues = "https://github.com/contimod/cpp_hf/issues"
 [tool.scikit-build]
 # Optional: produce a per-tag build dir (nice for local dev)
 build-dir = "build/{wheel_tag}"
+# Required to enable non-builtin metadata version providers (setuptools_scm)
+experimental = true
 
 [tool.scikit-build.cmake]
-minimum-version = "3.21"
+version = "3.21"
 
 # You can pass -C cmake.define.X=... flags via pip to toggle features:
 #   pip install . -C cmake.define.HF_USE_OPENMP=ON -C cmake.define.HF_USE_FFTW_THREADS=ON
