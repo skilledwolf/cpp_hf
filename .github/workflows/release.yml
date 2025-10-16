@@ -21,7 +21,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfftw3-dev cmake ninja-build
+          sudo apt-get install -y libfftw3-dev cmake ninja-build pkg-config libboost-dev libomp 
 
       - name: Build distribution (sdist)
         run: |

@@ -26,13 +26,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfftw3-dev cmake ninja-build
+          sudo apt-get install -y libfftw3-dev cmake ninja-build pkg-config libboost-dev
 
       - name: Install system deps (macOS)
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install fftw cmake ninja || true
+          brew install fftw cmake ninja pkg-config libomp boost || true
 
       - name: Build wheel (scikit-build-core)
         run: |
@@ -56,4 +56,3 @@ jobs:
           P,F,E,mu,n=cpp_hf.hartreefock_iteration_cpp(w,H,V,P0,ne,0.2,1,1e-2,2,1.0)
           print("cpp_hf ok: iters=", int(n), "mu=", float(mu))
           PY
-
