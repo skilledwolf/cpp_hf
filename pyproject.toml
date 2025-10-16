@@ -42,7 +42,7 @@ minimum-version = "3.21"
 #   pip install . -C cmake.define.HF_USE_OPENMP=ON -C cmake.define.HF_USE_FFTW_THREADS=ON
 
 [tool.scikit-build.metadata.version]
-provider = "scikit_build_core.setuptools_scm"
+provider = "setuptools_scm"
 
 [tool.setuptools_scm]
 # Strip leading 'v' from tags like v1.2.3 automatically
