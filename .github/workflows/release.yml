@@ -65,12 +65,13 @@ jobs:
             make install
             popd
 
-            # Boost headers (header-only; no build needed)
-            BOOST_V=1_84_0
-            curl -fsSL -o boost.tar.bz2 https://boostorg.jfrog.io/artifactory/main/release/1.84.0/source/boost_${BOOST_V}.tar.bz2
-            tar -xjf boost.tar.bz2
+            # Boost headers (header-only; no build needed). Use archives.boost.io and .tar.gz for reliability
+            BOOST_U=1_84_0
+            BOOST_D=1.84.0
+            curl -fsSL -o boost.tar.gz https://archives.boost.io/release/${BOOST_D}/source/boost_${BOOST_U}.tar.gz
+            tar -xzf boost.tar.gz
             mkdir -p /opt/boost/include
-            cp -r boost_${BOOST_V}/boost /opt/boost/include/
+            cp -r boost_${BOOST_U}/boost /opt/boost/include/
 
           # Help CMake find FFTW via pkg-config and Boost headers via define
           CIBW_ENVIRONMENT_LINUX: >
@@ -123,13 +124,47 @@ jobs:
         uses: pypa/cibuildwheel@v2.21.3
         env:
           CIBW_BUILD: cp310-* cp311-* cp312-*
-          CIBW_SKIP: pp*
-          # Let cibuildwheel build for the host arch on each runner
-          CIBW_ARCHS_MACOS: native
-          # Ensure pkg-config sees Homebrew's .pc files across both arch locations
-          CIBW_ENVIRONMENT_MACOS: >
-            PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig
-            CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON"
+          CIBW_SKIP: pp* *-musllinux_*
+          CIBW_ARCHS_LINUX: x86_64 aarch64
+
+          # (optional) pin image for consistency
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+
+          CIBW_BEFORE_ALL_LINUX: |
+            set -eux
+
+            # Install pkg-config (pkgconf) on either dnf- or yum-based images
+            if command -v dnf >/dev/null 2>&1; then
+              dnf -y install pkgconf-pkg-config
+            elif command -v yum >/dev/null 2>&1; then
+              yum -y install pkgconfig || yum -y install pkgconf-pkg-config || true
+            fi
+
+            FFTW_V=3.3.10
+            curl -fsSL -o fftw.tar.gz http://www.fftw.org/fftw-${FFTW_V}.tar.gz
+            tar -xzf fftw.tar.gz
+            pushd fftw-${FFTW_V}
+            ./configure --prefix=/opt/fftw --enable-shared --enable-threads
+            make -j"$(nproc)"
+            make install
+            popd
+
+            # Header-only Boost for Boost.Math
+            BOOST_U=1_84_0
+            BOOST_D=1.84.0
+            curl -fsSL -o boost.tar.gz https://archives.boost.io/release/${BOOST_D}/source/boost_${BOOST_U}.tar.gz
+            tar -xzf boost.tar.gz
+            mkdir -p /opt/boost/include
+            cp -r boost_${BOOST_U}/boost /opt/boost/include/
+
+          # Help CMake find FFTW and Boost; set both CMAKE_ARGS and SKBUILD_CMAKE_ARGS
+          CIBW_ENVIRONMENT_LINUX: >
+            PKG_CONFIG_PATH=/opt/fftw/lib/pkgconfig
+            CMAKE_PREFIX_PATH=/opt/fftw
+            CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DFFTW_ROOT=/opt/fftw -DBoost_INCLUDE_DIR=/opt/boost/include"
+            SKBUILD_CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DFFTW_ROOT=/opt/fftw -DBoost_INCLUDE_DIR=/opt/boost/include"
+
           CIBW_TEST_COMMAND: >
             python - <<'PY'
             import numpy as np, cpp_hf
@@ -143,6 +178,7 @@ jobs:
             P,F,E,mu,n=cpp_hf.hartreefock_iteration_cpp(w,H,V,P0,ne,0.2,1,1e-2,2,1.0)
             print("wheel ok", int(n), float(mu))
             PY
+
 
       - name: Upload macOS wheels
         uses: actions/upload-artifact@v4
