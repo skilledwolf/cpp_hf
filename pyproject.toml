@@ -38,13 +38,13 @@ build-dir = "build/{wheel_tag}"
 experimental = true
 
 [tool.scikit-build.cmake]
-version = "3.21"
+version = ">=3.21"
 
 # You can pass -C cmake.define.X=... flags via pip to toggle features:
 #   pip install . -C cmake.define.HF_USE_OPENMP=ON -C cmake.define.HF_USE_FFTW_THREADS=ON
 
 [tool.scikit-build.metadata.version]
-provider = "setuptools_scm"
+provider = "scikit_build_core.metadata.setuptools_scm"
 
 [tool.setuptools_scm]
 # Strip leading 'v' from tags like v1.2.3 automatically
