@@ -1,16 +1,17 @@
-name: publish-sdist
+name: release
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 jobs:
-  publish:
+  sdist:
+    name: Build sdist
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -18,15 +19,146 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install system deps
+      - name: Build source distribution
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libfftw3-dev cmake ninja-build pkg-config
-
-      - name: Build distribution (sdist)
-        run: |
-          python -m pip install -U pip build numpy scikit-build-core
+          python -m pip install -U pip build
           python -m build -s
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*
+
+  wheels-linux:
+    name: Build Linux wheels (x86_64, aarch64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels with cibuildwheel
+        uses: pypa/cibuildwheel@v2.21.3
+        env:
+          # CPython versions to build (match CI tests)
+          CIBW_BUILD: cp310-* cp311-* cp312-*
+          CIBW_SKIP: pp* *-musllinux_*
+          CIBW_ARCHS_LINUX: x86_64 aarch64
+          # Build FFTW from source and stage Boost headers for CMake
+          CIBW_BEFORE_ALL_LINUX: |
+            set -eux
+            # Ensure pkg-config is present in the manylinux container
+            if command -v yum >/dev/null 2>&1; then
+              yum -y install pkgconfig || true
+            fi
+            FFTW_V=3.3.10
+            curl -fsSL -o fftw.tar.gz http://www.fftw.org/fftw-${FFTW_V}.tar.gz
+            tar -xzf fftw.tar.gz
+            pushd fftw-${FFTW_V}
+            ./configure --prefix=/opt/fftw --enable-shared --enable-threads
+            make -j"$(nproc)"
+            make install
+            popd
+
+            # Boost headers (header-only; no build needed)
+            BOOST_V=1_84_0
+            curl -fsSL -o boost.tar.bz2 https://boostorg.jfrog.io/artifactory/main/release/1.84.0/source/boost_${BOOST_V}.tar.bz2
+            tar -xjf boost.tar.bz2
+            mkdir -p /opt/boost/include
+            cp -r boost_${BOOST_V}/boost /opt/boost/include/
+
+          # Help CMake find FFTW via pkg-config and Boost headers via define
+          CIBW_ENVIRONMENT_LINUX: >
+            PKG_CONFIG_PATH=/opt/fftw/lib/pkgconfig
+            CMAKE_PREFIX_PATH=/opt/fftw
+            CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDE_DIR=/opt/boost/include"
+
+          # Quick import + tiny run test inside the wheel env
+          CIBW_TEST_COMMAND: >
+            python - <<'PY'
+            import numpy as np, cpp_hf
+            nk,d=4,2
+            w=np.ones((nk,nk))*((2/nk)*(2/nk)/(2*np.pi)**2)
+            H=np.zeros((nk,nk,d,d),np.complex128)
+            K=np.linspace(-1,1,nk)
+            V=(1.0/np.sqrt((K[:,None]**2+K[None,:]**2)+0.2)).astype(np.complex128)[...,None,None]
+            P0=np.zeros_like(H)
+            ne=0.5*d*w.sum()
+            P,F,E,mu,n=cpp_hf.hartreefock_iteration_cpp(w,H,V,P0,ne,0.2,1,1e-2,2,1.0)
+            print("wheel ok", int(n), float(mu))
+            PY
+
+      - name: Upload Linux wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-wheels-linux
+          path: wheelhouse/*
+          if-no-files-found: error
+
+  wheels-macos:
+    name: Build macOS wheels (Intel/Apple Silicon)
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-13, macos-14]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Homebrew deps
+        run: |
+          brew update
+          brew install fftw libomp boost cmake ninja pkg-config || true
+
+      - name: Build wheels with cibuildwheel
+        uses: pypa/cibuildwheel@v2.21.3
+        env:
+          CIBW_BUILD: cp310-* cp311-* cp312-*
+          CIBW_SKIP: pp*
+          # Let cibuildwheel build for the host arch on each runner
+          CIBW_ARCHS_MACOS: native
+          # Ensure pkg-config sees Homebrew's .pc files across both arch locations
+          CIBW_ENVIRONMENT_MACOS: >
+            PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig
+            CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON"
+          CIBW_TEST_COMMAND: >
+            python - <<'PY'
+            import numpy as np, cpp_hf
+            nk,d=4,2
+            w=np.ones((nk,nk))*((2/nk)*(2/nk)/(2*np.pi)**2)
+            H=np.zeros((nk,nk,d,d),np.complex128)
+            K=np.linspace(-1,1,nk)
+            V=(1.0/np.sqrt((K[:,None]**2+K[None,:]**2)+0.2)).astype(np.complex128)[...,None,None]
+            P0=np.zeros_like(H)
+            ne=0.5*d*w.sum()
+            P,F,E,mu,n=cpp_hf.hartreefock_iteration_cpp(w,H,V,P0,ne,0.2,1,1e-2,2,1.0)
+            print("wheel ok", int(n), float(mu))
+            PY
+
+      - name: Upload macOS wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-wheels-${{ matrix.runner }}
+          path: wheelhouse/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: [sdist, wheels-linux, wheels-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
 
       - name: Publish to PyPI via OIDC (Trusted Publisher)
         uses: pypa/gh-action-pypi-publish@release/v1

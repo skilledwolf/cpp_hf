@@ -9,10 +9,10 @@ description = "Hartree–Fock (k-grid) with FFTW + Eigen via pybind11"
 readme = "Readme.md"
 requires-python = ">=3.8"
 authors = [{name = "ContiMod contributors"}]
-license = {text = "MIT License"}
+license = {file = "LICENSE"}
 keywords = ["hartree-fock", "fftw", "eigen", "pybind11", "condensed-matter", "physics"]
 classifiers = [
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: C++",

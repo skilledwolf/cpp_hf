@@ -521,12 +521,16 @@ struct HFKernel {
 
         if (v_is_scalar) {
 #ifdef _OPENMP
-            #pragma omp parallel for collapse(3) schedule(static)
+            // GCC requires strictly nested loops for collapse; use collapse(2) and SIMD on inner loop
+            #pragma omp parallel for collapse(2) schedule(static)
 #endif
             for (long long k1=0;k1<(long long)nk1;++k1)
               for (long long k2=0;k2<(long long)nk2;++k2) {
                   const cxd v = Vhat_scalar[(size_t)k1*nk2 + (size_t)k2];
                   const size_t base = (((size_t)k1*nk2 + (size_t)k2) * d) * d;
+#ifdef _OPENMP
+                  #pragma omp simd
+#endif
                   for (long long t=0; t<(long long)(d*d); ++t)
                       scratch_fft[base + (size_t)t] *= v;
               }
