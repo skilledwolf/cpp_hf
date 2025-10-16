@@ -78,6 +78,9 @@ jobs:
             PKG_CONFIG_PATH=/opt/fftw/lib/pkgconfig
             CMAKE_PREFIX_PATH=/opt/fftw
             CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDE_DIR=/opt/boost/include"
+          # Ensure auditwheel can find FFTW during repair
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
+            bash -lc 'LD_LIBRARY_PATH=/opt/fftw/lib auditwheel repair -w {dest_dir} {wheel}'
 
           # Quick import + tiny run test inside the wheel env
           CIBW_TEST_COMMAND: >
@@ -108,6 +111,8 @@ jobs:
       matrix:
         runner: [macos-13, macos-14]
     runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.runner == 'macos-14' && '14.0' || '13.0' }}
     permissions:
       contents: read
     steps:
@@ -124,46 +129,15 @@ jobs:
         uses: pypa/cibuildwheel@v2.21.3
         env:
           CIBW_BUILD: cp310-* cp311-* cp312-*
-          CIBW_SKIP: pp* *-musllinux_*
-          CIBW_ARCHS_LINUX: x86_64 aarch64
-
-          # (optional) pin image for consistency
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
-
-          CIBW_BEFORE_ALL_LINUX: |
-            set -eux
-
-            # Install pkg-config (pkgconf) on either dnf- or yum-based images
-            if command -v dnf >/dev/null 2>&1; then
-              dnf -y install pkgconf-pkg-config
-            elif command -v yum >/dev/null 2>&1; then
-              yum -y install pkgconfig || yum -y install pkgconf-pkg-config || true
-            fi
-
-            FFTW_V=3.3.10
-            curl -fsSL -o fftw.tar.gz http://www.fftw.org/fftw-${FFTW_V}.tar.gz
-            tar -xzf fftw.tar.gz
-            pushd fftw-${FFTW_V}
-            ./configure --prefix=/opt/fftw --enable-shared --enable-threads
-            make -j"$(nproc)"
-            make install
-            popd
-
-            # Header-only Boost for Boost.Math
-            BOOST_U=1_84_0
-            BOOST_D=1.84.0
-            curl -fsSL -o boost.tar.gz https://archives.boost.io/release/${BOOST_D}/source/boost_${BOOST_U}.tar.gz
-            tar -xzf boost.tar.gz
-            mkdir -p /opt/boost/include
-            cp -r boost_${BOOST_U}/boost /opt/boost/include/
-
-          # Help CMake find FFTW and Boost; set both CMAKE_ARGS and SKBUILD_CMAKE_ARGS
-          CIBW_ENVIRONMENT_LINUX: >
-            PKG_CONFIG_PATH=/opt/fftw/lib/pkgconfig
-            CMAKE_PREFIX_PATH=/opt/fftw
-            CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DFFTW_ROOT=/opt/fftw -DBoost_INCLUDE_DIR=/opt/boost/include"
-            SKBUILD_CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DFFTW_ROOT=/opt/fftw -DBoost_INCLUDE_DIR=/opt/boost/include"
+          CIBW_SKIP: pp*
+          CIBW_ARCHS_MACOS: native
+          # Ensure pkg-config sees Homebrew's .pc files across both arch locations; set CMake deployment target
+          CIBW_ENVIRONMENT_MACOS: >
+            PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig
+            CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
+          # Help delocate find Homebrew-provided dylibs and enforce arch slice
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
+            bash -lc 'delocate-listdeps -d {wheel} || true; MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET} delocate-wheel -L /opt/homebrew/lib -L /usr/local/lib --require-archs {delocate_archs} -w {dest_dir} -v {wheel}'
 
           CIBW_TEST_COMMAND: >
             python - <<'PY'
