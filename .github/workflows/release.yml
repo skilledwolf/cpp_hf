@@ -1,0 +1,36 @@
+name: publish-sdist
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev cmake ninja-build
+
+      - name: Build distribution (sdist)
+        working-directory: cpp_hf
+        run: |
+          python -m pip install -U pip build
+          python -m build -s
+
+      - name: Publish to PyPI via OIDC (Trusted Publisher)
+        working-directory: cpp_hf
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

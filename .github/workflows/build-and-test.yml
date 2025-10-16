@@ -1,0 +1,61 @@
+name: build-and-test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # System dependencies (FFTW, CMake). Eigen is fetched if missing.
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev cmake ninja-build
+
+      - name: Install system deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install fftw cmake ninja || true
+
+      - name: Build wheel (scikit-build-core)
+        working-directory: cpp_hf
+        run: |
+          python -m pip install -U pip build
+          python -m build -w \
+            -C cmake.define.HF_USE_OPENMP=ON \
+            -C cmake.define.HF_USE_FFTW_THREADS=ON
+
+      - name: Install and smoke test
+        working-directory: cpp_hf
+        run: |
+          python -m pip install dist/*.whl
+          python - << 'PY'
+          import numpy as np, cpp_hf
+          nk,d=8,2
+          w=np.ones((nk,nk))*((2/nk)*(2/nk)/(2*np.pi)**2)
+          H=np.zeros((nk,nk,d,d),np.complex128)
+          K=np.linspace(-1,1,nk)
+          V=(1.0/np.sqrt((K[:,None]**2+K[None,:]**2)+0.2)).astype(np.complex128)[...,None,None]
+          P0=np.zeros_like(H)
+          ne=0.5*d*w.sum()
+          P,F,E,mu,n=cpp_hf.hartreefock_iteration_cpp(w,H,V,P0,ne,0.2,1,1e-2,2,1.0)
+          print("cpp_hf ok: iters=", int(n), "mu=", float(mu))
+          PY
+

@@ -116,7 +116,6 @@ MIT — see `LICENSE`.
 
 ## Acknowledgments
 
-- FFTW — MIT‑like license (www.fftw.org)
+- FFTW — GPLv2+ (www.fftw.org)
 - Eigen — MPL2
 - pybind11 — BSD‑style
-
