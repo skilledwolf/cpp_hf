@@ -1,0 +1,37 @@
+[build-system]
+requires = ["scikit-build-core>=0.9", "pybind11>=2.11", "numpy"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "cpp_hf"
+version = "0.1.0"
+description = "Hartree–Fock (k-grid) with FFTW + Eigen via pybind11"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{name = "ContiMod contributors"}]
+license = {text = "MIT License"}
+keywords = ["hartree-fock", "fftw", "eigen", "pybind11", "condensed-matter", "physics"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: C++",
+  "Programming Language :: C++ :: 17",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.urls]
+Homepage = "https://github.com/contimod/cpp_hf"
+Issues = "https://github.com/contimod/cpp_hf/issues"
+
+[tool.scikit-build]
+# Optional: produce a per-tag build dir (nice for local dev)
+build-dir = "build/{wheel_tag}"
+
+[tool.scikit-build.cmake]
+minimum-version = "3.21"
+
+# You can pass -C cmake.define.X=... flags via pip to toggle features:
+#   pip install . -C cmake.define.HF_USE_OPENMP=ON -C cmake.define.HF_USE_FFTW_THREADS=ON

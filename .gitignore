@@ -1,0 +1,20 @@
+# Build artifacts
+build/
+dist/
+wheelhouse/
+*.egg-info/
+__pycache__/
+
+# Local outputs and generated images
+outputs/
+
+# Local tests and dev-only scripts
+tests/
+compare_cpp_vs_jax_bilayer.py
+quick_sanity_check.py
+
+# Editor/OS
+.DS_Store
+.vscode/
+.idea/
+

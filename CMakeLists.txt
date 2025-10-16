@@ -1,0 +1,150 @@
+cmake_minimum_required(VERSION 3.21)
+project(cpp_hf VERSION 0.1.0 LANGUAGES CXX)
+
+# Prefer CONFIG packages for Boost on newer CMake
+if (POLICY CMP0167)
+  cmake_policy(SET CMP0167 NEW)
+endif()
+
+# Options
+option(HF_USE_OPENMP "Enable OpenMP parallelization over k-points" ON)
+option(HF_USE_FFTW_THREADS "Link FFTW threads and enable fftw_init_threads()" ON)
+
+# Python + NumPy
+find_package(Python REQUIRED COMPONENTS Interpreter Development.Module NumPy)
+
+# pybind11
+find_package(pybind11 CONFIG QUIET)
+if (NOT pybind11_FOUND)
+  include(FetchContent)
+  FetchContent_Declare(
+    pybind11
+    GIT_REPOSITORY https://github.com/pybind/pybind11.git
+    GIT_TAG v2.12.0
+  )
+  FetchContent_MakeAvailable(pybind11)
+endif()
+
+# Eigen3
+find_package(Eigen3 QUIET NO_MODULE)
+if (NOT Eigen3_FOUND)
+  include(FetchContent)
+  FetchContent_Declare(
+    Eigen
+    GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+    GIT_TAG 3.4.0
+  )
+  FetchContent_MakeAvailable(Eigen)
+  add_library(Eigen3::Eigen INTERFACE IMPORTED)
+  target_include_directories(Eigen3::Eigen INTERFACE "${eigen_SOURCE_DIR}")
+endif()
+
+# Boost headers (for Boost.Math). Try CONFIG first; fallback to include path.
+set(BOOST_HEADERS_TARGET "")
+find_package(Boost 1.70 QUIET CONFIG COMPONENTS headers)
+if (Boost_FOUND)
+  if (TARGET Boost::headers)
+    set(BOOST_HEADERS_TARGET Boost::headers)
+  elseif (TARGET Boost::boost)
+    set(BOOST_HEADERS_TARGET Boost::boost)
+  endif()
+else()
+  find_path(BOOST_INCLUDE_DIR
+            NAMES boost/math/tools/toms748_solve.hpp
+            PATHS /opt/homebrew/include /usr/local/include
+            DOC "Path to Boost headers")
+  if (NOT BOOST_INCLUDE_DIR)
+    message(FATAL_ERROR "Boost headers not found; install Boost (brew install boost) or set CMAKE_PREFIX_PATH.")
+  endif()
+endif()
+
+# FFTW (pkg-config preferred; fallback to CMake config and manual find)
+set(HF_FFTW_LIBS "")
+set(HF_HAVE_FFTW_THREADS FALSE)
+find_package(PkgConfig QUIET)
+if (PkgConfig_FOUND)
+  pkg_check_modules(FFTW3 QUIET IMPORTED_TARGET fftw3)
+  if (FFTW3_FOUND)
+    list(APPEND HF_FFTW_LIBS PkgConfig::FFTW3)
+  endif()
+  if (HF_USE_FFTW_THREADS)
+    pkg_check_modules(FFTW3_THREADS QUIET IMPORTED_TARGET fftw3_threads)
+    if (FFTW3_THREADS_FOUND)
+      list(APPEND HF_FFTW_LIBS PkgConfig::FFTW3_THREADS)
+      set(HF_HAVE_FFTW_THREADS TRUE)
+    endif()
+  endif()
+endif()
+if (HF_FFTW_LIBS STREQUAL "")
+  find_package(FFTW3 CONFIG QUIET)
+  if (FFTW3_FOUND)
+    if (TARGET FFTW3::fftw3)
+      list(APPEND HF_FFTW_LIBS FFTW3::fftw3)
+    endif()
+    if (HF_USE_FFTW_THREADS AND TARGET FFTW3::fftw3_threads)
+      list(APPEND HF_FFTW_LIBS FFTW3::fftw3_threads)
+      set(HF_HAVE_FFTW_THREADS TRUE)
+    endif()
+  endif()
+endif()
+if (HF_FFTW_LIBS STREQUAL "")
+  message(FATAL_ERROR "FFTW3 not found. Install with 'brew install fftw' or set PKG_CONFIG_PATH/FFTW3_DIR.")
+endif()
+if (HF_USE_FFTW_THREADS AND NOT HF_HAVE_FFTW_THREADS)
+  find_library(FFTW3_THREADS_LIB NAMES fftw3_threads fftw_threads PATHS /opt/homebrew/lib /usr/local/lib ENV LIBRARY_PATH)
+  if (FFTW3_THREADS_LIB)
+    list(APPEND HF_FFTW_LIBS ${FFTW3_THREADS_LIB})
+    set(HF_HAVE_FFTW_THREADS TRUE)
+  else()
+    message(WARNING "Requested HF_USE_FFTW_THREADS=ON but libfftw3_threads not found; building without FFTW threading.")
+  endif()
+endif()
+
+# OpenMP (optional)
+set(HF_OPENMP_LIB "")
+if (HF_USE_OPENMP)
+  find_package(OpenMP QUIET)
+  if (OpenMP_CXX_FOUND)
+    set(HF_OPENMP_LIB OpenMP::OpenMP_CXX)
+  endif()
+endif()
+
+# Build module (Python name: cpp_hf)
+pybind11_add_module(cpp_hf cpp_hf_module.cpp)
+target_compile_features(cpp_hf PRIVATE cxx_std_17)
+if (MSVC)
+  target_compile_options(cpp_hf PRIVATE /O2 /DNDEBUG)
+  target_compile_definitions(cpp_hf PRIVATE _SILENCE_CXX17_RESULT_OF_DEPRECATION_WARNING)
+else()
+  target_compile_options(cpp_hf PRIVATE -O3 -DNDEBUG -fvisibility=hidden)
+endif()
+if (APPLE)
+  set_target_properties(cpp_hf PROPERTIES MACOSX_RPATH ON)
+endif()
+
+# Headers
+target_include_directories(cpp_hf PRIVATE ${Python_NumPy_INCLUDE_DIRS})
+if (DEFINED BOOST_INCLUDE_DIR)
+  target_include_directories(cpp_hf PRIVATE ${BOOST_INCLUDE_DIR})
+endif()
+
+# Link
+target_link_libraries(cpp_hf PRIVATE
+  Eigen3::Eigen
+  ${BOOST_HEADERS_TARGET}
+  ${HF_FFTW_LIBS}
+  ${HF_OPENMP_LIB}
+)
+if (HF_HAVE_FFTW_THREADS)
+  target_compile_definitions(cpp_hf PRIVATE FFTW3_THREADS=1)
+endif()
+
+# Install
+if (NOT DEFINED SKBUILD_PLATLIB_DIR OR SKBUILD_PLATLIB_DIR STREQUAL "")
+  set(SKBUILD_PLATLIB_DIR "${CMAKE_CURRENT_BINARY_DIR}/python" CACHE PATH "Python package output dir")
+endif()
+install(TARGETS cpp_hf
+  LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}
+  RUNTIME DESTINATION ${SKBUILD_PLATLIB_DIR}
+  ARCHIVE DESTINATION ${SKBUILD_PLATLIB_DIR}
+)
