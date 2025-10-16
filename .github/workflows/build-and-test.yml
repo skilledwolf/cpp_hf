@@ -36,7 +36,7 @@ jobs:
 
       - name: Build wheel (scikit-build-core)
         run: |
-          python -m pip install -U pip build
+          python -m pip install -U pip build numpy scikit-build-core 
           python -m build -w \
             -C cmake.define.HF_USE_OPENMP=ON \
             -C cmake.define.HF_USE_FFTW_THREADS=ON

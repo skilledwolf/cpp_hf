@@ -23,22 +23,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libfftw3-dev cmake ninja-build pkg-config
 
-      - name: Locate project (monorepo or single-repo)
-        id: proj
-        shell: bash
-        run: |
-          if [ -f "pyproject.toml" ]; then
-            echo "proj_dir=." >> "$GITHUB_OUTPUT"
-          elif [ -f "cpp_hf/pyproject.toml" ]; then
-            echo "proj_dir=cpp_hf" >> "$GITHUB_OUTPUT"
-          else
-            echo "pyproject.toml not found at repo root or cpp_hf/" >&2
-            exit 1
-          fi
-
       - name: Build distribution (sdist)
         run: |
-          python -m pip install -U pip build
+          python -m pip install -U pip build numpy scikit-build-core
           python -m build -s
 
       - name: Publish to PyPI via OIDC (Trusted Publisher)
