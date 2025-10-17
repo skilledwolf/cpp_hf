@@ -91,7 +91,7 @@ jobs:
 
             # Build FFTW (shared, threads; no fortran/mpi)
             pushd /tmp/fftw-3.3.10
-            ./configure --prefix=/opt/fftw --enable-shared --enable-threads --disable-fortran --disable-mpi
+            ./configure --prefix=/opt/fftw --enable-shared --enable-threads 
             make -j"$(nproc)"
             make install
             popd
@@ -182,7 +182,7 @@ jobs:
             tar -xzf /project/build-cache/boost_1_84_0.tar.gz -C /tmp
 
             pushd /tmp/fftw-3.3.10
-            ./configure --prefix=/opt/fftw --enable-shared --enable-threads --disable-fortran --disable-mpi
+            ./configure --prefix=/opt/fftw --enable-shared --enable-threads
             make -j"$(nproc)"
             make install
             popd
