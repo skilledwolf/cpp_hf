@@ -63,43 +63,67 @@ jobs:
       - name: Build wheels with cibuildwheel (${{ matrix.arch }})
         uses: pypa/cibuildwheel@v2.21.3
         env:
-          # Build the three CPython versions; skip PyPy/musl
           CIBW_BUILD: cp310-* cp311-* cp312-*
           CIBW_SKIP: pp* *-musllinux_*
-
-          # Run natively per arch; fix the manylinux image explicitly
           CIBW_ARCHS_LINUX: ${{ matrix.arch }}
           ${{ matrix.image_var }}: manylinux_2_28
 
-          # Inside the manylinux container: install toolchain + FFTW + Boost headers
+          # Install build tools + FFTW + Boost headers; robust ccache fallback (pkg -> prebuilt -> source)
           CIBW_BEFORE_ALL_LINUX: |
             set -eux
-            if command -v dnf >/dev/null 2>&1; then
-              dnf -y install ccache pkgconfig ninja-build unzip make which curl ca-certificates xz tar gzip fftw fftw-devel boost-devel || true
-            elif command -v yum >/dev/null 2>&1; then
-              yum -y install ccache pkgconfig ninja-build unzip make which curl ca-certificates xz tar gzip fftw fftw-devel boost-devel || true
-            elif command -v microdnf >/dev/null 2>&1; then
-              microdnf -y install ccache pkgconfig ninja-build unzip make which curl ca-certificates xz tar gzip fftw fftw-devel boost-devel || true
-            elif command -v apt-get >/dev/null 2>&1; then
-              apt-get update -y
-              apt-get install -y --no-install-recommends \
-                ccache pkg-config ninja-build unzip make curl ca-certificates xz-utils tar gzip libfftw3-3 libfftw3-dev libboost-all-dev
-            else
-              echo "No supported package manager found in this manylinux image" >&2
-              exit 1
-            fi
 
-            # Fallback portable ccache if the package isn't available
-            command -v ccache >/dev/null || {
-              ver=4.11.3
-              arch="$(uname -m)"
-              url="https://github.com/ccache/ccache/releases/download/v${ver}/ccache-${ver}-linux-${arch}.tar.xz"
-              curl -fsSL "$url" -o /tmp/ccache.tar.xz
-              mkdir -p /usr/local/ccache && tar -xJf /tmp/ccache.tar.xz -C /usr/local/ccache --strip-components=1
-              ln -sf /usr/local/ccache/bin/ccache /usr/local/bin/ccache
+            pm_install() {
+              if command -v dnf >/dev/null 2>&1; then
+                dnf -y install pkgconfig ninja-build unzip make which curl ca-certificates xz tar gzip cmake gcc-c++ fftw fftw-devel boost-devel libzstd libzstd-devel || true
+              elif command -v yum >/dev/null 2>&1; then
+                yum -y install pkgconfig ninja-build unzip make which curl ca-certificates xz tar gzip cmake gcc-c++ fftw fftw-devel boost-devel libzstd libzstd-devel || true
+              elif command -v microdnf >/dev/null 2>&1; then
+                microdnf -y install pkgconfig ninja-build unzip make which curl ca-certificates xz tar gzip cmake gcc-c++ fftw fftw-devel boost-devel libzstd libzstd-devel || true
+              elif command -v apt-get >/dev/null 2>&1; then
+                apt-get update -y
+                apt-get install -y --no-install-recommends \
+                  pkg-config ninja-build unzip make curl ca-certificates xz-utils tar gzip cmake g++ \
+                  libfftw3-3 libfftw3-dev libboost-all-dev zstd libzstd-dev
+              else
+                echo "No supported package manager found" >&2
+                exit 1
+              fi
             }
 
-          # Clean, fast builds; rely on OS FFTW; Boost headers from OS (no libboost linkage)
+            install_ccache() {
+              # 1) Try package manager
+              if command -v dnf >/devnull 2>&1; then dnf -y install ccache || true; fi
+              if command -v yum >/devnull 2>&1; then yum -y install ccache || true; fi
+              if command -v microdnf >/devnull 2>&1; then microdnf -y install ccache || true; fi
+              if command -v apt-get >/devnull 2>&1; then apt-get install -y --no-install-recommends ccache || true; fi
+              if command -v ccache >/dev/null 2>&1; then return 0; fi
+
+              # 2) Try official prebuilt tarball
+              ver="4.11.3"
+              arch="$(uname -m)"
+              url="https://github.com/ccache/ccache/releases/download/v${ver}/ccache-${ver}-linux-${arch}.tar.xz"
+              if curl -fsSL "$url" -o /tmp/ccache.tar.xz; then
+                mkdir -p /usr/local/ccache
+                tar -xJf /tmp/ccache.tar.xz -C /usr/local/ccache --strip-components=1
+                ln -sf /usr/local/ccache/bin/ccache /usr/local/bin/ccache
+              fi
+              if command -v ccache >/dev/null 2>&1; then return 0; fi
+
+              # 3) Build from source with CMake (last resort)
+              src="4.11.3"
+              tmpd="$(mktemp -d)"
+              curl -fsSL "https://github.com/ccache/ccache/releases/download/v${src}/ccache-${src}.tar.gz" -o "${tmpd}/ccache.tar.gz"
+              tar -xzf "${tmpd}/ccache.tar.gz" -C "${tmpd}"
+              cmake -S "${tmpd}/ccache-${src}" -B "${tmpd}/build" -DCMAKE_BUILD_TYPE=Release
+              cmake --build "${tmpd}/build" -j"$(nproc)"
+              cmake --install "${tmpd}/build"
+              ln -sf /usr/local/bin/ccache /usr/local/ccache/bin/ccache || true
+            }
+
+            pm_install
+            install_ccache
+            command -v ccache >/dev/null || { echo "ccache still missing"; exit 1; }
+
           CIBW_ENVIRONMENT_LINUX: >
             CC=gcc
             CXX=g++
@@ -107,11 +131,9 @@ jobs:
             CMAKE_ARGS="-G Ninja -DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDEDIR=/usr/include -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
             CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
 
-          # auditwheel will vendor libfftw3*.so into the wheel
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             bash -lc 'auditwheel repair -w {dest_dir} {wheel}'
 
-          # Smoke test each built wheel
           CIBW_TEST_REQUIRES: numpy
           CIBW_TEST_COMMAND: |
             python - <<'PY'
@@ -196,7 +218,7 @@ jobs:
     name: Publish to PyPI
     needs: [sdist, wheels-linux, wheels-macos]
     runs-on: ubuntu-latest
-    environment: cpp_hf_env   # must match your Trusted Publisher env name
+    environment: cpp_hf_env
     permissions:
       contents: read
       id-token: write
