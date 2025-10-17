@@ -92,13 +92,11 @@ struct HFKernel {
             cxd* buf = reinterpret_cast<cxd*>(fftw_malloc(sizeof(cxd) * nk1 * nk2));
             if (!buf) throw std::bad_alloc{};
             const cxd* vptr = V_in.data();
-
-#ifdef _OPENMP
-            #pragma omp parallel for collapse(2) schedule(static)
-#endif
-            for (long long k1i=0;k1i<(long long)nk1;++k1i)
-                for (long long k2i=0;k2i<(long long)nk2;++k2i)
-                    buf[(std::size_t)k1i*nk2 + (std::size_t)k2i] = vptr[(std::size_t)k1i*nk2 + (std::size_t)k2i] * weight_mean;
+            {
+                Eigen::Map<      Eigen::ArrayXcd> B(reinterpret_cast<cxd*>(buf), (Eigen::Index)(nk1*nk2));
+                Eigen::Map<const Eigen::ArrayXcd> V(vptr,                         (Eigen::Index)(nk1*nk2));
+                B = V * weight_mean;
+            }
 
 #if defined(FFTW3_THREADS)
             FftwBatched2D::init_threads_once();
@@ -114,19 +112,11 @@ struct HFKernel {
             fftw_destroy_plan(pf);
             fftw_free(buf);
         } else {
-            std::vector<cxd> Vfull(n_tot);
+            Vhat_full.resize(n_tot);
             const cxd* vptr = V_in.data();
-#ifdef _OPENMP
-            #pragma omp parallel for collapse(4) schedule(static)
-#endif
-            for (long long k1i=0;k1i<(long long)nk1;++k1i)
-                for (long long k2i=0;k2i<(long long)nk2;++k2i)
-                    for (long long i=0;i<(long long)d;++i)
-                        for (long long j=0;j<(long long)d;++j) {
-                            const std::size_t v_idx = ((((std::size_t)k1i)*nk2 + (std::size_t)k2i)*d + (std::size_t)i)*d + (std::size_t)j;
-                            Vfull[::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,(std::size_t)i,(std::size_t)j)] = vptr[v_idx] * weight_mean;
-                        }
-            Vhat_full = std::move(Vfull);
+            Eigen::Map<      Eigen::ArrayXcd> D(Vhat_full.data(), (Eigen::Index)n_tot);
+            Eigen::Map<const Eigen::ArrayXcd> S(reinterpret_cast<const cxd*>(vptr), (Eigen::Index)n_tot);
+            D = S * weight_mean;
             plan.forward(Vhat_full.data());
         }
     }
@@ -310,7 +300,9 @@ struct HFKernel {
                 const MatC& C = last_evecs[(std::size_t)k1*nk2+(std::size_t)k2];
                 // eigenvalues vector
                 Eigen::VectorXd eps = Eigen::Map<const Eigen::VectorXd>(last_bands[(std::size_t)k1*nk2+(std::size_t)k2].data(), (Eigen::Index)d);
-                Eigen::MatrixXd denom = eps.replicate(1, (Eigen::Index)d) - eps.transpose().replicate((Eigen::Index)d, 1);
+                const Eigen::RowVectorXd er = eps.transpose();
+                const Eigen::VectorXd    ec = eps;
+                Eigen::MatrixXd denom = ec.rowwise().replicate((Eigen::Index)d) - er.colwise().replicate((Eigen::Index)d);
                 denom.array() += delta;
 
                 Eigen::Map<const MatC> Rk(&comm[base], d, d);
@@ -321,7 +313,7 @@ struct HFKernel {
             }
     }
 
-    // Same as fock_and_energy_of but also caches the eigendecomposition of F for reuse
+    // Same as fock_and_energy_of; does NOT recompute/cached EVD (reuse cache from call())
     void fock_energy_and_cache_evd(const std::vector<cxd>& P,
                                    std::vector<cxd>& F,
                                    double& E) const {
@@ -352,22 +344,7 @@ struct HFKernel {
             }
         E = e;
 
-        // Cache eigendecomposition of F
-        if (last_evecs.size() != nk1*nk2) last_evecs.assign(nk1*nk2, MatC());
-        if (last_bands.size() != nk1*nk2) last_bands.assign(nk1*nk2, std::vector<double>());
-#ifdef _OPENMP
-        #pragma omp parallel for collapse(2) schedule(static)
-#endif
-        for (long long k1i=0;k1i<(long long)nk1;++k1i)
-            for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-                Eigen::Map<MatC> Fk(&F[base], d, d);
-                Eigen::SelfAdjointEigenSolver<MatC> es(Fk);
-                if (es.info()!=Eigen::Success) throw std::runtime_error("EVD failed");
-                last_bands[(std::size_t)k1i*nk2+(std::size_t)k2i] = std::vector<double>(es.eigenvalues().data(), es.eigenvalues().data()+d);
-                last_evecs[(std::size_t)k1i*nk2+(std::size_t)k2i]  = es.eigenvectors();
-            }
-        last_cache_valid = true;
+        // Reuse eigendecomposition cached in call(P) for preconditioning in this iteration
     }
 };
 

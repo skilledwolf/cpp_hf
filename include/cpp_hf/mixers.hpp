@@ -27,23 +27,26 @@ inline double real_inner(const std::vector<cxd>& a, const std::vector<cxd>& b) {
 }
 
 // Weighted Frobenius-Re inner product across k-blocks: sum_k w_k * Re Tr(A_k^† B_k)
+// Loop-free via (nblocks × block) row-major maps and row-wise reduction.
 inline double weighted_inner_blocks(const std::vector<cxd>& A,
                                     const std::vector<cxd>& B,
                                     const std::vector<double>& w,
                                     size_t nk1, size_t nk2, size_t d) {
-    double s = 0.0;
-#ifdef _OPENMP
-    #pragma omp parallel for collapse(2) reduction(+:s) schedule(static)
-#endif
-    for (long long k1=0;k1<(long long)nk1;++k1)
-      for (long long k2=0;k2<(long long)nk2;++k2) {
-        const size_t base = (static_cast<size_t>(k1)*nk2 + static_cast<size_t>(k2)) * d * d;
-        const double wk = w[(size_t)k1*nk2 + (size_t)k2];
-        Eigen::Map<const MatC> Ak(&A[base], d, d);
-        Eigen::Map<const MatC> Bk(&B[base], d, d);
-        s += wk * ((Ak.adjoint() * Bk).trace().real());
-      }
-    return s;
+    const size_t nblocks = nk1 * nk2;
+    const size_t block   = d * d;
+
+    using RowMatC = Eigen::Matrix<cxd, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+
+    Eigen::Map<const RowMatC> Am(A.data(), (Eigen::Index)nblocks, (Eigen::Index)block);
+    Eigen::Map<const RowMatC> Bm(B.data(), (Eigen::Index)nblocks, (Eigen::Index)block);
+    Eigen::Map<const Eigen::VectorXd> W(w.data(), (Eigen::Index)nblocks);
+
+    // Per-block Re⟨A_k,B_k⟩, weight, then global sum.
+    return ( (Am.conjugate().cwiseProduct(Bm))   // conj(A) ⊙ B
+               .rowwise().sum()                 // → VectorXcd(nblocks)
+               .real()                          // → VectorXd
+               .cwiseProduct(W) )               // weight
+           .sum();
 }
 
 // ---------------- DIIS / EDIIS ----------------
@@ -63,10 +66,10 @@ struct DiisState {
                                   double blend_keep, double blend_new) {
         if (max_vecs < 2) { // fallback: simple blend
             std::vector<cxd> out(p_vec.size());
-#ifdef _OPENMP
-            #pragma omp parallel for schedule(static)
-#endif
-            for (long long t=0;t<(long long)out.size();++t) out[(size_t)t] = p_cur[(size_t)t]*blend_keep + p_vec[(size_t)t]*blend_new;
+            Eigen::Map<      Eigen::ArrayXcd> O(out.data(),   (Eigen::Index)out.size());
+            Eigen::Map<const Eigen::ArrayXcd> Pc(p_cur.data(),(Eigen::Index)p_cur.size());
+            Eigen::Map<const Eigen::ArrayXcd> Pn(p_vec.data(),(Eigen::Index)p_vec.size());
+            O = blend_keep*Pc + blend_new*Pn;
             return out;
         }
 
@@ -77,62 +80,69 @@ struct DiisState {
 
         const size_t n_aug = m + 1;
         Eigen::MatrixXd BA = Eigen::MatrixXd::Zero(n_aug, n_aug);
+
+        // Build upper triangle of the Gram (real ⟨r_i,r_j⟩), mirror for symmetry.
         for (size_t i = 0; i < m; ++i) {
-            for (size_t j = 0; j < m; ++j) {
-                const auto& ri = residuals[(count - m + i) % max_vecs];
+            const auto& ri = residuals[(count - m + i) % max_vecs];
+            for (size_t j = 0; j <= i; ++j) {
                 const auto& rj = residuals[(count - m + j) % max_vecs];
-                BA((Eigen::Index)i,(Eigen::Index)j) = real_inner(ri, rj);
+                const double gij = real_inner(ri, rj);
+                BA((Eigen::Index)i,(Eigen::Index)j) = gij;
+                if (i != j) BA((Eigen::Index)j,(Eigen::Index)i) = gij;
             }
-            BA((Eigen::Index)i,(Eigen::Index)m) = -1.0;
-            BA((Eigen::Index)m,(Eigen::Index)i) = -1.0;
-            BA((Eigen::Index)i,(Eigen::Index)i) += eps_reg;
         }
+        // Regularize diagonal, fill constraint row/col with Eigen block ops.
+        BA.topLeftCorner((Eigen::Index)m,(Eigen::Index)m).diagonal().array() += eps_reg;
+        BA.block(0,(Eigen::Index)m,(Eigen::Index)m,1).setConstant(-1.0);
+        BA.block((Eigen::Index)m,0,1,(Eigen::Index)m).setConstant(-1.0);
+
         Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_aug); rhs(n_aug-1) = -1.0;
 
         Eigen::LDLT<Eigen::MatrixXd> ldlt(BA);
         if (ldlt.info() != Eigen::Success) {
             std::vector<cxd> out(p_vec.size());
-#ifdef _OPENMP
-            #pragma omp parallel for schedule(static)
-#endif
-            for (long long t=0;t<(long long)out.size();++t) out[(size_t)t] = p_cur[(size_t)t]*blend_keep + p_vec[(size_t)t]*blend_new;
+            Eigen::Map<      Eigen::ArrayXcd> O(out.data(),   (Eigen::Index)out.size());
+            Eigen::Map<const Eigen::ArrayXcd> Pc(p_cur.data(),(Eigen::Index)p_cur.size());
+            Eigen::Map<const Eigen::ArrayXcd> Pn(p_vec.data(),(Eigen::Index)p_vec.size());
+            O = blend_keep*Pc + blend_new*Pn;
             return out;
         }
         auto sol = ldlt.solve(rhs);
         if (ldlt.info() != Eigen::Success) {
             std::vector<cxd> out(p_vec.size());
-#ifdef _OPENMP
-            #pragma omp parallel for schedule(static)
-#endif
-            for (long long t=0;t<(long long)out.size();++t) out[(size_t)t] = p_cur[(size_t)t]*blend_keep + p_vec[(size_t)t]*blend_new;
+            Eigen::Map<      Eigen::ArrayXcd> O(out.data(),   (Eigen::Index)out.size());
+            Eigen::Map<const Eigen::ArrayXcd> Pc(p_cur.data(),(Eigen::Index)p_cur.size());
+            Eigen::Map<const Eigen::ArrayXcd> Pn(p_vec.data(),(Eigen::Index)p_vec.size());
+            O = blend_keep*Pc + blend_new*Pn;
             return out;
         }
-        std::vector<double> coeff(m);
-        double ssum = 0.0;
-        for (size_t i=0;i<m;++i){ coeff[i] = sol((Eigen::Index)i); ssum += coeff[i]; }
-        if (std::abs(ssum) > 0.0) for (auto& c : coeff) c /= ssum;
-        const double cmax = std::abs(*std::max_element(coeff.begin(), coeff.end(),
-                              [](double a, double b){return std::abs(a)<std::abs(b);} ));
+
+        // Coefficients (Eigen ops; no manual loops)
+        Eigen::VectorXd coeff = sol.head((Eigen::Index)m);
+        const double ssum = coeff.sum();
+        if (std::abs(ssum) > 0.0) coeff.array() /= ssum;
+        const double cmax = coeff.cwiseAbs().maxCoeff();
         const bool unstable = !std::isfinite(cmax) || cmax > coeff_cap;
 
-        std::vector<cxd> mix(p_vec.size(), cxd(0.0,0.0));
-#ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
-#endif
-        for (long long t=0; t<(long long)mix.size(); ++t) {
-            cxd acc(0.0,0.0);
-            for (size_t i=0;i<m;++i) {
-                size_t idx = (count - m + i) % max_vecs;
-                acc += ps_flat[idx][(size_t)t] * coeff[i];
-            }
-            mix[(size_t)t] = acc;
+        // Vectorized mix: Out = Σ_i coeff[i] * P_i  (loop only over small m)
+        const Eigen::Index nflat = (Eigen::Index)p_vec.size();
+        Eigen::ArrayXcd Out = Eigen::ArrayXcd::Zero(nflat);
+        for (size_t i=0;i<m;++i){
+            const size_t idx = (count - m + i) % max_vecs;
+            const double ci  = coeff((Eigen::Index)i);
+            if (ci == 0.0) continue;
+            Eigen::Map<const Eigen::ArrayXcd> Pi(ps_flat[idx].data(), nflat);
+            Out += ci * Pi;
         }
+        std::vector<cxd> mix((size_t)nflat);
+        Eigen::Map<Eigen::ArrayXcd>(mix.data(), nflat) = Out;
+
         if (unstable) {
             std::vector<cxd> out(mix.size());
-#ifdef _OPENMP
-            #pragma omp parallel for schedule(static)
-#endif
-            for (long long t=0;t<(long long)mix.size();++t) out[(size_t)t] = p_cur[(size_t)t]*blend_keep + mix[(size_t)t]*blend_new;
+            Eigen::Map<      Eigen::ArrayXcd> O(out.data(),   (Eigen::Index)out.size());
+            Eigen::Map<const Eigen::ArrayXcd> Pc(p_cur.data(),(Eigen::Index)p_cur.size());
+            Eigen::Map<const Eigen::ArrayXcd> Mx(mix.data(),  (Eigen::Index)mix.size());
+            O = blend_keep*Pc + blend_new*Mx;
             return out;
         }
         return mix;
@@ -146,17 +156,32 @@ struct EdiisState {
     static std::vector<cxd> flatten(const std::vector<cxd>& a) { return a; }
 
     static std::vector<double> project_simplex(std::vector<double> v) {
-        // Duchi et al. projection onto simplex {x>=0, sum=1}
-        auto u = v; std::sort(u.begin(), u.end(), std::greater<>());
-        double css = 0.0; size_t rho = 0;
-        for (size_t i=0;i<u.size();++i){ css += u[i]; const double t = (css - 1.0) / (i+1); if (u[i] - t > 0.0) rho = i; }
-        const double tau = (std::accumulate(u.begin(), u.begin()+rho+1, 0.0) - 1.0) / (rho + 1);
-#ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
-#endif
-        for (long long i=0;i<(long long)v.size();++i) v[(size_t)i] = std::max(0.0, v[(size_t)i] - tau);
+        const std::size_t n = v.size();
+        if (n == 0) return v;
+
+        // 1) Sort copy in descending order
+        std::vector<double> u = v;
+        std::sort(u.begin(), u.end(), std::greater<double>());
+
+        // 2) Prefix sums of u
+        std::vector<double> css(n);
+        std::partial_sum(u.begin(), u.end(), css.begin());
+
+        // 3) Find rho = max { i : u[i] - (css[i] - 1)/(i+1) > 0 }
+        std::size_t rho = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            const double t = (css[i] - 1.0) / static_cast<double>(i + 1);
+            if (u[i] - t > 0.0) rho = i;
+        }
+
+        // 4) Threshold tau and vectorized projection: max(v - tau, 0)
+        const double tau = (css[rho] - 1.0) / static_cast<double>(rho + 1);
+        Eigen::Map<Eigen::VectorXd> V(v.data(), static_cast<Eigen::Index>(n));
+        V.array() = (V.array() - tau).max(0.0);
+
         return v;
     }
+
 
     // Weighted EDIIS with adaptive PG and early stop
     std::pair<std::vector<cxd>, bool> update(const std::vector<cxd>& p,
@@ -174,7 +199,7 @@ struct EdiisState {
         std::vector<size_t> idxs(m);
         for (size_t i=0;i<m;++i) idxs[i] = (count - m + i) % max_vecs;
 
-        // Build g and M with WEIGHTED inner products
+        // Build g and M with WEIGHTED inner products (loop-free kernel)
         Eigen::VectorXd g(m);
         Eigen::MatrixXd M(m,m);
 #ifdef _OPENMP
@@ -199,16 +224,12 @@ struct EdiisState {
         Eigen::VectorXd c = Eigen::Map<Eigen::VectorXd>(cvec.data(), (Eigen::Index)m);
 
         // Initial step size from a crude Lipschitz estimate
-        double max_abs_m = 0.0;
-        for (size_t i=0;i<m;++i) for (size_t j=0;j<m;++j)
-            max_abs_m = std::max(max_abs_m, std::abs(M((Eigen::Index)i,(Eigen::Index)j)));
-        double gamma0 = 1.0 / (max_abs_m + 1.0);
+        const double gamma0 = 1.0 / (M.cwiseAbs().maxCoeff() + 1.0);
         const double armijo = 1e-4;
 
         for (size_t it=0; it<max_iter_qp; ++it) {
             // Projected gradient norm (early stop)
             Eigen::VectorXd grad = g + M * c;
-            // Build a std::vector from (c - grad) safely, then project onto simplex
             Eigen::VectorXd diff_pg = (c - grad).eval();
             std::vector<double> tmp_pg(diff_pg.data(), diff_pg.data() + m);
             auto proj_pg = project_simplex(std::move(tmp_pg));
@@ -221,17 +242,16 @@ struct EdiisState {
             const double phi_c = phi(c);
             bool accepted = false;
             for (int bt=0; bt<12; ++bt) {
-                // Trial step and projection
                 Eigen::VectorXd step = (c - gamma * grad).eval();
                 std::vector<double> tmp_trial(step.data(), step.data() + m);
                 auto proj_trial = project_simplex(std::move(tmp_trial));
                 Eigen::VectorXd c_trial = Eigen::Map<const Eigen::VectorXd>(proj_trial.data(), (Eigen::Index)m);
                 const double phi_trial = phi(c_trial);
-                const double decr = armijo * gamma * grad.squaredNorm(); // conservative Armijo surrogate
+                const double decr = armijo * gamma * grad.squaredNorm();
                 if (phi_trial <= phi_c - decr) { c = std::move(c_trial); accepted = true; break; }
                 gamma *= 0.5;
             }
-            if (!accepted) { // still move (small step) to avoid stalling
+            if (!accepted) {
                 Eigen::VectorXd step = (c - 0.2*gamma0 * grad).eval();
                 std::vector<double> tmp_small(step.data(), step.data() + m);
                 auto proj_small = project_simplex(std::move(tmp_small));
@@ -239,15 +259,16 @@ struct EdiisState {
             }
         }
 
-        // Build output density
+        // Build output density: out = Σ_i c_i * P_i  (vectorized AXPY over history; m is small)
         std::vector<cxd> out(p.size(), cxd(0,0));
-#ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
-#endif
-        for (long long t=0;t<(long long)out.size();++t){
-            cxd acc(0,0);
-            for (size_t i=0;i<m;++i){ const size_t ii_idx = idxs[i]; acc += ps_flat[ii_idx][(size_t)t]*c((Eigen::Index)i); }
-            out[(size_t)t] = acc;
+        Eigen::Map<Eigen::ArrayXcd> Out(out.data(), (Eigen::Index)out.size());
+        Out.setZero();
+        for (size_t i=0;i<m;++i){
+            const size_t ii_idx = idxs[i];
+            const double ci = c((Eigen::Index)i);
+            if (ci == 0.0) continue;
+            Eigen::Map<const Eigen::ArrayXcd> Pi(ps_flat[ii_idx].data(), (Eigen::Index)out.size());
+            Out += ci * Pi;
         }
         return {out, false};
     }
@@ -295,34 +316,34 @@ struct BroydenState {
         const size_t k = st.count;
         const size_t idx = k % st.max_vecs;
 
+        // s_k = P_flat - P_prev,  y_k = resid_flat - R_prev  (vectorized)
         std::vector<cxd> s_k(st.n_flat), y_k(st.n_flat);
-        const auto& P_prev = st.s_hist[(k-1) % st.max_vecs];
-        const auto& R_prev = st.y_hist[(k-1) % st.max_vecs];
-#ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
-#endif
-        for (long long i=0;i<(long long)st.n_flat;++i) {
-            s_k[(size_t)i] = P_flat[(size_t)i]     - P_prev[(size_t)i];
-            y_k[(size_t)i] = resid_flat[(size_t)i] - R_prev[(size_t)i];
+        {
+            Eigen::Map<const Eigen::ArrayXcd> Pn(P_flat.data(),                (Eigen::Index)st.n_flat);
+            Eigen::Map<const Eigen::ArrayXcd> Po(st.s_hist[(k-1)%st.max_vecs].data(), (Eigen::Index)st.n_flat);
+            Eigen::Map<const Eigen::ArrayXcd> Rn(resid_flat.data(),            (Eigen::Index)st.n_flat);
+            Eigen::Map<const Eigen::ArrayXcd> Ro(st.y_hist[(k-1)%st.max_vecs].data(), (Eigen::Index)st.n_flat);
+            Eigen::Map<Eigen::ArrayXcd>       Sk(s_k.data(), (Eigen::Index)st.n_flat);
+            Eigen::Map<Eigen::ArrayXcd>       Yk(y_k.data(), (Eigen::Index)st.n_flat);
+            Sk = Pn - Po;
+            Yk = Rn - Ro;
         }
         st.s_hist[idx] = s_k;
         st.y_hist[idx] = y_k;
         st.count = k + 1;
 
-        // L-BFGS two-loop
+        // L-BFGS two-loop (vectorized axpy updates)
         std::vector<cxd> q = resid_flat;
-        std::vector<cxd> alphas(st.max_vecs, cxd(0,0));
-
-        for (size_t ii=0; ii<st.max_vecs; ++ii) {
-            const size_t i = st.max_vecs - 1 - ii;
+        const size_t hist = st.max_vecs; // keep semantics identical to original
+        for (size_t ii=0; ii<hist; ++ii) {
+            const size_t i = hist - 1 - ii;
             const cxd yi_si = dot(st.y_hist[i], st.s_hist[i]);
-            const cxd rho   = (std::abs(yi_si) > 1e-18) ? (cxd(1.0,0.0) / yi_si) : cxd(0.0,0.0);
+            const cxd rho   = (std::abs(yi_si) > 1e-18) ? cxd(1.0,0.0) / yi_si : cxd(0.0,0.0);
             const cxd a_i   = rho * dot(st.s_hist[i], q);
-            alphas[i] = a_i;
-#ifdef _OPENMP
-            #pragma omp parallel for schedule(static)
-#endif
-            for (long long t=0;t<(long long)st.n_flat;++t) q[(size_t)t] -= a_i * st.y_hist[i][(size_t)t];
+
+            Eigen::Map<Eigen::ArrayXcd>       Q(q.data(), (Eigen::Index)st.n_flat);
+            Eigen::Map<const Eigen::ArrayXcd> Yi(st.y_hist[i].data(), (Eigen::Index)st.n_flat);
+            Q -= a_i * Yi;
         }
 
         const cxd yk_yk = dot(st.y_hist[idx], st.y_hist[idx]);
@@ -330,28 +351,32 @@ struct BroydenState {
         const cxd gamma = (std::abs(yk_yk) > 1e-18) ? (sk_yk / yk_yk) : cxd(0.0,0.0);
 
         std::vector<cxd> r(q.size());
-#ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
-#endif
-        for (long long t=0;t<(long long)r.size();++t) r[(size_t)t] = gamma * q[(size_t)t];
-
-        for (size_t i=0;i<st.max_vecs;++i) {
-            const cxd yi_si = dot(st.y_hist[i], st.s_hist[i]);
-            const cxd rho   = (std::abs(yi_si) > 1e-18) ? (cxd(1.0,0.0) / yi_si) : cxd(0.0,0.0);
-            const cxd beta  = rho * dot(st.y_hist[i], r);
-            const cxd coeff = alphas[i] - beta;
-#ifdef _OPENMP
-            #pragma omp parallel for schedule(static)
-#endif
-            for (long long t=0;t<(long long)st.n_flat;++t) r[(size_t)t] += st.s_hist[i][(size_t)t] * coeff;
+        {
+            Eigen::Map<const Eigen::ArrayXcd> Q(q.data(), (Eigen::Index)st.n_flat);
+            Eigen::Map<Eigen::ArrayXcd>       R(r.data(), (Eigen::Index)st.n_flat);
+            R = gamma * Q;
         }
 
-        // Step: P + alpha * r  (direction sign handled by preconditioner choice)
+        for (size_t i=0;i<hist;++i) {
+            const cxd yi_si = dot(st.y_hist[i], st.s_hist[i]);
+            const cxd rho   = (std::abs(yi_si) > 1e-18) ? cxd(1.0,0.0) / yi_si : cxd(0.0,0.0);
+            const cxd beta  = rho * dot(st.y_hist[i], r);
+            const cxd a_i   = (std::abs(yi_si) > 1e-18) ? (cxd(1.0,0.0) / yi_si) * dot(st.s_hist[i], q) : cxd(0.0,0.0);
+
+            Eigen::Map<Eigen::ArrayXcd>       Rv(r.data(), (Eigen::Index)st.n_flat);
+            Eigen::Map<const Eigen::ArrayXcd> Si(st.s_hist[i].data(), (Eigen::Index)st.n_flat);
+            // Classic two-loop: r += s_i * (alpha_i - beta)
+            Rv += Si * (a_i - beta);
+        }
+
+        // Step: P_out = P_flat + alpha * r
         std::vector<cxd> P_out(st.n_flat);
-#ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
-#endif
-        for (long long t=0;t<(long long)st.n_flat;++t) P_out[(size_t)t] = P_flat[(size_t)t] + cxd(alpha,0.0)*r[(size_t)t];
+        {
+            Eigen::Map<const Eigen::ArrayXcd> Pn(P_flat.data(), (Eigen::Index)st.n_flat);
+            Eigen::Map<const Eigen::ArrayXcd> Rv(r.data(),      (Eigen::Index)st.n_flat);
+            Eigen::Map<Eigen::ArrayXcd>       Po(P_out.data(),  (Eigen::Index)st.n_flat);
+            Po = Pn + alpha * Rv;
+        }
         return {st, P_out};
     }
 };
@@ -373,13 +398,21 @@ inline void orbital_preconditioner(const size_t nk1, const size_t nk2, const siz
             const MatC C = es.eigenvectors();
             const Eigen::VectorXd eps = es.eigenvalues().real();
 
-            // denom(i,j) = (eps_i - eps_j) + delta
-            Eigen::MatrixXd denom = eps.replicate(1, (Eigen::Index)d) - eps.transpose().replicate((Eigen::Index)d, 1);
-            denom.array() += delta;
-
             Eigen::Map<const MatC> Rk(&comm[base], d, d);
-            MatC Rmo  = C.adjoint() * Rk * C;
-            MatC Rtil = - Rmo.cwiseQuotient(denom.cast<cxd>()); // minus for ΔP ≈ -C/(ε_i-ε_j)
+
+            // Work in MO basis: Rmo = C^† R C  (materialize once)
+            const MatC Rmo = C.adjoint() * Rk * C;
+
+            // Elementwise divide by (ε_i - ε_j + δ) using broadcasted expression,
+            // avoiding an explicit denom matrix.
+            const auto er = eps.transpose(); // RowVectorXd
+            const auto ec = eps;             // VectorXd
+            const auto denom_expr =
+                (ec.rowwise().replicate((Eigen::Index)d)
+               - er.colwise().replicate((Eigen::Index)d)).array()
+               + delta;
+
+            const MatC Rtil = - Rmo.cwiseQuotient(denom_expr.matrix().cast<cxd>());
 
             Eigen::Map<MatC> outk(&out[base], d, d);
             outk.noalias() = C * Rtil * C.adjoint();
@@ -387,4 +420,3 @@ inline void orbital_preconditioner(const size_t nk1, const size_t nk2, const siz
 }
 
 } // namespace hf
-

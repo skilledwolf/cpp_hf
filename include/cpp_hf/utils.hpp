@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <complex>
 
+#include <Eigen/Core> // for Eigen::Map, Array ops
+
 // Optional Boost root finding
 #include <boost/math/tools/toms748_solve.hpp>
 #include <boost/math/tools/roots.hpp>
@@ -45,21 +47,24 @@ inline double find_chemicalpotential(const std::vector<std::vector<double>>& ban
     lo -= pad; hi += pad;
 
     auto N = [&](double mu){
+        const double tt = std::max(1e-12, std::abs(T));
         double s = 0.0;
 #ifdef _OPENMP
-        #pragma omp parallel for reduction(+:s) schedule(static)
+        #pragma omp parallel for reduction(+:s) collapse(2) schedule(static)
 #endif
         for (long long k1=0;k1<(long long)nk1;++k1)
           for (long long k2=0;k2<(long long)nk2;++k2) {
               const std::size_t idx = (std::size_t)k1*nk2 + (std::size_t)k2;
               const double w = weights[idx];
-              double occ = 0.0;
-#ifdef _OPENMP
-              #pragma omp simd reduction(+:occ)
-#endif
-              for (long long j=0;j<(long long)d;++j)
-                  occ += fermi(bands[idx][(std::size_t)j] - mu, T);
-              s += w * occ;
+
+              // Vectorized per-k occupancy sum over bands
+              Eigen::Map<const Eigen::ArrayXd> E(bands[idx].data(), (Eigen::Index)d);
+              const Eigen::ArrayXd y = (E - mu) / tt;
+              const double occ_sum =
+                  ( (y >= 40.0).select(0.0,
+                    (y <= -40.0).select(1.0, 1.0 / (1.0 + y.exp()))) ).sum();
+
+              s += w * occ_sum;
           }
         return s;
     };
@@ -102,35 +107,41 @@ inline void self_energy_fft(bool v_is_scalar,
                             std::vector<std::complex<double>>& out,
                             const FftwBatched2D& plan,
                             std::complex<double>* scratch_fft) {
-    const std::size_t n_tot = nk1 * nk2 * d * d;
+    using cxd = std::complex<double>;
+    using RowMatC = Eigen::Matrix<cxd, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+
+    const std::size_t nblocks = nk1 * nk2;
+    const std::size_t block   = d * d;
+    const std::size_t n_tot   = nblocks * block;
+
+    // FFT
     std::copy(P.begin(), P.end(), scratch_fft);
     plan.forward(scratch_fft);
 
     if (v_is_scalar) {
-#ifdef _OPENMP
-        #pragma omp parallel for collapse(2) schedule(static)
-#endif
-        for (long long k1i=0;k1i<(long long)nk1;++k1i)
-          for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-              const std::complex<double> v = Vhat_scalar[(std::size_t)k1i*nk2 + (std::size_t)k2i];
-              const std::size_t base = (((std::size_t)k1i*nk2 + (std::size_t)k2i) * d) * d;
-#ifdef _OPENMP
-              #pragma omp simd
-#endif
-              for (long long t=0; t<(long long)(d*d); ++t)
-                  scratch_fft[base + (std::size_t)t] *= v;
-          }
+        // Scale each (d×d) block by its scalar v in one shot: row-wise broadcast
+        Eigen::Map<RowMatC>                     S(scratch_fft, (Eigen::Index)nblocks, (Eigen::Index)block);
+        Eigen::Map<const Eigen::ArrayXcd>       V(Vhat_scalar.data(), (Eigen::Index)nblocks);
+        S.array().colwise() *= V; // multiply every column by the row-scale vector
     } else {
-#ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
-#endif
-        for (long long t=0; t<(long long)n_tot; ++t)
-            scratch_fft[(std::size_t)t] *= Vhat_full[(std::size_t)t];
+        // Elementwise multiply with full Vhat
+        Eigen::Map<Eigen::ArrayXcd>       S(scratch_fft,          (Eigen::Index)n_tot);
+        Eigen::Map<const Eigen::ArrayXcd> V(Vhat_full.data(),     (Eigen::Index)n_tot);
+        S *= V;
     }
 
+    // IFFT and global normalization
     plan.backward(scratch_fft);
     const double norm = -1.0 / static_cast<double>(nk1*nk2);
+    {
+        Eigen::Map<RowMatC> S(scratch_fft, (Eigen::Index)nblocks, (Eigen::Index)block);
+        S *= norm;
+    }
+
+    // fftshift on (k1,k2): just permute rows; avoid inner d*d loop
     out.resize(n_tot);
+    Eigen::Map<RowMatC> Sin(scratch_fft, (Eigen::Index)nblocks, (Eigen::Index)block);
+    Eigen::Map<RowMatC> Sout(out.data(), (Eigen::Index)nblocks,  (Eigen::Index)block);
 
     const std::size_t shift1 = nk1/2, shift2 = nk2/2;
 #ifdef _OPENMP
@@ -140,13 +151,9 @@ inline void self_energy_fft(bool v_is_scalar,
         for (long long k2i=0;k2i<(long long)nk2;++k2i) {
             const std::size_t s1 = ((std::size_t)k1i + shift1) % nk1;
             const std::size_t s2 = ((std::size_t)k2i + shift2) % nk2;
-            const std::size_t src_base = (((std::size_t)k1i*nk2 + (std::size_t)k2i) * d) * d;
-            const std::size_t dst_base = (((std::size_t)s1*nk2 + (std::size_t)s2) * d) * d;
-#ifdef _OPENMP
-            #pragma omp simd
-#endif
-            for (long long t=0; t<(long long)(d*d); ++t)
-                out[dst_base + (std::size_t)t] = scratch_fft[src_base + (std::size_t)t] * norm;
+            const std::size_t src_row = ((std::size_t)k1i)*nk2 + (std::size_t)k2i;
+            const std::size_t dst_row = ((std::size_t)s1  )*nk2 + (std::size_t)s2;
+            Sout.row((Eigen::Index)dst_row) = Sin.row((Eigen::Index)src_row);
         }
     }
 }

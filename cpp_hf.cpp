@@ -107,7 +107,7 @@ py::tuple hartreefock_iteration_cpp(
                 MatC C(d,d);
                 C.noalias() = Fk * Pk - Pk * Fk;
                 const double wk = kernel.weights[(size_t)k1i*nk2 + (size_t)k2i];
-                sum_w_c2 += wk * C.cwiseAbs2().sum();
+                sum_w_c2 += wk * C.squaredNorm();
                 Eigen::Map<MatC>(&comm[base], d, d) = C;
             }
 
@@ -147,33 +147,26 @@ py::tuple hartreefock_iteration_cpp(
             if (switched) bro_state.reset();
             const size_t bro_count_before = bro_state.count;
 
-            // Store / update LBFGS and get quasi-Newton proposal
-            std::vector<cxd> Pflat(P_new.begin(), P_new.end());
-            std::vector<cxd> Rflat(comm_pc.begin(), comm_pc.end());
-            auto upd = bro_state.update(Pflat, Rflat, mixing_alpha);
+            // Store / update LBFGS and get quasi-Newton proposal (avoid extra copies)
+            auto upd = bro_state.update(P_new, comm_pc, mixing_alpha);
             bro_state = std::move(upd.first);
-            std::vector<cxd>& Praw = upd.second; // flat
+            std::vector<cxd> Praw = std::move(upd.second); // flat
 
             if (bro_count_before == 0) {
                 // Fix #4: seed with a short preconditioned descent step on first Broyden iteration
                 const double beta = 0.35;
                 P_mix.resize(P.size());
-#ifdef _OPENMP
-                #pragma omp parallel for schedule(static)
-#endif
-                for (long long t=0;t<(long long)P_mix.size();++t)
-                    P_mix[(size_t)t] = P[(size_t)t] - beta * comm_pc[(size_t)t];
+                Eigen::Map<      Eigen::ArrayXcd> Pm(P_mix.data(), (Eigen::Index)P_mix.size());
+                Eigen::Map<const Eigen::ArrayXcd> Pc(P.data(),     (Eigen::Index)P.size());
+                Eigen::Map<const Eigen::ArrayXcd> Rc(comm_pc.data(), (Eigen::Index)comm_pc.size());
+                Pm = Pc - beta * Rc;
 
                 // Smooth transition from previous iterate
                 const double w_keep = 0.7, w_new = 0.3;
-#ifdef _OPENMP
-                #pragma omp parallel for schedule(static)
-#endif
-                for (long long t=0;t<(long long)P_mix.size();++t)
-                    P_mix[(size_t)t] = P[(size_t)t]*w_keep + P_mix[(size_t)t]*w_new;
+                Pm = w_keep*Pc + w_new*Pm;
             } else {
                 // Use the LBFGS result
-                P_mix.assign(Praw.begin(), Praw.end());
+                P_mix = std::move(Praw);
             }
         }
 

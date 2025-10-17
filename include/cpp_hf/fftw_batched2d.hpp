@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <mutex>
+#include <cstdlib>
 
 extern "C" {
 #include <fftw3.h>
@@ -30,6 +31,10 @@ struct FftwBatched2D {
     }
 
     static int choose_threads() {
+        if (const char* env = std::getenv("HF_FFTW_THREADS")) {
+            int v = std::atoi(env);
+            if (v > 0) return v;
+        }
 #if defined(_OPENMP)
         return std::max(1, omp_get_max_threads());
 #else
@@ -55,16 +60,23 @@ struct FftwBatched2D {
         how[0].n   = static_cast<long long>(d);   how[0].is  = static_cast<long long>(d);           how[0].os  = how[0].is; // i
         how[1].n   = static_cast<long long>(d);   how[1].is  = 1;                                   how[1].os  = 1;         // j
 
+        int plan_flag = FFTW_MEASURE;
+        if (const char* p = std::getenv("HF_FFTW_PLAN")) {
+            if (std::string(p) == "estimate") plan_flag = FFTW_ESTIMATE;
+            else if (std::string(p) == "patient") plan_flag = FFTW_PATIENT;
+            else if (std::string(p) == "exhaustive") plan_flag = FFTW_EXHAUSTIVE;
+        }
+
         fwd = fftw_plan_guru64_dft(2, dims, 2, how,
                 reinterpret_cast<fftw_complex*>(plan_buf),
                 reinterpret_cast<fftw_complex*>(plan_buf),
-                FFTW_FORWARD, FFTW_MEASURE);
+                FFTW_FORWARD, plan_flag);
         if (!fwd) throw std::runtime_error("FFTW plan_guru64_dft forward failed");
 
         bwd = fftw_plan_guru64_dft(2, dims, 2, how,
                 reinterpret_cast<fftw_complex*>(plan_buf),
                 reinterpret_cast<fftw_complex*>(plan_buf),
-                FFTW_BACKWARD, FFTW_MEASURE);
+                FFTW_BACKWARD, plan_flag);
         if (!bwd) { fftw_destroy_plan(fwd); throw std::runtime_error("FFTW plan_guru64_dft backward failed"); }
     }
 
@@ -73,4 +85,3 @@ struct FftwBatched2D {
 
     ~FftwBatched2D() { if (fwd) fftw_destroy_plan(fwd); if (bwd) fftw_destroy_plan(bwd); if (plan_buf) fftw_free(plan_buf); }
 };
-
