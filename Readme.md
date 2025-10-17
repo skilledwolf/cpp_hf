@@ -1,5 +1,11 @@
 # cpp_hf — Fast Hartree–Fock on k‑grids (FFTW + Eigen + pybind11)
 
+[![PyPI](https://img.shields.io/pypi/v/cpp-hf.svg)](https://pypi.org/project/cpp-hf/)
+[![Python](https://img.shields.io/pypi/pyversions/cpp-hf.svg)](https://pypi.org/project/cpp-hf/)
+[![Wheel](https://img.shields.io/pypi/wheel/cpp-hf.svg)](https://pypi.org/project/cpp-hf/#files)
+[![License](https://img.shields.io/pypi/l/cpp-hf.svg)](LICENSE)
+[![Release](https://github.com/skilledwolf/cpp_hf/actions/workflows/release.yml/badge.svg)](https://github.com/skilledwolf/cpp_hf/actions/workflows/release.yml)
+
 cpp_hf provides a compiled extension module exposing a fast Hartree–Fock
 self‑consistent field (SCF) loop for uniform 2D k‑grids. It uses
 FFTW (batched 2D complex DFTs), Eigen (Hermitian eigendecompositions), and
@@ -13,27 +19,40 @@ pybind11 to bind the C++ implementation to Python.
 This package is designed to interoperate with ContiMod, but it can be used on
 its own as a lightweight HF kernel.
 
+Project links:
+- PyPI: https://pypi.org/project/cpp-hf/
+- Source: https://github.com/skilledwolf/cpp_hf
+
 ## Installation
 
-Prerequisites:
+Quick install (prebuilt wheel if available):
+```
+pip install cpp-hf
+```
+
+Notes:
+- The import name is `cpp_hf` (underscore), even though the package name uses a hyphen.
+- Wheels may not be available for all platforms/Python versions yet; in that case pip will build from source.
+
+Build from source (requirements):
 - Python 3.8+
 - A C++17 compiler
-- FFTW (with threads recommended) and headers
+- FFTW and headers (threads variant optional)
 - CMake ≥ 3.21
 
-Install from source (recommended during development):
-
+Build via pip (with optional CMake flags):
 ```
-# Optional: choose features via -C flags
 pip install . \
   -C cmake.define.HF_USE_OPENMP=ON \
   -C cmake.define.HF_USE_FFTW_THREADS=ON
 ```
 
-If you have Homebrew on macOS:
+macOS (Homebrew) dependencies:
 ```
 brew install fftw eigen cmake
 ```
+
+If FFTW is not found, set one of `PKG_CONFIG_PATH`, `FFTW3_DIR`, or `CMAKE_PREFIX_PATH` to point to your installation.
 
 The repo includes a convenience script that activates a conda env and builds:
 ```
@@ -90,29 +109,11 @@ hartreefock_iteration_cpp(
 - Returns the converged density `P`, mean‑field `F`, total energy, chemical
   potential, and the iteration count.
 
-## Building wheels / releasing to PyPI
-
-We use scikit‑build‑core, so building wheels is standard:
-
-```
-python -m pip install build twine
-python -m build  # creates dist/*.whl and dist/*.tar.gz
-python -m twine upload dist/*
-```
-
-To test upload to TestPyPI first:
-```
-python -m twine upload --repository testpypi dist/*
-# then install with
-pip install -i https://test.pypi.org/simple/ cpp_hf
-```
-
-Note: the name `cpp_hf` must be available on PyPI. If it’s taken, consider a
-unique name such as `contimod-cpp-hf` and update `pyproject.toml` accordingly.
-
 ## License
 
-MIT — see `LICENSE`.
+GPLv2+ — see `LICENSE`.
+
+Third‑party notices: see `THIRD_PARTY_NOTICES.md`.
 
 ## Acknowledgments
 
