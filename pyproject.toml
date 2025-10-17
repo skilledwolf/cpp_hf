@@ -61,5 +61,6 @@ license-files = [
 [tool.scikit-build.sdist]
 # Ensure third-party notices are included in the source distribution
 include = [
+  "LICENSE",
   "THIRD_PARTY_NOTICES.md",
 ]
