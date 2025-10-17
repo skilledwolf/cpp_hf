@@ -32,8 +32,9 @@ jobs:
           name: dist-sdist
           path: dist/*
 
-  wheels-linux:
-    name: Build Linux wheels (x86_64, aarch64)
+  # ----- Linux x86_64 (native) -----
+  wheels-linux-x86_64:
+    name: Build Linux wheels (x86_64)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -42,44 +43,67 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Enable QEMU so aarch64 manylinux containers can run on x86_64 runners
-      - name: Enable QEMU for cross-arch builds
-        uses: docker/setup-qemu-action@v3
+      # Cache compiled objects across ABIs & runs
+      - name: Restore ccache
+        uses: actions/cache@v4
         with:
-          platforms: arm64
+          path: .ccache
+          key: ccache-linux-x86_64-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/*.cpp', '**/*.h', 'pyproject.toml') }}
 
-      - name: Build wheels with cibuildwheel
+      # Cache third-party source tarballs so BEFORE_ALL can just extract
+      - name: Restore 3rdparty source cache
+        uses: actions/cache@v4
+        with:
+          path: build-cache
+          key: thirdparty-src-x86_64-fftw-3.3.10-boost-1_84_0
+
+      - name: Pre-fetch Boost/FFTW (host)
+        run: |
+          set -eux
+          mkdir -p build-cache
+          # FFTW
+          test -f build-cache/fftw-3.3.10.tar.gz || \
+            curl -fsSL -o build-cache/fftw-3.3.10.tar.gz http://www.fftw.org/fftw-3.3.10.tar.gz
+          # Boost headers
+          test -f build-cache/boost_1_84_0.tar.gz || \
+            curl -fsSL -o build-cache/boost_1_84_0.tar.gz https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.gz
+
+      - name: Build wheels with cibuildwheel (x86_64)
         uses: pypa/cibuildwheel@v2.21.3
         env:
           CIBW_BUILD: cp310-* cp311-* cp312-*
           CIBW_SKIP: pp* *-musllinux_*
-          CIBW_ARCHS_LINUX: x86_64 aarch64
+          CIBW_ARCHS_LINUX: x86_64
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_LINUX: |
             set -eux
-            if command -v yum >/dev/null 2>&1; then
-              yum -y install pkgconfig || true
+            # Install ccache and minimal build deps in the manylinux container
+            if command -v dnf >/dev/null 2>&1; then
+              dnf -y install ccache pkgconfig ninja-build || true
+            elif command -v yum >/dev/null 2>&1; then
+              yum -y install ccache pkgconfig ninja-build || true
             fi
-            FFTW_V=3.3.10
-            curl -fsSL -o fftw.tar.gz http://www.fftw.org/fftw-${FFTW_V}.tar.gz
-            tar -xzf fftw.tar.gz
-            pushd fftw-${FFTW_V}
-            ./configure --prefix=/opt/fftw --enable-shared --enable-threads
+
+            # Extract cached sources from /project (mounted by cibuildwheel)
+            mkdir -p /opt/fftw /opt/boost/include
+            tar -xzf /project/build-cache/fftw-3.3.10.tar.gz -C /tmp
+            tar -xzf /project/build-cache/boost_1_84_0.tar.gz -C /tmp
+
+            # Build FFTW (shared, threads; no fortran/mpi)
+            pushd /tmp/fftw-3.3.10
+            ./configure --prefix=/opt/fftw --enable-shared --enable-threads --disable-fortran --disable-mpi
             make -j"$(nproc)"
             make install
             popd
 
-            BOOST_U=1_84_0
-            BOOST_D=1.84.0
-            curl -fsSL -o boost.tar.gz https://archives.boost.io/release/${BOOST_D}/source/boost_${BOOST_U}.tar.gz
-            tar -xzf boost.tar.gz
-            mkdir -p /opt/boost/include
-            cp -r boost_${BOOST_U}/boost /opt/boost/include/
+            # Header-only Boost "install"
+            cp -r /tmp/boost_1_84_0/boost /opt/boost/include/
           CIBW_ENVIRONMENT_LINUX: >
             PKG_CONFIG_PATH=/opt/fftw/lib/pkgconfig
             CMAKE_PREFIX_PATH=/opt/fftw
-            CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDE_DIR=/opt/boost/include"
+            CCACHE_DIR=/project/.ccache
+            CMAKE_ARGS="-G Ninja -DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDE_DIR=/opt/boost/include -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+            CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             bash -lc 'LD_LIBRARY_PATH=/opt/fftw/lib auditwheel repair -w {dest_dir} {wheel}'
           CIBW_TEST_REQUIRES: numpy
@@ -97,13 +121,104 @@ jobs:
             print("wheel ok", int(n), float(mu))
             PY
 
-      - name: Upload Linux wheels
+      - name: Upload Linux x86_64 wheels
         uses: actions/upload-artifact@v4
         with:
-          name: dist-wheels-linux
+          name: dist-wheels-linux-x86_64
           path: wheelhouse/*
           if-no-files-found: error
 
+  # ----- Linux aarch64 (native ARM runner) -----
+  wheels-linux-aarch64:
+    name: Build Linux wheels (aarch64 — native)
+    # For public repos you can use ubuntu-24.04-arm / ubuntu-22.04-arm.
+    # For private repos, switch to your self-hosted arm64 runner label.
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-linux-arm64-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/*.cpp', '**/*.h', 'pyproject.toml') }}
+
+      - name: Restore 3rdparty source cache
+        uses: actions/cache@v4
+        with:
+          path: build-cache
+          key: thirdparty-src-arm64-fftw-3.3.10-boost-1_84_0
+
+      - name: Pre-fetch Boost/FFTW (host)
+        run: |
+          set -eux
+          mkdir -p build-cache
+          test -f build-cache/fftw-3.3.10.tar.gz || \
+            curl -fsSL -o build-cache/fftw-3.3.10.tar.gz http://www.fftw.org/fftw-3.3.10.tar.gz
+          test -f build-cache/boost_1_84_0.tar.gz || \
+            curl -fsSL -o build-cache/boost_1_84_0.tar.gz https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.gz
+
+      - name: Build wheels with cibuildwheel (aarch64)
+        uses: pypa/cibuildwheel@v2.21.3
+        env:
+          CIBW_BUILD: cp310-* cp311-* cp312-*
+          CIBW_SKIP: pp* *-musllinux_*
+          CIBW_ARCHS_LINUX: aarch64
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+          CIBW_BEFORE_ALL_LINUX: |
+            set -eux
+            if command -v dnf >/dev/null 2>&1; then
+              dnf -y install ccache pkgconfig ninja-build || true
+            elif command -v yum >/dev/null 2>&1; then
+              yum -y install ccache pkgconfig ninja-build || true
+            fi
+
+            mkdir -p /opt/fftw /opt/boost/include
+            tar -xzf /project/build-cache/fftw-3.3.10.tar.gz -C /tmp
+            tar -xzf /project/build-cache/boost_1_84_0.tar.gz -C /tmp
+
+            pushd /tmp/fftw-3.3.10
+            ./configure --prefix=/opt/fftw --enable-shared --enable-threads --disable-fortran --disable-mpi
+            make -j"$(nproc)"
+            make install
+            popd
+
+            cp -r /tmp/boost_1_84_0/boost /opt/boost/include/
+          CIBW_ENVIRONMENT_LINUX: >
+            PKG_CONFIG_PATH=/opt/fftw/lib/pkgconfig
+            CMAKE_PREFIX_PATH=/opt/fftw
+            CCACHE_DIR=/project/.ccache
+            CMAKE_ARGS="-G Ninja -DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDE_DIR=/opt/boost/include -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+            CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
+            bash -lc 'LD_LIBRARY_PATH=/opt/fftw/lib auditwheel repair -w {dest_dir} {wheel}'
+          CIBW_TEST_REQUIRES: numpy
+          CIBW_TEST_COMMAND: |
+            python - <<'PY'
+            import numpy as np, cpp_hf
+            nk,d=4,2
+            w=np.ones((nk,nk))*((2/nk)*(2/nk)/(2*np.pi)**2)
+            H=np.zeros((nk,nk,d,d),np.complex128)
+            K=np.linspace(-1,1,nk)
+            V=(1.0/np.sqrt((K[:,None]**2+K[None,:]**2)+0.2)).astype(np.complex128)[...,None,None]
+            P0=np.zeros_like(H)
+            ne=0.5*d*w.sum()
+            P,F,E,mu,n=cpp_hf.hartreefock_iteration_cpp(w,H,V,P0,ne,0.2,1,1e-2,2,1.0)
+            print("wheel ok", int(n), float(mu))
+            PY
+
+      - name: Upload Linux aarch64 wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-wheels-linux-aarch64
+          path: wheelhouse/*
+          if-no-files-found: error
+
+  # ----- macOS (Intel/Apple Silicon) -----
   wheels-macos:
     name: Build macOS wheels (Intel/Apple Silicon)
     strategy:
@@ -160,9 +275,10 @@ jobs:
           path: wheelhouse/*
           if-no-files-found: error
 
+  # ----- Publish to PyPI -----
   publish:
     name: Publish to PyPI
-    needs: [sdist, wheels-linux, wheels-macos]
+    needs: [sdist, wheels-linux-x86_64, wheels-linux-aarch64, wheels-macos]
     runs-on: ubuntu-latest
     # 🔐 Ensure the OIDC token includes the environment claim
     environment: cpp_hf_env
