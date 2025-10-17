@@ -213,3 +213,12 @@ install(TARGETS cpp_hf
   RUNTIME DESTINATION ${SKBUILD_PLATLIB_DIR}
   ARCHIVE DESTINATION ${SKBUILD_PLATLIB_DIR}
 )
+
+# Optional FFTW benchmark executable
+add_executable(bench_fftw tests/bench_fftw.cpp)
+target_compile_features(bench_fftw PRIVATE cxx_std_17)
+target_include_directories(bench_fftw PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(bench_fftw PRIVATE ${HF_FFTW_LIBS})

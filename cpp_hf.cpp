@@ -102,13 +102,12 @@ py::tuple hartreefock_iteration_cpp(
         for (long long k1i=0;k1i<(long long)nk1;++k1i)
             for (long long k2i=0;k2i<(long long)nk2;++k2i) {
                 const size_t base = offset(nk2,d,(size_t)k1i,(size_t)k2i,0,0);
-                Eigen::Map<MatC> Fk(&F_new[base], d, d);
-                Eigen::Map<MatC> Pk(&P_new[base], d, d);
-                MatC C(d,d);
+                Eigen::Map<const MatC> Fk(&F_new[base], d, d);
+                Eigen::Map<const MatC> Pk(&P_new[base], d, d);
+                Eigen::Map<      MatC> C (&comm [base], d, d);
                 C.noalias() = Fk * Pk - Pk * Fk;
                 const double wk = kernel.weights[(size_t)k1i*nk2 + (size_t)k2i];
                 sum_w_c2 += wk * C.squaredNorm();
-                Eigen::Map<MatC>(&comm[base], d, d) = C;
             }
 
         const double comm_rms = std::sqrt(sum_w_c2 / std::max(1e-30, kernel.weight_sum));
@@ -119,10 +118,9 @@ py::tuple hartreefock_iteration_cpp(
         }
 
         // 4) Mixer schedule with CDIIS in the middle (fix #5)
-        Phase phase_now = Phase::BROYDEN;
-        if (comm_rms > to_cdiis)        phase_now = Phase::EDIIS;
-        else if (comm_rms > to_broyden) phase_now = Phase::CDIIS;
-
+        const Phase phase_now = (comm_rms > to_cdiis) ? Phase::EDIIS
+                               : (comm_rms > to_broyden) ? Phase::CDIIS
+                               : Phase::BROYDEN;
         const bool switched = (phase_now != last_phase);
 
         std::vector<cxd> P_mix;
@@ -182,19 +180,15 @@ py::tuple hartreefock_iteration_cpp(
     // Final μ from P (consistent)
     {
         std::vector<std::vector<double>> bands_final(nk1 * nk2);
-#ifdef _OPENMP
-        #pragma omp parallel for collapse(2) schedule(static)
-#endif
-        for (long long k1 = 0; k1 < (long long)nk1; ++k1)
-            for (long long k2 = 0; k2 < (long long)nk2; ++k2) {
-                const size_t base = offset(nk2, d, (size_t)k1, (size_t)k2, 0, 0);
-                Eigen::Map<MatC> Fk(&F_fin[base], d, d);
-                Eigen::SelfAdjointEigenSolver<MatC> es;
-                es.compute(Fk, Eigen::ComputeEigenvectors);
-                if (es.info() != Eigen::Success) throw std::runtime_error("EVD failed (final mu)");
-                const auto& ev = es.eigenvalues();
-                bands_final[(size_t)k1 * nk2 + (size_t)k2] = std::vector<double>(ev.data(), ev.data() + d);
-            }
+        for_k(nk1, nk2, [&](size_t k1, size_t k2){
+            const size_t base = offset(nk2, d, k1, k2, 0, 0);
+            Eigen::Map<const MatC> Fk(&F_fin[base], d, d);
+            Eigen::SelfAdjointEigenSolver<MatC> es;
+            es.compute(Fk, Eigen::ComputeEigenvectors);
+            if (es.info() != Eigen::Success) throw std::runtime_error("EVD failed (final mu)");
+            const auto& ev = es.eigenvalues();
+            bands_final[k1 * nk2 + k2] = std::vector<double>(ev.data(), ev.data() + d);
+        });
         mu_fin = find_chemicalpotential(bands_final, kernel.weights, kernel.nk1, kernel.nk2, kernel.d, T, electron_density0);
     }
 

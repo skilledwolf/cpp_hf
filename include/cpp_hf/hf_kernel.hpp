@@ -231,38 +231,29 @@ struct HFKernel {
         // Diagonalize and cache
         if (last_evecs.size() != nk1*nk2) last_evecs.assign(nk1*nk2, MatC());
         if (last_bands.size() != nk1*nk2) last_bands.assign(nk1*nk2, std::vector<double>());
-#ifdef _OPENMP
-        #pragma omp parallel for collapse(2) schedule(static)
-#endif
-        for (long long k1i=0;k1i<(long long)nk1;++k1i)
-            for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-                Eigen::Map<MatC> Fk(&F[base], d, d);
-                Eigen::SelfAdjointEigenSolver<MatC> es;
-                es.compute(Fk, Eigen::ComputeEigenvectors);
-                if (es.info()!=Eigen::Success) throw std::runtime_error("EVD failed");
-                last_bands[(std::size_t)k1i*nk2+(std::size_t)k2i] = std::vector<double>(es.eigenvalues().data(), es.eigenvalues().data()+d);
-                last_evecs[(std::size_t)k1i*nk2+(std::size_t)k2i]  = es.eigenvectors();
-            }
+        ::for_k(nk1, nk2, [&](std::size_t k1i, std::size_t k2i){
+            const std::size_t base = ::offset(nk2,d,k1i,k2i,0,0);
+            Eigen::Map<const MatC> Fk(&F[base], d, d);
+            Eigen::SelfAdjointEigenSolver<MatC> es;
+            es.compute(Fk, Eigen::ComputeEigenvectors);
+            if (es.info()!=Eigen::Success) throw std::runtime_error("EVD failed");
+            last_bands[k1i*nk2+k2i] = std::vector<double>(es.eigenvalues().data(), es.eigenvalues().data()+d);
+            last_evecs[k1i*nk2+k2i]  = es.eigenvectors();
+        });
         last_cache_valid = true;
 
         mu = ::find_chemicalpotential(last_bands, weights, nk1, nk2, d, T, n_target);
 
         // Build P_new = U f U^H
         Pnew.resize(n_tot);
-#ifdef _OPENMP
-        #pragma omp parallel for collapse(2) schedule(static)
-#endif
-        for (long long k1i=0;k1i<(long long)nk1;++k1i)
-            for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const auto& U = last_evecs[(std::size_t)k1i*nk2+(std::size_t)k2i];
-                Eigen::VectorXcd occ(d);
-                for (std::size_t j=0;j<d;++j) occ((Eigen::Index)j) = cxd(::fermi(last_bands[(std::size_t)k1i*nk2+(std::size_t)k2i][j]-mu, T), 0.0);
-                MatC D(d,d);
-                D.noalias() = U * occ.asDiagonal() * U.adjoint();
-                const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-                Eigen::Map<MatC>(&Pnew[base], d, d) = D;
-            }
+        ::for_k(nk1, nk2, [&](std::size_t k1i, std::size_t k2i){
+            const auto& U = last_evecs[k1i*nk2+k2i];
+            Eigen::VectorXcd occ(d);
+            for (std::size_t j=0;j<d;++j) occ((Eigen::Index)j) = cxd(::fermi(last_bands[k1i*nk2+k2i][j]-mu, T), 0.0);
+            const std::size_t base = ::offset(nk2,d,k1i,k2i,0,0);
+            Eigen::Map<MatC> Pk(&Pnew[base], d, d);
+            Pk.noalias() = U * occ.asDiagonal() * U.adjoint();
+        });
 
         // Energy using (H + 0.5 Σ) = 0.5 (H + F)
         double e = 0.0;

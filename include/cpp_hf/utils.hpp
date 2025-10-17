@@ -24,6 +24,17 @@ inline std::size_t offset(std::size_t nk2, std::size_t d,
     return ((k1 * nk2 + k2) * d + i) * d + j;
 }
 
+// Tiny helper to iterate the (k1,k2) grid with optional OpenMP collapse
+template <class Body>
+inline void for_k(std::size_t nk1, std::size_t nk2, Body&& body) {
+#ifdef _OPENMP
+    #pragma omp parallel for collapse(2) schedule(static)
+#endif
+    for (long long k1i = 0; k1i < (long long)nk1; ++k1i)
+        for (long long k2i = 0; k2i < (long long)nk2; ++k2i)
+            body(static_cast<std::size_t>(k1i), static_cast<std::size_t>(k2i));
+}
+
 // Temperature-safe Fermi-Dirac function
 inline double fermi(double x, double T) {
     const double tt = std::max(1e-12, std::abs(T));
@@ -133,15 +144,11 @@ inline void self_energy_fft(bool v_is_scalar,
     // IFFT and global normalization
     plan.backward(scratch_fft);
     const double norm = -1.0 / static_cast<double>(nk1*nk2);
-    {
-        Eigen::Map<RowMatC> S(scratch_fft, (Eigen::Index)nblocks, (Eigen::Index)block);
-        S *= norm;
-    }
 
     // fftshift on (k1,k2): just permute rows; avoid inner d*d loop
     out.resize(n_tot);
-    Eigen::Map<RowMatC> Sin(scratch_fft, (Eigen::Index)nblocks, (Eigen::Index)block);
-    Eigen::Map<RowMatC> Sout(out.data(), (Eigen::Index)nblocks,  (Eigen::Index)block);
+    Eigen::Map<const RowMatC> Sin(scratch_fft, (Eigen::Index)nblocks, (Eigen::Index)block);
+    Eigen::Map<RowMatC>       Sout(out.data(),     (Eigen::Index)nblocks, (Eigen::Index)block);
 
     const std::size_t shift1 = nk1/2, shift2 = nk2/2;
 #ifdef _OPENMP
@@ -153,7 +160,7 @@ inline void self_energy_fft(bool v_is_scalar,
             const std::size_t s2 = ((std::size_t)k2i + shift2) % nk2;
             const std::size_t src_row = ((std::size_t)k1i)*nk2 + (std::size_t)k2i;
             const std::size_t dst_row = ((std::size_t)s1  )*nk2 + (std::size_t)s2;
-            Sout.row((Eigen::Index)dst_row) = Sin.row((Eigen::Index)src_row);
+            Sout.row((Eigen::Index)dst_row) = Sin.row((Eigen::Index)src_row) * norm;
         }
     }
 }

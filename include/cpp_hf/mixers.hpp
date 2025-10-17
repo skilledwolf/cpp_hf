@@ -14,6 +14,7 @@
   #include <omp.h>
 #endif
 
+#include "cpp_hf/utils.hpp"
 namespace hf {
 
 using cxd  = std::complex<double>;
@@ -386,37 +387,33 @@ inline void orbital_preconditioner(const size_t nk1, const size_t nk2, const siz
                                    const std::vector<cxd>& F, const std::vector<cxd>& comm,
                                    std::vector<cxd>& out, double delta=1e-3) {
     out.resize(F.size());
-#ifdef _OPENMP
-    #pragma omp parallel for collapse(2) schedule(static)
-#endif
-    for (long long k1=0;k1<(long long)nk1;++k1)
-        for (long long k2=0;k2<(long long)nk2;++k2) {
-            const size_t base = (static_cast<size_t>(k1)*nk2 + static_cast<size_t>(k2)) * d * d;
-            Eigen::Map<const MatC> Fk(&F[base], d, d);
-            Eigen::SelfAdjointEigenSolver<MatC> es(Fk);
-            if (es.info()!=Eigen::Success) throw std::runtime_error("EVD failed (precond)");
-            const MatC C = es.eigenvectors();
-            const Eigen::VectorXd eps = es.eigenvalues().real();
+    ::for_k(nk1, nk2, [&](std::size_t k1, std::size_t k2){
+        const size_t base = (k1*nk2 + k2) * d * d;
+        Eigen::Map<const MatC> Fk(&F[base], d, d);
+        Eigen::SelfAdjointEigenSolver<MatC> es(Fk);
+        if (es.info()!=Eigen::Success) throw std::runtime_error("EVD failed (precond)");
+        const MatC C = es.eigenvectors();
+        const Eigen::VectorXd eps = es.eigenvalues().real();
 
-            Eigen::Map<const MatC> Rk(&comm[base], d, d);
+        Eigen::Map<const MatC> Rk(&comm[base], d, d);
 
-            // Work in MO basis: Rmo = C^† R C  (materialize once)
-            const MatC Rmo = C.adjoint() * Rk * C;
+        // Work in MO basis: Rmo = C^† R C  (materialize once)
+        const MatC Rmo = C.adjoint() * Rk * C;
 
-            // Elementwise divide by (ε_i - ε_j + δ) using broadcasted expression,
-            // avoiding an explicit denom matrix.
-            const auto er = eps.transpose(); // RowVectorXd
-            const auto ec = eps;             // VectorXd
-            const auto denom_expr =
-                (ec.rowwise().replicate((Eigen::Index)d)
-               - er.colwise().replicate((Eigen::Index)d)).array()
-               + delta;
+        // Elementwise divide by (ε_i - ε_j + δ) using broadcasted expression,
+        // avoiding an explicit denom matrix.
+        const auto er = eps.transpose(); // RowVectorXd
+        const auto ec = eps;             // VectorXd
+        const auto denom_expr =
+            (ec.rowwise().replicate((Eigen::Index)d)
+           - er.colwise().replicate((Eigen::Index)d)).array()
+           + delta;
 
-            const MatC Rtil = - Rmo.cwiseQuotient(denom_expr.matrix().cast<cxd>());
+        const MatC Rtil = - Rmo.cwiseQuotient(denom_expr.matrix().cast<cxd>());
 
-            Eigen::Map<MatC> outk(&out[base], d, d);
-            outk.noalias() = C * Rtil * C.adjoint();
-        }
+        Eigen::Map<MatC> outk(&out[base], d, d);
+        outk.noalias() = C * Rtil * C.adjoint();
+    });
 }
 
 } // namespace hf
