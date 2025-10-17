@@ -51,17 +51,13 @@ jobs:
       - name: Build wheels with cibuildwheel
         uses: pypa/cibuildwheel@v2.21.3
         env:
-          # CPython versions to build (match CI tests)
           CIBW_BUILD: cp310-* cp311-* cp312-*
           CIBW_SKIP: pp* *-musllinux_*
           CIBW_ARCHS_LINUX: x86_64 aarch64
-          # Use newer manylinux images for toolchain consistency
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
-          # Build FFTW from source and stage Boost headers for CMake
           CIBW_BEFORE_ALL_LINUX: |
             set -eux
-            # Ensure pkg-config is present in the manylinux container
             if command -v yum >/dev/null 2>&1; then
               yum -y install pkgconfig || true
             fi
@@ -74,26 +70,19 @@ jobs:
             make install
             popd
 
-            # Boost headers (header-only; no build needed). Use archives.boost.io and .tar.gz for reliability
             BOOST_U=1_84_0
             BOOST_D=1.84.0
             curl -fsSL -o boost.tar.gz https://archives.boost.io/release/${BOOST_D}/source/boost_${BOOST_U}.tar.gz
             tar -xzf boost.tar.gz
             mkdir -p /opt/boost/include
             cp -r boost_${BOOST_U}/boost /opt/boost/include/
-
-          # Help CMake find FFTW via pkg-config and Boost headers via define
           CIBW_ENVIRONMENT_LINUX: >
             PKG_CONFIG_PATH=/opt/fftw/lib/pkgconfig
             CMAKE_PREFIX_PATH=/opt/fftw
             CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDE_DIR=/opt/boost/include"
-          # Ensure auditwheel can find FFTW during repair
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             bash -lc 'LD_LIBRARY_PATH=/opt/fftw/lib auditwheel repair -w {dest_dir} {wheel}'
-
-          # Ensure numpy is available for the test snippet
           CIBW_TEST_REQUIRES: numpy
-          # Quick import + tiny run test inside the wheel env (use literal block to preserve newlines)
           CIBW_TEST_COMMAND: |
             python - <<'PY'
             import numpy as np, cpp_hf
@@ -135,9 +124,7 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          # Clean any stale/partial downloads that can trip SHA checks
           rm -f "$HOME/Library/Caches/Homebrew/downloads/"*libomp* || true
-          # Install without updating metadata to avoid transient API issues
           brew install fftw libomp boost cmake ninja || true
 
       - name: Build wheels with cibuildwheel
@@ -146,14 +133,11 @@ jobs:
           CIBW_BUILD: cp310-* cp311-* cp312-*
           CIBW_SKIP: pp*
           CIBW_ARCHS_MACOS: native
-          # Ensure pkg-config sees Homebrew's .pc files across both arch locations; set CMake deployment target
           CIBW_ENVIRONMENT_MACOS: >
             PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig
             CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
-          # Help delocate find Homebrew-provided dylibs and enforce arch slice
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
             bash -lc 'delocate-listdeps -d {wheel} || true; MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET} delocate-wheel -L /opt/homebrew/lib -L /usr/local/lib --require-archs {delocate_archs} -w {dest_dir} -v {wheel}'
-
           CIBW_TEST_REQUIRES: numpy
           CIBW_TEST_COMMAND: |
             python - <<'PY'
@@ -169,7 +153,6 @@ jobs:
             print("wheel ok", int(n), float(mu))
             PY
 
-
       - name: Upload macOS wheels
         uses: actions/upload-artifact@v4
         with:
@@ -181,6 +164,8 @@ jobs:
     name: Publish to PyPI
     needs: [sdist, wheels-linux, wheels-macos]
     runs-on: ubuntu-latest
+    # 🔐 Ensure the OIDC token includes the environment claim
+    environment: cpp_hf_env
     permissions:
       contents: read
       id-token: write
@@ -193,6 +178,7 @@ jobs:
           path: dist
 
       - name: Publish to PyPI via OIDC (Trusted Publisher)
+        if: startsWith(github.ref, 'refs/tags/v')  # publish only on v* tags
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
