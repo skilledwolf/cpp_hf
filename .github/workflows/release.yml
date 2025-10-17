@@ -6,18 +6,6 @@ on:
       - "v*"
   workflow_dispatch:
 
-# ---- Centralized version pins for Linux path ----
-env:
-  # Tooling
-  CCACHE_VER: "4.11.3"      # Linux tarballs (x86_64/aarch64)
-  CIBW_VER: "v3.0.1"        # cibuildwheel tag
-  PYTHON_VER: "3.12"        # runner Python to drive builds
-
-  # Native deps (Linux build)
-  FFTW_VER: "3.3.10"
-  BOOST_VER_U: "1_89_0"     # underscored for URL
-  BOOST_VER_D: "1.89.0"     # dotted for path
-
 jobs:
   sdist:
     name: Build sdist
@@ -25,13 +13,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VER }}
+          python-version: "3.12"
 
       - name: Build source distribution
         run: |
@@ -44,48 +32,112 @@ jobs:
           name: dist-sdist
           path: dist/*
 
-
+  # ----- Linux x86_64 (native) -----
   wheels-linux-x86_64:
     name: Build Linux wheels (x86_64)
     runs-on: ubuntu-latest
-    permissions: { contents: read }
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v5
-        with: { fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Build wheels with cibuildwheel
-        uses: pypa/cibuildwheel@${{ env.CIBW_VER }}
+      # Cache compiled objects across ABIs & runs
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-linux-x86_64-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/*.cpp', '**/*.h', 'pyproject.toml') }}
+
+      # Cache third-party source tarballs so BEFORE_ALL can just extract
+      - name: Restore 3rdparty source cache
+        uses: actions/cache@v4
+        with:
+          path: build-cache
+          key: thirdparty-src-x86_64-fftw-3.3.10-boost-1_84_0
+
+      - name: Pre-fetch Boost/FFTW (host)
+        run: |
+          set -eux
+          mkdir -p build-cache
+          # FFTW
+          test -f build-cache/fftw-3.3.10.tar.gz || \
+            curl -fsSL -o build-cache/fftw-3.3.10.tar.gz http://www.fftw.org/fftw-3.3.10.tar.gz
+          # Boost headers
+          test -f build-cache/boost_1_84_0.tar.gz || \
+            curl -fsSL -o build-cache/boost_1_84_0.tar.gz https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.gz
+
+      - name: Build wheels with cibuildwheel (x86_64)
+        uses: pypa/cibuildwheel@v2.21.3
         env:
-          CIBW_BUILD: cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64
+          CIBW_BUILD: cp310-* cp311-* cp312-*
+          CIBW_SKIP: pp* *-musllinux_*
           CIBW_ARCHS_LINUX: x86_64
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-
-          # ---- same pinned prebuilds as before ----
           CIBW_BEFORE_ALL_LINUX: |
             set -eux
-            if command -v yum >/dev/null 2>&1; then yum -y install pkgconfig xz || true; fi
-            ARCH="x86_64"; CCACHE_ARCH="linux-x86_64"
-            curl -fsSL -o /tmp/ccache.tar.xz "https://github.com/ccache/ccache/releases/download/v${CCACHE_VER}/ccache-${CCACHE_VER}-${CCACHE_ARCH}.tar.xz"
-            mkdir -p /opt/ccache && tar -C /opt/ccache -xJf /tmp/ccache.tar.xz --strip-components=1
-            export PATH="/opt/ccache/bin:$PATH"; ccache --version; ccache --set-config=max_size=2G || true
-            curl -fsSL -o /tmp/fftw.tar.gz "http://www.fftw.org/fftw-${FFTW_VER}.tar.gz"
-            tar -C /tmp -xzf /tmp/fftw.tar.gz
-            pushd /tmp/fftw-${FFTW_VER}; ./configure --prefix=/opt/fftw --enable-shared --enable-threads
-            make -j"$(nproc)"; make install; popd
-            curl -fsSL -o /tmp/boost.tar.gz "https://archives.boost.io/release/${BOOST_VER_D}/source/boost_${BOOST_VER_U}.tar.gz"
-            tar -C /tmp -xzf /tmp/boost.tar.gz
-            mkdir -p /opt/boost/include; cp -r /tmp/boost_${BOOST_VER_U}/boost /opt/boost/include/
+
+            # --- Ensure ccache & ninja exist inside the manylinux container ---
+            have_ccache=0
+            if command -v dnf >/dev/null 2>&1; then
+              dnf -y install ccache pkgconfig ninja-build || true
+            elif command -v yum >/dev/null 2>&1; then
+              yum -y install ccache pkgconfig ninja-build || true
+            elif command -v microdnf >/dev/null 2>&1; then
+              microdnf -y install ccache pkgconfig ninja-build || true
+            fi
+            if command -v ccache >/dev/null 2>&1; then
+              have_ccache=1
+            else
+              # Fallback: fetch a static ccache binary (no package manager needed)
+              arch="$(uname -m)"
+              ver="4.11.3"
+              url_x86_64="https://github.com/ccache/ccache/releases/download/v${ver}/ccache-${ver}-linux-x86_64.tar.xz"
+              url_aarch64="https://github.com/ccache/ccache/releases/download/v${ver}/ccache-${ver}-linux-aarch64.tar.xz"
+              url="${url_x86_64}"
+              [ "$arch" = "aarch64" ] && url="${url_aarch64}"
+              curl -fsSL "${url}" -o /tmp/ccache.tar.xz
+              mkdir -p /usr/local/ccache && tar -xJf /tmp/ccache.tar.xz -C /usr/local/ccache --strip-components=1
+              ln -sf /usr/local/ccache/bin/ccache /usr/local/bin/ccache
+              have_ccache=1
+            fi
+
+            # Ensure ninja exists too (fallback to portable binary if needed)
+            if ! command -v ninja >/dev/null 2>&1; then
+              curl -fsSL -o /usr/local/bin/ninja https://github.com/ninja-build/ninja/releases/download/v1.11.1/ninja-linux.zip
+              # some images have no unzip; use busybox if present, else fetch static:
+              if command -v unzip >/dev/null 2>&1; then
+                tmpd="$(mktemp -d)" && mv /usr/local/bin/ninja "$tmpd/ninja.zip"
+                unzip -p "$tmpd/ninja.zip" > /usr/local/bin/ninja && chmod +x /usr/local/bin/ninja
+              else
+                # fallback: use curl to a pre-unzipped mirror if you have one; or install unzip via dnf/yum above
+                echo "ninja fallback requires unzip; please enable unzip in package install above" >&2
+                exit 1
+              fi
+            fi
+
+            # --- Build prerequisites we cache (FFTW & Boost headers) ---
+            mkdir -p /opt/fftw /opt/boost/include
+            tar -xzf /project/build-cache/fftw-3.3.10.tar.gz -C /tmp
+            tar -xzf /project/build-cache/boost_1_84_0.tar.gz -C /tmp
+
+            pushd /tmp/fftw-3.3.10
+            ./configure --prefix=/opt/fftw --enable-shared --enable-threads --disable-fortran --disable-mpi
+            make -j"$(nproc)"
+            make install
+            popd
+
+            cp -r /tmp/boost_1_84_0/boost /opt/boost/include/
 
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=/opt/ccache/bin:$PATH
-            CCACHE_DIR=/root/.ccache
             PKG_CONFIG_PATH=/opt/fftw/lib/pkgconfig
             CMAKE_PREFIX_PATH=/opt/fftw
-            CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDE_DIR=/opt/boost/include"
-
+            CCACHE_DIR=/project/.ccache
+            CMAKE_ARGS="-G Ninja -DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDE_DIR=/opt/boost/include -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+            CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             bash -lc 'LD_LIBRARY_PATH=/opt/fftw/lib auditwheel repair -w {dest_dir} {wheel}'
-
           CIBW_TEST_REQUIRES: numpy
           CIBW_TEST_COMMAND: |
             python - <<'PY'
@@ -101,53 +153,117 @@ jobs:
             print("wheel ok", int(n), float(mu))
             PY
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Linux x86_64 wheels
+        uses: actions/upload-artifact@v4
         with:
           name: dist-wheels-linux-x86_64
           path: wheelhouse/*
           if-no-files-found: error
 
+  # ----- Linux aarch64 (native ARM runner) -----
   wheels-linux-aarch64:
-    name: Build Linux wheels (aarch64, native)
+    name: Build Linux wheels (aarch64 — native)
+    # For public repos you can use ubuntu-24.04-arm / ubuntu-22.04-arm.
+    # For private repos, switch to your self-hosted arm64 runner label.
     runs-on: ubuntu-24.04-arm
-    permissions: { contents: read }
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v5
-        with: { fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Build wheels with cibuildwheel
-        uses: pypa/cibuildwheel@${{ env.CIBW_VER }}
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-linux-arm64-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/*.cpp', '**/*.h', 'pyproject.toml') }}
+
+      - name: Restore 3rdparty source cache
+        uses: actions/cache@v4
+        with:
+          path: build-cache
+          key: thirdparty-src-arm64-fftw-3.3.10-boost-1_84_0
+
+      - name: Pre-fetch Boost/FFTW (host)
+        run: |
+          set -eux
+          mkdir -p build-cache
+          test -f build-cache/fftw-3.3.10.tar.gz || \
+            curl -fsSL -o build-cache/fftw-3.3.10.tar.gz http://www.fftw.org/fftw-3.3.10.tar.gz
+          test -f build-cache/boost_1_84_0.tar.gz || \
+            curl -fsSL -o build-cache/boost_1_84_0.tar.gz https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.gz
+
+      - name: Build wheels with cibuildwheel (aarch64)
+        uses: pypa/cibuildwheel@v2.21.3
         env:
-          CIBW_BUILD: cp310-manylinux_aarch64 cp311-manylinux_aarch64 cp312-manylinux_aarch64
+          CIBW_BUILD: cp310-* cp311-* cp312-*
+          CIBW_SKIP: pp* *-musllinux_*
           CIBW_ARCHS_LINUX: aarch64
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
-
-          # identical prebuild steps, just set arch to aarch64 and pick the right ccache tarball
           CIBW_BEFORE_ALL_LINUX: |
             set -eux
-            if command -v yum >/dev/null 2>&1; then yum -y install pkgconfig xz || true; fi
-            ARCH="aarch64"; CCACHE_ARCH="linux-aarch64"
-            curl -fsSL -o /tmp/ccache.tar.xz "https://github.com/ccache/ccache/releases/download/v${CCACHE_VER}/ccache-${CCACHE_VER}-${CCACHE_ARCH}.tar.xz"
-            mkdir -p /opt/ccache && tar -C /opt/ccache -xJf /tmp/ccache.tar.xz --strip-components=1
-            export PATH="/opt/ccache/bin:$PATH"; ccache --version; ccache --set-config=max_size=2G || true
-            curl -fsSL -o /tmp/fftw.tar.gz "http://www.fftw.org/fftw-${FFTW_VER}.tar.gz"
-            tar -C /tmp -xzf /tmp/fftw.tar.gz
-            pushd /tmp/fftw-${FFTW_VER}; ./configure --prefix=/opt/fftw --enable-shared --enable-threads
-            make -j"$(nproc)"; make install; popd
-            curl -fsSL -o /tmp/boost.tar.gz "https://archives.boost.io/release/${BOOST_VER_D}/source/boost_${BOOST_VER_U}.tar.gz"
-            tar -C /tmp -xzf /tmp/boost.tar.gz
-            mkdir -p /opt/boost/include; cp -r /tmp/boost_${BOOST_VER_U}/boost /opt/boost/include/
+
+            # --- Ensure ccache & ninja exist inside the manylinux container ---
+            have_ccache=0
+            if command -v dnf >/dev/null 2>&1; then
+              dnf -y install ccache pkgconfig ninja-build || true
+            elif command -v yum >/dev/null 2>&1; then
+              yum -y install ccache pkgconfig ninja-build || true
+            elif command -v microdnf >/dev/null 2>&1; then
+              microdnf -y install ccache pkgconfig ninja-build || true
+            fi
+            if command -v ccache >/dev/null 2>&1; then
+              have_ccache=1
+            else
+              # Fallback: fetch a static ccache binary (no package manager needed)
+              arch="$(uname -m)"
+              ver="4.11.3"
+              url_x86_64="https://github.com/ccache/ccache/releases/download/v${ver}/ccache-${ver}-linux-x86_64.tar.xz"
+              url_aarch64="https://github.com/ccache/ccache/releases/download/v${ver}/ccache-${ver}-linux-aarch64.tar.xz"
+              url="${url_x86_64}"
+              [ "$arch" = "aarch64" ] && url="${url_aarch64}"
+              curl -fsSL "${url}" -o /tmp/ccache.tar.xz
+              mkdir -p /usr/local/ccache && tar -xJf /tmp/ccache.tar.xz -C /usr/local/ccache --strip-components=1
+              ln -sf /usr/local/ccache/bin/ccache /usr/local/bin/ccache
+              have_ccache=1
+            fi
+
+            # Ensure ninja exists too (fallback to portable binary if needed)
+            if ! command -v ninja >/dev/null 2>&1; then
+              curl -fsSL -o /usr/local/bin/ninja https://github.com/ninja-build/ninja/releases/download/v1.11.1/ninja-linux.zip
+              # some images have no unzip; use busybox if present, else fetch static:
+              if command -v unzip >/dev/null 2>&1; then
+                tmpd="$(mktemp -d)" && mv /usr/local/bin/ninja "$tmpd/ninja.zip"
+                unzip -p "$tmpd/ninja.zip" > /usr/local/bin/ninja && chmod +x /usr/local/bin/ninja
+              else
+                # fallback: use curl to a pre-unzipped mirror if you have one; or install unzip via dnf/yum above
+                echo "ninja fallback requires unzip; please enable unzip in package install above" >&2
+                exit 1
+              fi
+            fi
+
+            # --- Build prerequisites we cache (FFTW & Boost headers) ---
+            mkdir -p /opt/fftw /opt/boost/include
+            tar -xzf /project/build-cache/fftw-3.3.10.tar.gz -C /tmp
+            tar -xzf /project/build-cache/boost_1_84_0.tar.gz -C /tmp
+
+            pushd /tmp/fftw-3.3.10
+            ./configure --prefix=/opt/fftw --enable-shared --enable-threads --disable-fortran --disable-mpi
+            make -j"$(nproc)"
+            make install
+            popd
+
+            cp -r /tmp/boost_1_84_0/boost /opt/boost/include/
 
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=/opt/ccache/bin:$PATH
-            CCACHE_DIR=/root/.ccache
             PKG_CONFIG_PATH=/opt/fftw/lib/pkgconfig
             CMAKE_PREFIX_PATH=/opt/fftw
-            CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDE_DIR=/opt/boost/include"
-
+            CCACHE_DIR=/project/.ccache
+            CMAKE_ARGS="-G Ninja -DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DBOOST_INCLUDE_DIR=/opt/boost/include -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+            CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             bash -lc 'LD_LIBRARY_PATH=/opt/fftw/lib auditwheel repair -w {dest_dir} {wheel}'
-
           CIBW_TEST_REQUIRES: numpy
           CIBW_TEST_COMMAND: |
             python - <<'PY'
@@ -163,12 +279,14 @@ jobs:
             print("wheel ok", int(n), float(mu))
             PY
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Linux aarch64 wheels
+        uses: actions/upload-artifact@v4
         with:
           name: dist-wheels-linux-aarch64
           path: wheelhouse/*
           if-no-files-found: error
 
+  # ----- macOS (Intel/Apple Silicon) -----
   wheels-macos:
     name: Build macOS wheels (Intel/Apple Silicon)
     strategy:
@@ -181,33 +299,24 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Homebrew-only on macOS (latest formulas)
       - name: Install Homebrew deps
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          set -eux
-          # Keep brew metadata stable during CI run, but accept current formula versions
           rm -f "$HOME/Library/Caches/Homebrew/downloads/"*libomp* || true
-          brew install ccache fftw libomp boost cmake ninja || true
-          # Make sure ccache is on PATH and usable
-          echo 'export PATH="/opt/homebrew/opt/ccache/libexec:$PATH"' >> "$HOME/.bash_profile" || true
-          echo 'export PATH="/usr/local/opt/ccache/libexec:$PATH"'   >> "$HOME/.bash_profile" || true
-          export PATH="/opt/homebrew/opt/ccache/libexec:$PATH:/usr/local/opt/ccache/libexec:$PATH"
-          ccache --version || true
+          brew install fftw libomp boost cmake ninja || true
 
       - name: Build wheels with cibuildwheel
-        uses: pypa/cibuildwheel@${{ env.CIBW_VER }}
+        uses: pypa/cibuildwheel@v2.21.3
         env:
           CIBW_BUILD: cp310-* cp311-* cp312-*
           CIBW_SKIP: pp*
           CIBW_ARCHS_MACOS: native
           CIBW_ENVIRONMENT_MACOS: >
-            PATH=/opt/homebrew/opt/ccache/libexec:/usr/local/opt/ccache/libexec:$PATH
             PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig
             CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
@@ -234,11 +343,13 @@ jobs:
           path: wheelhouse/*
           if-no-files-found: error
 
+  # ----- Publish to PyPI -----
   publish:
     name: Publish to PyPI
     needs: [sdist, wheels-linux-x86_64, wheels-linux-aarch64, wheels-macos]
     runs-on: ubuntu-latest
-    environment: cpp_hf_env   # must match Trusted Publisher environment on PyPI
+    # 🔐 Ensure the OIDC token includes the environment claim
+    environment: cpp_hf_env
     permissions:
       contents: read
       id-token: write
