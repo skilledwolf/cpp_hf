@@ -3,12 +3,14 @@
 
 #include "cpp_hf/hf_mdspan.hpp"
 #include <cstddef>
+#include <span> // for std::dynamic_extent
 
 namespace hf {
 
-using Ext2 = stdx::extents<std::size_t, stdx::dynamic_extent, stdx::dynamic_extent>;
-using Ext4 = stdx::extents<std::size_t, stdx::dynamic_extent, stdx::dynamic_extent,
-                                      stdx::dynamic_extent, stdx::dynamic_extent>;
+// Use std::dynamic_extent (from <span>) uniformly; works with std or experimental mdspan
+using Ext2 = stdx::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
+using Ext4 = stdx::extents<std::size_t, std::dynamic_extent, std::dynamic_extent,
+                                      std::dynamic_extent, std::dynamic_extent>;
 
 template <class T>
 using Grid2 = stdx::mdspan<T, Ext2, stdx::layout_right>;
