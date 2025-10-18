@@ -12,12 +12,14 @@
 
 #include <Eigen/Core> // for Eigen::Map, Array ops
 #include <mdspan>
+#include "cpp_hf/views.hpp"
+#include "cpp_hf/platform.hpp"
 
 // Optional Boost root finding
 #include <boost/math/tools/toms748_solve.hpp>
 #include <boost/math/tools/roots.hpp>
 
-#include "cpp_hf/fftw_batched2d.hpp"
+#include "cpp_hf/fft_batched2d.hpp"
 
 // Layout helper for (nk1, nk2, d, d) row-major (C-order)
 inline std::size_t offset(std::size_t nk2, std::size_t d,
@@ -47,7 +49,7 @@ inline double fermi(double x, double T) {
 }
 
 // Find chemical potential μ so that total occupation matches target electrons
-inline double find_chemicalpotential(const std::vector<std::vector<double>>& bands,
+[[nodiscard]] inline double find_chemicalpotential(const std::vector<std::vector<double>>& bands,
                                      std::span<const double> weights,
                                      std::size_t nk1, std::size_t nk2, std::size_t d,
                                      double T,
@@ -59,8 +61,7 @@ inline double find_chemicalpotential(const std::vector<std::vector<double>>& ban
     const double pad = 10.0 * std::max(1e-6, T);
     lo -= pad; hi += pad;
 
-    using ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
-    auto Wv = std::mdspan<const double, ext2, std::layout_right>(weights.data(), nk1, nk2);
+    hf::Grid2<const double> Wv(weights.data(), nk1, nk2);
 
     auto N = [&](double mu){
         const double tt = std::max(1e-12, std::abs(T));
@@ -71,7 +72,7 @@ inline double find_chemicalpotential(const std::vector<std::vector<double>>& ban
         for (long long k1=0;k1<(long long)nk1;++k1)
           for (long long k2=0;k2<(long long)nk2;++k2) {
               const std::size_t idx = (std::size_t)k1*nk2 + (std::size_t)k2;
-              const double w = Wv.data_handle()[ Wv.mapping()((std::size_t)k1,(std::size_t)k2) ];
+              const double w = hf::mds_get(Wv, (std::size_t)k1, (std::size_t)k2);
 
               // Vectorized per-k occupancy sum over bands
               Eigen::Map<const Eigen::ArrayXd> E(bands[idx].data(), (Eigen::Index)d);
@@ -121,7 +122,7 @@ inline void self_energy_fft(bool v_is_scalar,
                             std::size_t nk1, std::size_t nk2, std::size_t d,
                             const std::vector<std::complex<double>>& P,
                             std::vector<std::complex<double>>& out,
-                            const FftwBatched2D& plan,
+                            const FftBatched2D& plan,
                             std::complex<double>* scratch_fft) {
     using cxd = std::complex<double>;
     using RowMatC = Eigen::Matrix<cxd, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;

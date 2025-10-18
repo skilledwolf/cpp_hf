@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <span>
 #include <mdspan>
+#include "cpp_hf/views.hpp"
+#include "cpp_hf/platform.hpp"
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
@@ -15,6 +17,7 @@
 #include "cpp_hf/hf_kernel.hpp"
 #include "cpp_hf/mixers.hpp"
 #include "cpp_hf/utils.hpp"
+#include "cpp_hf/prof.hpp"
 
 namespace hf {
 
@@ -34,6 +37,7 @@ HFResult hartreefock_iteration(
     std::size_t diis_size,
     double mixing_alpha)
 {
+    HF_ASSUME(nk1>0 && nk2>0 && d>0);
     const std::size_t nblocks = nk1*nk2;
     const std::size_t n_tot = nk1*nk2*d*d;
     if (!W) throw std::invalid_argument("weights null");
@@ -47,19 +51,25 @@ HFResult hartreefock_iteration(
     std::vector<cxd>        P(P0, P0 + n_tot);
 
     HFKernel kernel(nk1, nk2, d, Wspan, Hspan, Vspan, dv1, dv2, T, electron_density0);
-    DiisState  cdiis(diis_size);
-    EdiisState ediis(diis_size);
+    hf::MixingConfig mix_cfg;
+    mix_cfg.to_cdiis = 9.0 * comm_tol;
+    mix_cfg.to_broyden = 1.5 * comm_tol;
+    mix_cfg.cdiis_blend_keep = 0.5;
+    mix_cfg.cdiis_blend_new  = 0.5;
+    mix_cfg.mixing_alpha = mixing_alpha;
+    mix_cfg.precond_delta = 5.0e-3;
+    hf::MixingState mix_state(diis_size, n_tot);
 
     double e_fin = 0.0; std::size_t k_fin = 0; double mu_fin = 0.0;
 
-    enum class Phase { EDIIS, CDIIS, BROYDEN };
-    Phase last_phase = Phase::EDIIS;
-    const std::size_t n_flat = n_tot;
-    BroydenState bro_state(diis_size, n_flat);
+    auto precond_cb = [&](const std::vector<cxd>& F, const std::vector<cxd>& R, std::vector<cxd>& out, double delta){
+        kernel.precondition_commutator_cached(F, R, out, delta);
+    };
 
-    const double to_cdiis   = 9.0 * comm_tol;
-    const double to_broyden = 1.5 * comm_tol;
-    const double cdiis_blend_keep = 0.5, cdiis_blend_new = 0.5;
+    // Preallocate temporaries to avoid reallocations in the loop
+    std::vector<cxd> F_new; F_new.reserve(n_tot);
+    std::vector<cxd> comm;  comm.reserve(n_tot);
+    std::vector<cxd> comm_pc; comm_pc.reserve(n_tot);
 
     for (std::size_t k=0; k<max_iter; ++k) {
         // 1) Diagonalize F[P] to build P_new and compute mu
@@ -68,85 +78,53 @@ HFResult hartreefock_iteration(
         const double mu = call_result.second;
 
         // 2) Build F[P_new] and energy once; also cache EVD(F[P_new]) for preconditioner
-        std::vector<cxd> F_new;
+        F_new.clear();
         double e_new = 0.0;
-        kernel.fock_energy_and_cache_evd(P_new, F_new, e_new);
+        {
+            HF_PROFILE_SCOPE("fock_energy_and_cache");
+            kernel.fock_energy_and_cache_evd(P_new, F_new, e_new);
+        }
 
         // 3) Commutator residual per k, and weighted RMS
-        std::vector<cxd> comm(P_new.size());
+        comm.resize(P_new.size());
         double sum_w_c2 = 0.0;
 
-        using ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
-        auto Wv = std::mdspan<const double, ext2, std::layout_right>(kernel.weights.data(), nk1, nk2);
-
+        hf::Grid2<const double> Wv(kernel.weights.data(), nk1, nk2);
+        {
+            HF_PROFILE_SCOPE("commutator_and_norm");
 #ifdef _OPENMP
-        #pragma omp parallel for collapse(2) reduction(+:sum_w_c2) schedule(static)
+            #pragma omp parallel for collapse(2) reduction(+:sum_w_c2) schedule(static)
 #endif
-        for (long long k1i=0;k1i<(long long)nk1;++k1i)
-            for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-                Eigen::Map<const MatC> Fk(&F_new[base], d, d);
-                Eigen::Map<const MatC> Pk(&P_new[base], d, d);
-                Eigen::Map<      MatC> C (&comm [base], d, d);
-                C.noalias() = Fk * Pk - Pk * Fk;
-                const double wk = Wv.data_handle()[ Wv.mapping()((std::size_t)k1i,(std::size_t)k2i) ];
-                sum_w_c2 += wk * C.squaredNorm();
-            }
+            for (long long k1i=0;k1i<(long long)nk1;++k1i)
+                for (long long k2i=0;k2i<(long long)nk2;++k2i) {
+                    const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
+                    Eigen::Map<const MatC> Fk(&F_new[base], d, d);
+                    Eigen::Map<const MatC> Pk(&P_new[base], d, d);
+                    Eigen::Map<      MatC> C (&comm [base], d, d);
+                    C.noalias() = Fk * Pk - Pk * Fk;
+                    const double wk = hf::mds_get(Wv, (std::size_t)k1i, (std::size_t)k2i);
+                    sum_w_c2 += wk * C.squaredNorm();
+                }
+        }
 
         const double comm_rms = std::sqrt(sum_w_c2 / std::max(1e-30, kernel.weight_sum));
 
-        if (comm_rms < comm_tol) {
+        if (comm_rms < comm_tol) [[unlikely]] {
             P.swap(P_new); e_fin = e_new; k_fin = k; mu_fin = mu;
             break;
         }
 
-        // 4) Mixer schedule with CDIIS in the middle
-        const Phase phase_now = (comm_rms > to_cdiis) ? Phase::EDIIS
-                               : (comm_rms > to_broyden) ? Phase::CDIIS
-                               : Phase::BROYDEN;
-        const bool switched = (phase_now != last_phase);
-
+        // 4) Mixer orchestrator (EDIIS -> CDIIS -> Broyden)
         std::vector<cxd> P_mix;
-
-        if (phase_now == Phase::EDIIS) {
-            auto ediis_result = ediis.update(P_new, F_new, e_new,
-                                             kernel.weights, nk1, nk2, d,
-                                             /*max_iter_qp=*/20, /*pg_tol=*/1e-7);
-            P_mix = std::move(ediis_result.first);
-        }
-        else if (phase_now == Phase::CDIIS) {
-            P_mix = cdiis.update_cdiis(P_new, comm, P,
-                                       /*coeff_cap=*/5.0, /*eps_reg=*/1e-12,
-                                       /*blend_keep=*/cdiis_blend_keep, /*blend_new=*/cdiis_blend_new);
-        }
-        else { // Phase::BROYDEN
-            // Precondition C with cached eigen-decomposition of F_new
-            std::vector<cxd> comm_pc;
-            kernel.precondition_commutator_cached(F_new, comm, comm_pc, 5.0e-3);
-
-            if (switched) bro_state.reset();
-            const std::size_t bro_count_before = bro_state.count;
-
-            auto upd = bro_state.update(P_new, comm_pc, mixing_alpha);
-            bro_state = std::move(upd.first);
-            std::vector<cxd> Praw = std::move(upd.second); // flat
-
-            if (bro_count_before == 0) {
-                const double beta = 0.35;
-                P_mix.resize(P.size());
-                Eigen::Map<      Eigen::ArrayXcd> Pm(P_mix.data(), (Eigen::Index)P_mix.size());
-                Eigen::Map<const Eigen::ArrayXcd> Pc(P.data(),     (Eigen::Index)P.size());
-                Eigen::Map<const Eigen::ArrayXcd> Rc(comm_pc.data(), (Eigen::Index)comm_pc.size());
-                Pm = Pc - beta * Rc;
-
-                const double w_keep = 0.7, w_new = 0.3;
-                Pm = w_keep*Pc + w_new*Pm;
-            } else {
-                P_mix = std::move(Praw);
-            }
+        {
+            HF_PROFILE_SCOPE("mix_step");
+            P_mix = hf::mix_step(
+                P, P_new, F_new, comm, e_new, comm_rms,
+                mix_state, mix_cfg,
+                kernel.weights, nk1, nk2, d,
+                precond_cb);
         }
 
-        last_phase = phase_now;
         P = std::move(P_mix);
         e_fin = e_new; k_fin = k; mu_fin = mu;
     }
@@ -176,6 +154,7 @@ HFResult hartreefock_iteration(
     out.energy = e_fin;
     out.mu = mu_fin;
     out.iters = k_fin;
+    if (hf::prof_auto_dump_enabled()) hf::prof_dump();
     return out;
 }
 

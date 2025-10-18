@@ -13,13 +13,16 @@
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
+#include "cpp_hf/views.hpp"
+#include "cpp_hf/platform.hpp"
 
 #ifdef _OPENMP
   #include <omp.h>
 #endif
 
 #include "cpp_hf/utils.hpp"
-#include "cpp_hf/fftw_batched2d.hpp"
+#include "cpp_hf/fft_batched2d.hpp"
+#include "cpp_hf/prof.hpp"
 
 namespace hf {
 using cxd  = std::complex<double>;
@@ -35,7 +38,7 @@ struct HFKernel {
     std::vector<cxd> Vhat_full;   // (nk1*nk2*d*d)
     std::vector<cxd> Vhat_scalar; // (nk1*nk2)
     bool v_is_scalar = false;
-    FftwBatched2D plan;          // batched 2D FFT plan
+    FftBatched2D plan;          // batched 2D FFT plan
     double T;
     double n_target = 0.0;
     // Cache from the last call_with_fock_and_energy() for reuse in preconditioning
@@ -74,7 +77,7 @@ struct HFKernel {
         H = H_in;
 
         // Scratch
-        scratch_fft = reinterpret_cast<cxd*>(fftw_malloc(sizeof(cxd) * n_tot));
+        scratch_fft = new cxd[n_tot];
         if (!scratch_fft) throw std::bad_alloc{};
 
         // Vhat = FFT(weight_mean * V) along (0,1)
@@ -84,21 +87,20 @@ struct HFKernel {
         if (dv1==1 && dv2==1) {
             v_is_scalar = true;
             Vhat_scalar.resize(nk1*nk2);
-            cxd* buf = reinterpret_cast<cxd*>(fftw_malloc(sizeof(cxd) * nk1 * nk2));
-            if (!buf) throw std::bad_alloc{};
             if (V_in.size() != nk1*nk2)
                 throw std::invalid_argument("V scalar must be (nk1,nk2,1,1) flattened length nk1*nk2");
             const cxd* vptr = V_in.data();
+            cxd* buf = reinterpret_cast<cxd*>(fftw_malloc(sizeof(cxd) * nk1 * nk2));
+            if (!buf) throw std::bad_alloc{};
             {
                 Eigen::Map<      Eigen::ArrayXcd> B(reinterpret_cast<cxd*>(buf), (Eigen::Index)(nk1*nk2));
                 Eigen::Map<const Eigen::ArrayXcd> V(vptr,                         (Eigen::Index)(nk1*nk2));
                 B = V * weight_mean;
             }
-
-#if defined(FFTW3_THREADS)
+#  if defined(FFTW3_THREADS)
             FftwBatched2D::init_threads_once();
             fftw_plan_with_nthreads(plan.nthreads);
-#endif
+#  endif
             fftw_plan pf = fftw_plan_dft_2d((int)nk1, (int)nk2,
                                 reinterpret_cast<fftw_complex*>(buf),
                                 reinterpret_cast<fftw_complex*>(buf),
@@ -120,80 +122,99 @@ struct HFKernel {
         }
     }
 
-    ~HFKernel() { if (scratch_fft) fftw_free(scratch_fft); }
+    ~HFKernel() { if (scratch_fft) delete[] scratch_fft; }
 
     // Return (P_new, mu)
     std::pair<std::vector<cxd>, double> call(const std::vector<cxd>& P) const {
         std::vector<cxd> Sigma;
-        ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
-                          P, Sigma, plan, scratch_fft);
+        { HF_PROFILE_SCOPE("self_energy_fft");
+          ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
+                            P, Sigma, plan, scratch_fft);
+        }
 
         std::vector<cxd> Fock(n_tot);
+        {
+            HF_PROFILE_SCOPE("build_fock");
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static)
 #endif
-        for (long long t=0;t<(long long)n_tot;++t) Fock[(std::size_t)t] = H[(std::size_t)t];
+            for (long long t=0;t<(long long)n_tot;++t) Fock[(std::size_t)t] = H[(std::size_t)t];
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static)
 #endif
-        for (long long t=0;t<(long long)n_tot;++t) Fock[(std::size_t)t] += Sigma[(std::size_t)t];
+            for (long long t=0;t<(long long)n_tot;++t) Fock[(std::size_t)t] += Sigma[(std::size_t)t];
+        }
 
         // Diagonalize at each k
         std::vector<std::vector<double>> bands(nk1*nk2);
         std::vector<MatC> evecs(nk1*nk2);
+        {
+            HF_PROFILE_SCOPE("evd_all_k.call");
 #ifdef _OPENMP
-        #pragma omp parallel for collapse(2) schedule(static)
+            #pragma omp parallel for collapse(2) schedule(static)
 #endif
-        for (long long k1i=0;k1i<(long long)nk1;++k1i)
-            for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-                Eigen::Map<MatC> Fk(&Fock[base], d, d);
-                Eigen::SelfAdjointEigenSolver<MatC> es;
-                es.compute(Fk, Eigen::ComputeEigenvectors);
-                if (es.info()!=Eigen::Success) throw std::runtime_error("EVD failed");
-                bands[(std::size_t)k1i*nk2+(std::size_t)k2i] = std::vector<double>(es.eigenvalues().data(), es.eigenvalues().data()+d);
-                evecs[(std::size_t)k1i*nk2+(std::size_t)k2i]  = es.eigenvectors();
-            }
+            for (long long k1i=0;k1i<(long long)nk1;++k1i)
+                for (long long k2i=0;k2i<(long long)nk2;++k2i) {
+                    const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
+                    Eigen::Map<MatC> Fk(&Fock[base], d, d);
+                    Eigen::SelfAdjointEigenSolver<MatC> es;
+                    es.compute(Fk, Eigen::ComputeEigenvectors);
+                    if (es.info()!=Eigen::Success) throw std::runtime_error("EVD failed");
+                    bands[(std::size_t)k1i*nk2+(std::size_t)k2i] = std::vector<double>(es.eigenvalues().data(), es.eigenvalues().data()+d);
+                    evecs[(std::size_t)k1i*nk2+(std::size_t)k2i]  = es.eigenvectors();
+                }
+        }
 
         // Cache for potential reuse (e.g., preconditioning)
         last_evecs = evecs;
         last_bands = bands;
         last_cache_valid = true;
 
-        const double mu = ::find_chemicalpotential(bands, weights, nk1, nk2, d, T, n_target);
+        double mu;
+        {
+            HF_PROFILE_SCOPE("find_mu");
+            mu = ::find_chemicalpotential(bands, weights, nk1, nk2, d, T, n_target);
+        }
 
         // P_new = U f(ε-μ) U^H
         std::vector<cxd> Pnew(n_tot);
+        {
+            HF_PROFILE_SCOPE("build_P");
 #ifdef _OPENMP
-        #pragma omp parallel for collapse(2) schedule(static)
+            #pragma omp parallel for collapse(2) schedule(static)
 #endif
-        for (long long k1i=0;k1i<(long long)nk1;++k1i)
-            for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const auto& U = evecs[(std::size_t)k1i*nk2+(std::size_t)k2i];
-                Eigen::VectorXcd occ(d);
-                for (std::size_t j=0;j<d;++j) occ((Eigen::Index)j) = cxd(::fermi(bands[(std::size_t)k1i*nk2+(std::size_t)k2i][j]-mu, T), 0.0);
-                MatC D(d,d);
-                D.noalias() = U * occ.asDiagonal() * U.adjoint();
-                const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-                Eigen::Map<MatC>(&Pnew[base], d, d) = D;
-            }
+            for (long long k1i=0;k1i<(long long)nk1;++k1i)
+                for (long long k2i=0;k2i<(long long)nk2;++k2i) {
+                    const auto& U = evecs[(std::size_t)k1i*nk2+(std::size_t)k2i];
+                    Eigen::VectorXcd occ(d);
+                    for (std::size_t j=0;j<d;++j) occ((Eigen::Index)j) = cxd(::fermi(bands[(std::size_t)k1i*nk2+(std::size_t)k2i][j]-mu, T), 0.0);
+                    MatC D(d,d);
+                    D.noalias() = U * occ.asDiagonal() * U.adjoint();
+                    const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
+                    Eigen::Map<MatC>(&Pnew[base], d, d) = D;
+                }
+        }
         return {Pnew, mu};
     }
 
     // Build Fock Σ[P] and compute energy E = ∑_k w_k Re{(H + 0.5 Σ)^† · P}
     void fock_and_energy_of(const std::vector<cxd>& P, std::vector<cxd>& F, double& E) const {
-        using ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
-        auto Wv = std::mdspan<const double, ext2, std::layout_right>(weights.data(), nk1, nk2);
+        hf::Grid2<const double> Wv(weights.data(), nk1, nk2);
         std::vector<cxd> Sigma;
-        ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
-                          P, Sigma, plan, scratch_fft);
+        { HF_PROFILE_SCOPE("self_energy_fft");
+          ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
+                            P, Sigma, plan, scratch_fft);
+        }
 
         F.resize(n_tot);
+        {
+            HF_PROFILE_SCOPE("build_fock");
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static)
 #endif
-        for (long long t=0;t<(long long)n_tot;++t)
-            F[(std::size_t)t] = H[(std::size_t)t] + Sigma[(std::size_t)t];
+            for (long long t=0;t<(long long)n_tot;++t)
+                F[(std::size_t)t] = H[(std::size_t)t] + Sigma[(std::size_t)t];
+        }
 
         double e = 0.0;
 #ifdef _OPENMP
@@ -201,7 +222,7 @@ struct HFKernel {
 #endif
         for (long long k1i=0;k1i<(long long)nk1;++k1i)
             for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const double w = Wv.data_handle()[ Wv.mapping()((std::size_t)k1i,(std::size_t)k2i) ];
+                const double w = hf::mds_get(Wv, (std::size_t)k1i, (std::size_t)k2i);
                 const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
                 Eigen::Map<const MatC> Hk(H.data() + base, d, d);
                 Eigen::Map<const MatC> Sk(&Sigma[base], d, d);
@@ -222,8 +243,7 @@ struct HFKernel {
                                    std::vector<cxd>& F,
                                    double& E,
                                    double& mu) const {
-        using ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
-        auto Wv = std::mdspan<const double, ext2, std::layout_right>(weights.data(), nk1, nk2);
+        hf::Grid2<const double> Wv(weights.data(), nk1, nk2);
         std::vector<cxd> Sigma;
         ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
                           P, Sigma, plan, scratch_fft);
@@ -238,46 +258,55 @@ struct HFKernel {
         // Diagonalize and cache
         if (last_evecs.size() != nk1*nk2) last_evecs.assign(nk1*nk2, MatC());
         if (last_bands.size() != nk1*nk2) last_bands.assign(nk1*nk2, std::vector<double>());
-        ::for_k(nk1, nk2, [&](std::size_t k1i, std::size_t k2i){
-            const std::size_t base = ::offset(nk2,d,k1i,k2i,0,0);
-            Eigen::Map<const MatC> Fk(&F[base], d, d);
-            Eigen::SelfAdjointEigenSolver<MatC> es;
-            es.compute(Fk, Eigen::ComputeEigenvectors);
-            if (es.info()!=Eigen::Success) throw std::runtime_error("EVD failed");
-            last_bands[k1i*nk2+k2i] = std::vector<double>(es.eigenvalues().data(), es.eigenvalues().data()+d);
-            last_evecs[k1i*nk2+k2i]  = es.eigenvectors();
-        });
+        {
+            HF_PROFILE_SCOPE("evd_all_k.fock_energy");
+            ::for_k(nk1, nk2, [&](std::size_t k1i, std::size_t k2i){
+                const std::size_t base = ::offset(nk2,d,k1i,k2i,0,0);
+                Eigen::Map<const MatC> Fk(&F[base], d, d);
+                Eigen::SelfAdjointEigenSolver<MatC> es;
+                es.compute(Fk, Eigen::ComputeEigenvectors);
+                if (es.info()!=Eigen::Success) throw std::runtime_error("EVD failed");
+                last_bands[k1i*nk2+k2i] = std::vector<double>(es.eigenvalues().data(), es.eigenvalues().data()+d);
+                last_evecs[k1i*nk2+k2i]  = es.eigenvectors();
+            });
+        }
         last_cache_valid = true;
 
         mu = ::find_chemicalpotential(last_bands, weights, nk1, nk2, d, T, n_target);
 
         // Build P_new = U f U^H
         Pnew.resize(n_tot);
-        ::for_k(nk1, nk2, [&](std::size_t k1i, std::size_t k2i){
-            const auto& U = last_evecs[k1i*nk2+k2i];
-            Eigen::VectorXcd occ(d);
-            for (std::size_t j=0;j<d;++j) occ((Eigen::Index)j) = cxd(::fermi(last_bands[k1i*nk2+k2i][j]-mu, T), 0.0);
-            const std::size_t base = ::offset(nk2,d,k1i,k2i,0,0);
-            Eigen::Map<MatC> Pk(&Pnew[base], d, d);
-            Pk.noalias() = U * occ.asDiagonal() * U.adjoint();
-        });
+        {
+            HF_PROFILE_SCOPE("build_P");
+            ::for_k(nk1, nk2, [&](std::size_t k1i, std::size_t k2i){
+                const auto& U = last_evecs[k1i*nk2+k2i];
+                Eigen::VectorXcd occ(d);
+                for (std::size_t j=0;j<d;++j) occ((Eigen::Index)j) = cxd(::fermi(last_bands[k1i*nk2+k2i][j]-mu, T), 0.0);
+                const std::size_t base = ::offset(nk2,d,k1i,k2i,0,0);
+                Eigen::Map<MatC> Pk(&Pnew[base], d, d);
+                Pk.noalias() = U * occ.asDiagonal() * U.adjoint();
+            });
+        }
 
         // Energy using (H + 0.5 Σ) = 0.5 (H + F)
         double e = 0.0;
+        {
+            HF_PROFILE_SCOPE("energy_sum");
 #ifdef _OPENMP
-        #pragma omp parallel for collapse(2) reduction(+:e) schedule(static)
+            #pragma omp parallel for collapse(2) reduction(+:e) schedule(static)
 #endif
-        for (long long k1i=0;k1i<(long long)nk1;++k1i)
-            for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const double w = Wv.data_handle()[ Wv.mapping()((std::size_t)k1i,(std::size_t)k2i) ];
-                const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-            Eigen::Map<const MatC> Hk(H.data() + base, d, d);
-                Eigen::Map<const MatC> Fk(&F[base], d, d);
-                Eigen::Map<const MatC> Pk(&Pnew[base], d, d);
-                const MatC Hhalf = 0.5 * (Fk + Hk);
-                const double s = (Hhalf.adjoint() * Pk).trace().real();
-                e += w * s;
-            }
+            for (long long k1i=0;k1i<(long long)nk1;++k1i)
+                for (long long k2i=0;k2i<(long long)nk2;++k2i) {
+                    const double w = hf::mds_get(Wv, (std::size_t)k1i, (std::size_t)k2i);
+                    const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
+                Eigen::Map<const MatC> Hk(H.data() + base, d, d);
+                    Eigen::Map<const MatC> Fk(&F[base], d, d);
+                    Eigen::Map<const MatC> Pk(&Pnew[base], d, d);
+                    const MatC Hhalf = 0.5 * (Fk + Hk);
+                    const double s = (Hhalf.adjoint() * Pk).trace().real();
+                    e += w * s;
+                }
+        }
         E = e;
     }
 
@@ -315,33 +344,40 @@ struct HFKernel {
     void fock_energy_and_cache_evd(const std::vector<cxd>& P,
                                    std::vector<cxd>& F,
                                    double& E) const {
-        using ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
-        auto Wv = std::mdspan<const double, ext2, std::layout_right>(weights.data(), nk1, nk2);
+        hf::Grid2<const double> Wv(weights.data(), nk1, nk2);
         std::vector<cxd> Sigma;
-        ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
-                          P, Sigma, plan, scratch_fft);
+        { HF_PROFILE_SCOPE("self_energy_fft");
+          ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
+                            P, Sigma, plan, scratch_fft);
+        }
 
         F.resize(n_tot);
+        {
+            HF_PROFILE_SCOPE("build_fock");
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
+            #pragma omp parallel for schedule(static)
 #endif
-        for (long long t=0;t<(long long)n_tot;++t)
-            F[(std::size_t)t] = H[(std::size_t)t] + Sigma[(std::size_t)t];
+            for (long long t=0;t<(long long)n_tot;++t)
+                F[(std::size_t)t] = H[(std::size_t)t] + Sigma[(std::size_t)t];
+        }
 
         double e = 0.0;
+        {
+            HF_PROFILE_SCOPE("energy_sum");
 #ifdef _OPENMP
-        #pragma omp parallel for collapse(2) reduction(+:e) schedule(static)
+            #pragma omp parallel for collapse(2) reduction(+:e) schedule(static)
 #endif
-        for (long long k1i=0;k1i<(long long)nk1;++k1i)
-            for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const double w = Wv.data_handle()[ Wv.mapping()((std::size_t)k1i,(std::size_t)k2i) ];
-                const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-                Eigen::Map<const MatC> Hk(H.data() + base, d, d);
-                Eigen::Map<const MatC> Sk(&Sigma[base], d, d);
-                Eigen::Map<const MatC> Pk(&P[base], d, d);
-                const double s = ((Hk + 0.5*Sk).adjoint() * Pk).trace().real();
-                e += w * s;
-            }
+            for (long long k1i=0;k1i<(long long)nk1;++k1i)
+                for (long long k2i=0;k2i<(long long)nk2;++k2i) {
+                    const double w = hf::mds_get(Wv, (std::size_t)k1i, (std::size_t)k2i);
+                    const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
+                    Eigen::Map<const MatC> Hk(H.data() + base, d, d);
+                    Eigen::Map<const MatC> Sk(&Sigma[base], d, d);
+                    Eigen::Map<const MatC> Pk(&P[base], d, d);
+                    const double s = ((Hk + 0.5*Sk).adjoint() * Pk).trace().real();
+                    e += w * s;
+                }
+        }
         E = e;
 
         // Reuse eigendecomposition cached in call(P) for preconditioning in this iteration

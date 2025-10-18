@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "cpp_hf/hartreefock.hpp"
+#include "cpp_hf/prof.hpp"
 
 namespace py = pybind11;
 using cxd  = std::complex<double>;
@@ -65,4 +66,6 @@ PYBIND11_MODULE(cpp_hf, m) {
           py::arg("electron_density0"), py::arg("T"),
           py::arg("max_iter"), py::arg("comm_tol"),
           py::arg("diis_size"), py::arg("mixing_alpha"));
+
+    m.def("prof_dump", [](){ hf::prof_dump(); }, "Dump aggregated C++ profiling stats (if built with HF_ENABLE_PROFILING)");
 }

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <numeric>
 #include <stdexcept>
+#include <functional>
 #include <span>
 
 #include <Eigen/Core>
@@ -16,6 +17,7 @@
 #endif
 
 #include "cpp_hf/utils.hpp"
+#include "cpp_hf/prof.hpp"
 namespace hf {
 
 using cxd  = std::complex<double>;
@@ -415,6 +417,101 @@ inline void orbital_preconditioner(const size_t nk1, const size_t nk2, const siz
         Eigen::Map<MatC> outk(&out[base], d, d);
         outk.noalias() = C * Rtil * C.adjoint();
     });
+}
+
+// ---------------- Mixing Orchestrator (EDIIS/CDIIS/Broyden) ----------------
+enum class MixPhase { EDIIS, CDIIS, BROYDEN };
+
+struct MixingConfig {
+    double to_cdiis = 0.0;          // threshold to switch from EDIIS -> CDIIS
+    double to_broyden = 0.0;        // threshold to switch from CDIIS -> Broyden
+    double cdiis_blend_keep = 0.5;  // CDIIS blend keep weight
+    double cdiis_blend_new  = 0.5;  // CDIIS blend new weight
+    double mixing_alpha = 0.5;      // Broyden step scaling
+    double precond_delta = 5.0e-3;  // Preconditioner denominator shift
+};
+
+struct MixingState {
+    MixPhase last_phase = MixPhase::EDIIS;
+    BroydenState bro_state;
+    DiisState cdiis_state;
+    EdiisState ediis_state;
+
+    MixingState(std::size_t diis_size, std::size_t n_flat)
+        : bro_state(diis_size, n_flat), cdiis_state(diis_size), ediis_state(diis_size) {}
+    void reset_broyden_if_switched(MixPhase phase_now) {
+        if (phase_now != last_phase) bro_state.reset();
+        last_phase = phase_now;
+    }
+};
+
+inline std::vector<cxd> mix_step(
+    const std::vector<cxd>& P_cur,
+    const std::vector<cxd>& P_new,
+    const std::vector<cxd>& F_new,
+    const std::vector<cxd>& comm,
+    double e_new,
+    double comm_rms,
+    MixingState& st,
+    const MixingConfig& cfg,
+    std::span<const double> weights,
+    std::size_t nk1, std::size_t nk2, std::size_t d,
+    const std::function<void(const std::vector<cxd>&, const std::vector<cxd>&, std::vector<cxd>&, double)>& precondition_cb)
+{
+    const MixPhase phase_now = (comm_rms > cfg.to_cdiis) ? MixPhase::EDIIS
+                               : (comm_rms > cfg.to_broyden) ? MixPhase::CDIIS
+                               : MixPhase::BROYDEN;
+
+    std::vector<cxd> P_mix;
+
+    if (phase_now == MixPhase::EDIIS) {
+        {
+            HF_PROFILE_SCOPE("ediis_update");
+            auto ediis_result = st.ediis_state.update(P_new, F_new, e_new,
+                                                      weights, nk1, nk2, d,
+                                                      /*max_iter_qp=*/20, /*pg_tol=*/1e-7);
+            P_mix = std::move(ediis_result.first);
+        }
+    }
+    else if (phase_now == MixPhase::CDIIS) {
+        HF_PROFILE_SCOPE("cdiis_update");
+        P_mix = st.cdiis_state.update_cdiis(P_new, comm, P_cur,
+                                            /*coeff_cap=*/5.0, /*eps_reg=*/1e-12,
+                                            /*blend_keep=*/cfg.cdiis_blend_keep,
+                                            /*blend_new=*/cfg.cdiis_blend_new);
+    }
+    else { // MixPhase::BROYDEN
+        std::vector<cxd> comm_pc;
+        {
+            HF_PROFILE_SCOPE("precondition_commutator");
+            precondition_cb(F_new, comm, comm_pc, cfg.precond_delta);
+        }
+
+        const std::size_t bro_count_before = st.bro_state.count;
+        std::vector<cxd> Praw;
+        {
+            HF_PROFILE_SCOPE("broyden_update");
+            auto upd = st.bro_state.update(P_new, comm_pc, cfg.mixing_alpha);
+            st.bro_state = std::move(upd.first);
+            Praw = std::move(upd.second);
+        }
+
+        if (bro_count_before == 0) {
+            const double beta = 0.35;
+            P_mix.resize(P_cur.size());
+            Eigen::Map<      Eigen::ArrayXcd> Pm(P_mix.data(), (Eigen::Index)P_mix.size());
+            Eigen::Map<const Eigen::ArrayXcd> Pc(P_cur.data(), (Eigen::Index)P_cur.size());
+            Eigen::Map<const Eigen::ArrayXcd> Rc(comm_pc.data(), (Eigen::Index)comm_pc.size());
+            Pm = Pc - beta * Rc;
+            const double w_keep = 0.7, w_new = 0.3;
+            Pm = w_keep*Pc + w_new*Pm;
+        } else {
+            P_mix = std::move(Praw);
+        }
+    }
+
+    st.reset_broyden_if_switched(phase_now);
+    return P_mix;
 }
 
 } // namespace hf
