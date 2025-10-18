@@ -72,7 +72,7 @@ if (NOT HAVE_STD_MDSPAN AND NOT HAVE_EXP_MDSPAN)
   FetchContent_Declare(
     mdspan_ref
     GIT_REPOSITORY https://github.com/kokkos/mdspan.git
-    GIT_TAG main
+    GIT_TAG stable
   )
   FetchContent_MakeAvailable(mdspan_ref)
   add_library(mdspan_ref INTERFACE)
