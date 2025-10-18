@@ -126,7 +126,7 @@ endif()
 
 # Build module (Python name: cpp_hf)
 pybind11_add_module(cpp_hf cpp_hf.cpp src/hartreefock.cpp)
-target_compile_features(cpp_hf PRIVATE cxx_std_17)
+target_compile_features(cpp_hf PRIVATE cxx_std_23)
 if (MSVC)
   target_compile_options(cpp_hf PRIVATE /O2 /DNDEBUG)
   target_compile_definitions(cpp_hf PRIVATE _SILENCE_CXX17_RESULT_OF_DEPRECATION_WARNING)
@@ -216,7 +216,7 @@ install(TARGETS cpp_hf
 
 # Optional FFTW benchmark executable
 add_executable(bench_fftw tests/bench_fftw.cpp)
-target_compile_features(bench_fftw PRIVATE cxx_std_17)
+target_compile_features(bench_fftw PRIVATE cxx_std_23)
 target_include_directories(bench_fftw PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/include

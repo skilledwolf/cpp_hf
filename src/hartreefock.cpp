@@ -5,6 +5,8 @@
 #include <cmath>
 #include <stdexcept>
 #include <algorithm>
+#include <span>
+#include <mdspan>
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
@@ -39,13 +41,12 @@ HFResult hartreefock_iteration(
     if (!V) throw std::invalid_argument("V null");
     if (!P0) throw std::invalid_argument("P0 null");
 
-    // Flatten inputs (copy) here; wrapper passes raw pointers only
-    std::vector<double> weights_vec(W, W + nblocks);
-    std::vector<cxd>    H_vec(H, H + n_tot);
-    std::vector<cxd>    V_vec(V, V + ((dv1==1 && dv2==1) ? nblocks : n_tot));
-    std::vector<cxd>    P(P0, P0 + n_tot);
+    std::span<const double> Wspan(W, nblocks);
+    std::span<const cxd>    Hspan(H, n_tot);
+    std::span<const cxd>    Vspan(V, (dv1==1 && dv2==1) ? nblocks : n_tot);
+    std::vector<cxd>        P(P0, P0 + n_tot);
 
-    HFKernel kernel(nk1, nk2, d, weights_vec, H_vec, V_vec, dv1, dv2, T, electron_density0);
+    HFKernel kernel(nk1, nk2, d, Wspan, Hspan, Vspan, dv1, dv2, T, electron_density0);
     DiisState  cdiis(diis_size);
     EdiisState ediis(diis_size);
 
@@ -75,6 +76,9 @@ HFResult hartreefock_iteration(
         std::vector<cxd> comm(P_new.size());
         double sum_w_c2 = 0.0;
 
+        using ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
+        auto Wv = std::mdspan<const double, ext2, std::layout_right>(kernel.weights.data(), nk1, nk2);
+
 #ifdef _OPENMP
         #pragma omp parallel for collapse(2) reduction(+:sum_w_c2) schedule(static)
 #endif
@@ -85,7 +89,7 @@ HFResult hartreefock_iteration(
                 Eigen::Map<const MatC> Pk(&P_new[base], d, d);
                 Eigen::Map<      MatC> C (&comm [base], d, d);
                 C.noalias() = Fk * Pk - Pk * Fk;
-                const double wk = kernel.weights[(std::size_t)k1i*nk2 + (std::size_t)k2i];
+                const double wk = Wv.data_handle()[ Wv.mapping()((std::size_t)k1i,(std::size_t)k2i) ];
                 sum_w_c2 += wk * C.squaredNorm();
             }
 

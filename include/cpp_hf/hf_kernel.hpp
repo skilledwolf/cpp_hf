@@ -8,6 +8,8 @@
 #include <numeric>
 #include <limits>
 #include <cmath>
+#include <span>
+#include <mdspan>
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
@@ -26,10 +28,10 @@ using MatC = Eigen::Matrix<std::complex<double>, Eigen::Dynamic, Eigen::Dynamic,
 struct HFKernel {
     std::size_t nk1, nk2, d;
     std::size_t n_tot;
-    std::vector<double> weights; // (nk1*nk2)
+    std::span<const double> weights; // (nk1*nk2)
     double weight_sum = 0.0;     // sum of weights
     double weight_mean = 0.0;    // scalar weight used in JAX path (dk^2/(2π)^2)
-    std::vector<cxd> H;          // (nk1*nk2*d*d)
+    std::span<const cxd> H;          // (nk1*nk2*d*d)
     std::vector<cxd> Vhat_full;   // (nk1*nk2*d*d)
     std::vector<cxd> Vhat_scalar; // (nk1*nk2)
     bool v_is_scalar = false;
@@ -45,9 +47,9 @@ struct HFKernel {
     cxd* scratch_fft = nullptr;
 
     HFKernel(std::size_t nk1_, std::size_t nk2_, std::size_t d_,
-             const std::vector<double>& W,
-             const std::vector<cxd>& H_in,
-             const std::vector<cxd>& V_in,
+             std::span<const double> W,
+             std::span<const cxd> H_in,
+             std::span<const cxd> V_in,
              std::size_t dv1, std::size_t dv2,
              double T_,
              double n_target_)
@@ -126,7 +128,11 @@ struct HFKernel {
         ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
                           P, Sigma, plan, scratch_fft);
 
-        std::vector<cxd> Fock = H;
+        std::vector<cxd> Fock(n_tot);
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static)
+#endif
+        for (long long t=0;t<(long long)n_tot;++t) Fock[(std::size_t)t] = H[(std::size_t)t];
 #ifdef _OPENMP
         #pragma omp parallel for schedule(static)
 #endif
@@ -176,6 +182,8 @@ struct HFKernel {
 
     // Build Fock Σ[P] and compute energy E = ∑_k w_k Re{(H + 0.5 Σ)^† · P}
     void fock_and_energy_of(const std::vector<cxd>& P, std::vector<cxd>& F, double& E) const {
+        using ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
+        auto Wv = std::mdspan<const double, ext2, std::layout_right>(weights.data(), nk1, nk2);
         std::vector<cxd> Sigma;
         ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
                           P, Sigma, plan, scratch_fft);
@@ -193,9 +201,9 @@ struct HFKernel {
 #endif
         for (long long k1i=0;k1i<(long long)nk1;++k1i)
             for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const double w = weights[(std::size_t)k1i*nk2+(std::size_t)k2i];
+                const double w = Wv.data_handle()[ Wv.mapping()((std::size_t)k1i,(std::size_t)k2i) ];
                 const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-                Eigen::Map<const MatC> Hk(&H[base], d, d);
+                Eigen::Map<const MatC> Hk(H.data() + base, d, d);
                 Eigen::Map<const MatC> Sk(&Sigma[base], d, d);
                 Eigen::Map<const MatC> Pk(&P[base], d, d);
                 const double s = ((Hk + 0.5*Sk).adjoint() * Pk).trace().real();
@@ -214,6 +222,8 @@ struct HFKernel {
                                    std::vector<cxd>& F,
                                    double& E,
                                    double& mu) const {
+        using ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
+        auto Wv = std::mdspan<const double, ext2, std::layout_right>(weights.data(), nk1, nk2);
         std::vector<cxd> Sigma;
         ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
                           P, Sigma, plan, scratch_fft);
@@ -259,9 +269,9 @@ struct HFKernel {
 #endif
         for (long long k1i=0;k1i<(long long)nk1;++k1i)
             for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const double w = weights[(std::size_t)k1i*nk2+(std::size_t)k2i];
+                const double w = Wv.data_handle()[ Wv.mapping()((std::size_t)k1i,(std::size_t)k2i) ];
                 const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-                Eigen::Map<const MatC> Hk(&H[base], d, d);
+            Eigen::Map<const MatC> Hk(H.data() + base, d, d);
                 Eigen::Map<const MatC> Fk(&F[base], d, d);
                 Eigen::Map<const MatC> Pk(&Pnew[base], d, d);
                 const MatC Hhalf = 0.5 * (Fk + Hk);
@@ -305,6 +315,8 @@ struct HFKernel {
     void fock_energy_and_cache_evd(const std::vector<cxd>& P,
                                    std::vector<cxd>& F,
                                    double& E) const {
+        using ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
+        auto Wv = std::mdspan<const double, ext2, std::layout_right>(weights.data(), nk1, nk2);
         std::vector<cxd> Sigma;
         ::self_energy_fft(v_is_scalar, Vhat_full, Vhat_scalar, nk1, nk2, d,
                           P, Sigma, plan, scratch_fft);
@@ -322,9 +334,9 @@ struct HFKernel {
 #endif
         for (long long k1i=0;k1i<(long long)nk1;++k1i)
             for (long long k2i=0;k2i<(long long)nk2;++k2i) {
-                const double w = weights[(std::size_t)k1i*nk2+(std::size_t)k2i];
+                const double w = Wv.data_handle()[ Wv.mapping()((std::size_t)k1i,(std::size_t)k2i) ];
                 const std::size_t base = ::offset(nk2,d,(std::size_t)k1i,(std::size_t)k2i,0,0);
-                Eigen::Map<const MatC> Hk(&H[base], d, d);
+                Eigen::Map<const MatC> Hk(H.data() + base, d, d);
                 Eigen::Map<const MatC> Sk(&Sigma[base], d, d);
                 Eigen::Map<const MatC> Pk(&P[base], d, d);
                 const double s = ((Hk + 0.5*Sk).adjoint() * Pk).trace().real();

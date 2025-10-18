@@ -8,8 +8,10 @@
 #include <limits>
 #include <cstdint>
 #include <complex>
+#include <span>
 
 #include <Eigen/Core> // for Eigen::Map, Array ops
+#include <mdspan>
 
 // Optional Boost root finding
 #include <boost/math/tools/toms748_solve.hpp>
@@ -46,7 +48,7 @@ inline double fermi(double x, double T) {
 
 // Find chemical potential μ so that total occupation matches target electrons
 inline double find_chemicalpotential(const std::vector<std::vector<double>>& bands,
-                                     const std::vector<double>& weights,
+                                     std::span<const double> weights,
                                      std::size_t nk1, std::size_t nk2, std::size_t d,
                                      double T,
                                      double target_electrons) {
@@ -57,6 +59,9 @@ inline double find_chemicalpotential(const std::vector<std::vector<double>>& ban
     const double pad = 10.0 * std::max(1e-6, T);
     lo -= pad; hi += pad;
 
+    using ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
+    auto Wv = std::mdspan<const double, ext2, std::layout_right>(weights.data(), nk1, nk2);
+
     auto N = [&](double mu){
         const double tt = std::max(1e-12, std::abs(T));
         double s = 0.0;
@@ -66,7 +71,7 @@ inline double find_chemicalpotential(const std::vector<std::vector<double>>& ban
         for (long long k1=0;k1<(long long)nk1;++k1)
           for (long long k2=0;k2<(long long)nk2;++k2) {
               const std::size_t idx = (std::size_t)k1*nk2 + (std::size_t)k2;
-              const double w = weights[idx];
+              const double w = Wv.data_handle()[ Wv.mapping()((std::size_t)k1,(std::size_t)k2) ];
 
               // Vectorized per-k occupancy sum over bands
               Eigen::Map<const Eigen::ArrayXd> E(bands[idx].data(), (Eigen::Index)d);

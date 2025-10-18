@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <numeric>
 #include <stdexcept>
+#include <span>
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
@@ -31,7 +32,7 @@ inline double real_inner(const std::vector<cxd>& a, const std::vector<cxd>& b) {
 // Loop-free via (nblocks × block) row-major maps and row-wise reduction.
 inline double weighted_inner_blocks(const std::vector<cxd>& A,
                                     const std::vector<cxd>& B,
-                                    const std::vector<double>& w,
+                                    std::span<const double> w,
                                     size_t nk1, size_t nk2, size_t d) {
     const size_t nblocks = nk1 * nk2;
     const size_t block   = d * d;
@@ -188,7 +189,7 @@ struct EdiisState {
     std::pair<std::vector<cxd>, bool> update(const std::vector<cxd>& p,
                                              const std::vector<cxd>& f,
                                              double e,
-                                             const std::vector<double>& weights,
+                                             std::span<const double> weights,
                                              size_t nk1, size_t nk2, size_t d,
                                              size_t max_iter_qp,
                                              double pg_tol = 1e-9) {
