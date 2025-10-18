@@ -175,9 +175,83 @@ if (HF_FFTW_LIBS STREQUAL "")
   endif()
 endif()
 
-# 3) If still not found, error with a helpful message
+# 3) If still not found, optionally fetch+build FFTW from source (UNIX-like)
+option(HF_FETCH_FFTW "Auto-download & build FFTW if not found" ON)
+
 if (HF_FFTW_LIBS STREQUAL "")
-  message(FATAL_ERROR "FFTW3 not found. Please install FFTW and set FFTW3_DIR to the directory containing FFTW3Config.cmake (e.g., /opt/homebrew/lib/cmake/fftw3 or $HOME/.local/lib/cmake/fftw3), or ensure pkg-config has a valid fftw3.pc.")
+  if (HF_FETCH_FFTW)
+    if (WIN32 AND NOT MINGW)
+      message(FATAL_ERROR
+        "HF_FETCH_FFTW uses autotools (./configure && make) and does not support plain MSVC. "
+        "Use MSYS2/MINGW or install FFTW manually and set FFTW3_DIR / pkg-config.")
+    endif()
+
+    include(ExternalProject)
+
+    # Version & integrity (official release tarball, includes generated sources)
+    set(HF_FFTW_VERSION "3.3.10" CACHE STRING "FFTW version to fetch")
+    set(HF_FFTW_SHA256 "56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467")
+
+    # Optional threads flag (POSIX threads library)
+    set(_fftw_threads_flag "")
+    if (HF_USE_FFTW_THREADS)
+      set(_fftw_threads_flag "--enable-threads")
+    endif()
+
+    # Where to install the built FFTW inside the build tree
+    set(_fftw_install_dir "${CMAKE_BINARY_DIR}/fftw")
+
+    ExternalProject_Add(fftw_ep
+      URL "https://www.fftw.org/fftw-${HF_FFTW_VERSION}.tar.gz"
+      URL_HASH SHA256=${HF_FFTW_SHA256}
+      CONFIGURE_COMMAND <SOURCE_DIR>/configure
+                         --prefix=<INSTALL_DIR>
+                         --enable-shared --disable-static
+                         --disable-fortran
+                         ${_fftw_threads_flag}
+      BUILD_COMMAND $(MAKE)
+      INSTALL_COMMAND $(MAKE) install
+      UPDATE_DISCONNECTED 1
+      BUILD_IN_SOURCE 1
+      INSTALL_DIR "${_fftw_install_dir}"
+    )
+
+    # Imported targets matching typical package targets
+    set(_fftw_inc    "${_fftw_install_dir}/include")
+    set(_fftw_libdir "${_fftw_install_dir}/lib")
+
+    add_library(FFTW3::fftw3 SHARED IMPORTED GLOBAL)
+    set_target_properties(FFTW3::fftw3 PROPERTIES
+      IMPORTED_LOCATION "${_fftw_libdir}/libfftw3${CMAKE_SHARED_LIBRARY_SUFFIX}"
+      INTERFACE_INCLUDE_DIRECTORIES "${_fftw_inc}"
+    )
+    add_dependencies(FFTW3::fftw3 fftw_ep)
+    list(APPEND HF_FFTW_LIBS FFTW3::fftw3)
+
+    if (HF_USE_FFTW_THREADS)
+      add_library(FFTW3::fftw3_threads SHARED IMPORTED GLOBAL)
+      set_target_properties(FFTW3::fftw3_threads PROPERTIES
+        IMPORTED_LOCATION "${_fftw_libdir}/libfftw3_threads${CMAKE_SHARED_LIBRARY_SUFFIX}"
+        INTERFACE_INCLUDE_DIRECTORIES "${_fftw_inc}"
+      )
+      add_dependencies(FFTW3::fftw3_threads fftw_ep)
+      list(APPEND HF_FFTW_LIBS FFTW3::fftw3_threads)
+      set(HF_HAVE_FFTW_THREADS TRUE)
+    endif()
+
+    # POSIX threads (required by FFTW threads)
+    if (HF_HAVE_FFTW_THREADS)
+      find_package(Threads QUIET)
+      if (Threads_FOUND)
+        list(APPEND HF_FFTW_LIBS Threads::Threads)
+      endif()
+    endif()
+
+  else()
+    message(FATAL_ERROR
+      "FFTW3 not found. Install FFTW and set FFTW3_DIR (or provide valid pkg-config files), "
+      "or re-run with -DHF_FETCH_FFTW=ON to auto-build from source.")
+  endif()
 endif()
 
 # POSIX threads may be required by FFTW threads

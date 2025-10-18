@@ -91,10 +91,13 @@ jobs:
 
       # ---------- Smoke test ----------
       - name: Smoke test
+        working-directory: ${{ github.workspace }}
         env:
           # Ensure the loader can see FFTW/OMP in CI for local wheels
           DYLD_FALLBACK_LIBRARY_PATH: ${{ matrix.os == 'macOS-ARM' && format('{0}:{1}', env.HOME, '/.local/lib') || '/opt/homebrew/lib:/usr/local/lib' }}
-        run: python ci/smoke_test.py
+        run: |
+          ls ci/smoke_test.py
+          python "$GITHUB_WORKSPACE/ci/smoke_test.py"
 
       - name: Upload test wheels (optional)
         uses: actions/upload-artifact@v4
