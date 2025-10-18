@@ -78,7 +78,7 @@ skip  = "pp* *-musllinux_*"
 
 # Tests
 test-requires = ["numpy"]
-test-command  = "python ci/smoke_test.py"
+test-command  = "python {project}/ci/smoke_test.py"
 
 # Linux image + pre-steps (runs inside manylinux container)
 [tool.cibuildwheel.linux]
