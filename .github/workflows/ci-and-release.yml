@@ -15,7 +15,6 @@ jobs:
   # =========================
   # Build & test on PR/push
   # =========================
-jobs:
   build-test:
     name: Build & Test (${{ matrix.os }} / py${{ matrix.python }})
     strategy:
