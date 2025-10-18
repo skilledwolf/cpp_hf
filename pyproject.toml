@@ -51,8 +51,8 @@ ninja.make-fallback = false
 [tool.scikit-build.cmake.define]
 HF_USE_OPENMP = true
 HF_USE_FFTW_THREADS = true
-# Drive the CMake deployment target from env (fallback 11.0)
-CMAKE_OSX_DEPLOYMENT_TARGET = { env = "MACOSX_DEPLOYMENT_TARGET", default = "11.0" }
+# Drive the CMake deployment target from env (fallback 15.0 to match bundled FFTW)
+CMAKE_OSX_DEPLOYMENT_TARGET = { env = "MACOSX_DEPLOYMENT_TARGET", default = "15.0" }
 
 # Dynamic version from setuptools_scm (built-in provider)
 [tool.scikit-build.metadata.version]
@@ -97,7 +97,7 @@ delocate-wheel -L $HOME/.local/lib -L /opt/homebrew/lib -L /usr/local/lib \
 
 [tool.cibuildwheel.macos.environment]
 # Baseline deployment target (also feeds scikit-build via define above)
-MACOSX_DEPLOYMENT_TARGET = "14.0"
+MACOSX_DEPLOYMENT_TARGET = "15.0"
 # Help CMake/pkg-config find user-local FFTW on ARM builds
 PKG_CONFIG_PATH = "$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 CMAKE_PREFIX_PATH = "$HOME/.local:$CMAKE_PREFIX_PATH"

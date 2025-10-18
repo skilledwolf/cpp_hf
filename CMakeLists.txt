@@ -44,7 +44,7 @@ if (NOT Eigen3_FOUND)
 endif()
 
 # Boost headers (for Boost.Math)
-find_package(Boost 1.66 REQUIRED COMPONENTS headers)
+find_package(Boost 1.66.0 REQUIRED COMPONENTS headers)
 
 # mdspan availability and optional vendoring
 include(CheckCXXSourceCompiles)
