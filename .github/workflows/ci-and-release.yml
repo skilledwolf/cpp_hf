@@ -37,6 +37,7 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
+      # System deps for host builds (Eigen fetched if missing)
       - name: Install system deps
         env: { HOMEBREW_NO_AUTO_UPDATE: "1" }
         run: |
@@ -57,20 +58,9 @@ jobs:
 
       - name: Smoke test
         env:
+          # helps the extension find Homebrew dylibs on fresh macOS runners
           DYLD_FALLBACK_LIBRARY_PATH: /opt/homebrew/lib:/usr/local/lib
-        run: |
-          python -m pip install dist/*.whl
-          python - <<'PY'
-          import numpy as np, cpp_hf
-          nk,d=8,2
-          w=np.ones((nk,nk))*((2/nk)*(2/nk)/(2*np.pi)**2)
-          H=np.zeros((nk,nk,d,d),np.complex128)
-          K=np.linspace(-1,1,nk)
-          V=(1.0/np.sqrt((K[:,None]**2+K[None,:]**2)+0.2)).astype(np.complex128)[...,None,None]
-          P0=np.zeros_like(H); ne=0.5*d*w.sum()
-          P,F,E,mu,n=cpp_hf.hartreefock_iteration_cpp(w,H,V,P0,ne,0.2,1,1e-2,2,1.0)
-          print("wheel ok", int(n), float(mu))
-          PY
+        run: python ci/smoke_test.py
 
       - name: Upload test wheels (optional)
         uses: actions/upload-artifact@v4
@@ -108,7 +98,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # macOS preparation
+      # macOS prep (host environment for cibuildwheel)
       - name: macOS toolchain (Intel)
         if: matrix.name == 'macos-intel'
         env: { HOMEBREW_NO_AUTO_UPDATE: "1" }
@@ -120,8 +110,7 @@ jobs:
         run: |
           set -eux
           brew install libomp boost cmake ninja || true
-          # Your existing script that builds optimized FFTW into ~/.local
-          bash ./build_fftw_macos_arm.sh
+          bash ci/macos_arm_fftw.sh
           {
             echo "PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
             echo "CMAKE_PREFIX_PATH=$HOME/.local:$CMAKE_PREFIX_PATH"
@@ -134,19 +123,15 @@ jobs:
         env:
           CIBW_BUILD: "cp310-* cp311-* cp312-*"
           CIBW_SKIP: "pp* *-musllinux_*"
-          # Linux images & arches
+          # Linux: arches & image
           CIBW_ARCHS_LINUX: ${{ matrix.cibw-archs }}
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
-          # macOS targeting
+          # macOS: target baseline
           CIBW_ARCHS_MACOS: native
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deploy }}
-          # Install build tools + FFTW/Boost inside manylinux container
-          CIBW_BEFORE_ALL_LINUX: |
-            set -eux
-            if command -v dnf >/dev/null 2>&1; then PM=dnf; elif command -v yum >/dev/null 2>&1; then PM=yum; else PM=microdnf; fi
-            $PM -y install pkgconfig ninja-build unzip make which curl ca-certificates xz tar gzip cmake gcc-c++ \
-              fftw fftw-devel boost-devel zstd libzstd-devel || true
+          # Install build deps inside manylinux container
+          CIBW_BEFORE_ALL_LINUX: "bash ci/linux_before_all.sh"
           # CMake flags for both platforms
           CIBW_ENVIRONMENT_LINUX: >
             CC=gcc CXX=g++
@@ -157,23 +142,12 @@ jobs:
             LIBRARY_PATH=$LIBRARY_PATH
             CPATH=$CPATH
             CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
+          # Use the shared smoke test file everywhere
+          CIBW_TEST_REQUIRES: numpy
+          CIBW_TEST_COMMAND: "python ci/smoke_test.py"
           # Ensure delocate sees user-local FFTW on macOS
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
             bash -lc 'delocate-listdeps -d {wheel} || true; delocate-wheel -L $HOME/.local/lib -L /opt/homebrew/lib -L /usr/local/lib --require-archs {delocate_archs} -w {dest_dir} -v {wheel}'
-          # Quick import test (same everywhere)
-          CIBW_TEST_REQUIRES: numpy
-          CIBW_TEST_COMMAND: |
-            python - <<'PY'
-            import numpy as np, cpp_hf
-            nk,d=4,2
-            w=np.ones((nk,nk))*((2/nk)*(2/nk)/(2*np.pi)**2)
-            H=np.zeros((nk,nk,d,d),np.complex128)
-            K=np.linspace(-1,1,nk)
-            V=(1.0/np.sqrt((K[:,None]**2+K[None,:]**2)+0.2)).astype(np.complex128)[...,None,None]
-            P0=np.zeros_like(H); ne=0.5*d*w.sum()
-            P,F,E,mu,n=cpp_hf.hartreefock_iteration_cpp(w,H,V,P0,ne,0.2,1,1e-2,2,1.0)
-            print("wheel ok", int(n), float(mu))
-            PY
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -214,13 +188,11 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           pattern: dist-*
           merge-multiple: true
           path: dist
-      - name: Publish to PyPI (Trusted Publisher)
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
