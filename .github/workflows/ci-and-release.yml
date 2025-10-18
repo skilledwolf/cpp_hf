@@ -21,15 +21,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest,  os: Linux, python: "3.10" }
-          - { runner: ubuntu-latest,  os: Linux, python: "3.11" }
-          - { runner: ubuntu-latest,  os: Linux, python: "3.12" }
-          - { runner: macos-15-intel, os: macOS-Intel, python: "3.10" }
-          - { runner: macos-15-intel, os: macOS-Intel, python: "3.11" }
-          - { runner: macos-15-intel, os: macOS-Intel, python: "3.12" }
-          - { runner: macos-15,       os: macOS-ARM,   python: "3.10" }
-          - { runner: macos-15,       os: macOS-ARM,   python: "3.11" }
-          - { runner: macos-15,       os: macOS-ARM,   python: "3.12" }
+          - { runner: ubuntu-latest,  os: Linux,        python: "3.10" }
+          - { runner: ubuntu-latest,  os: Linux,        python: "3.11" }
+          - { runner: ubuntu-latest,  os: Linux,        python: "3.12" }
+          - { runner: macos-15-intel, os: macOS-Intel,  python: "3.10" }
+          - { runner: macos-15-intel, os: macOS-Intel,  python: "3.11" }
+          - { runner: macos-15-intel, os: macOS-Intel,  python: "3.12" }
+          - { runner: macos-15,       os: macOS-ARM,    python: "3.10" }
+          - { runner: macos-15,       os: macOS-ARM,    python: "3.11" }
+          - { runner: macos-15,       os: macOS-ARM,    python: "3.12" }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +46,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfftw3-dev cmake ninja-build pkg-config libboost-dev 
+            libfftw3-dev cmake ninja-build pkg-config libboost-dev
 
       - name: Install toolchain (macOS Intel)
         if: matrix.os == 'macOS-Intel'
@@ -72,6 +72,7 @@ jobs:
           if [ ! -f "$HOME/.local/lib/libfftw3.dylib" ]; then
             bash ci/macos_arm_fftw.sh
           fi
+          # Help local *PR* builds find user-local FFTW during configure
           {
             echo "PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
             echo "CMAKE_PREFIX_PATH=$HOME/.local:$CMAKE_PREFIX_PATH"
@@ -82,10 +83,8 @@ jobs:
       # ---------- Build wheel via scikit-build-core ----------
       - name: Build wheel
         run: |
-          python -m pip install -U pip numpy scikit-build-core build
-          python -m build -w \
-            -C cmake.define.HF_USE_OPENMP=ON \
-            -C cmake.define.HF_USE_FFTW_THREADS=ON
+          python -m pip install -U pip numpy build
+          python -m build -w
 
       - name: Install wheel
         run: python -m pip install dist/*.whl
@@ -93,7 +92,7 @@ jobs:
       # ---------- Smoke test ----------
       - name: Smoke test
         env:
-          # Ensure dynamic loader can see FFTW/OMP on fresh macOS runners
+          # Ensure the loader can see FFTW/OMP in CI for local wheels
           DYLD_FALLBACK_LIBRARY_PATH: ${{ matrix.os == 'macOS-ARM' && format('{0}:{1}', env.HOME, '/.local/lib') || '/opt/homebrew/lib:/usr/local/lib' }}
         run: python ci/smoke_test.py
 
@@ -116,18 +115,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: linux-x86_64
-            runner: ubuntu-latest
-            cibw-archs: x86_64
-          - name: linux-aarch64
-            runner: ubuntu-24.04-arm
-            cibw-archs: aarch64
-          - name: macos-intel
-            runner: macos-15-intel
-            macos-deploy: "11.0"
-          - name: macos-arm
-            runner: macos-15
-            macos-deploy: "11.0"
+          - { name: linux-x86_64, runner: ubuntu-latest }
+          - { name: linux-aarch64, runner: ubuntu-24.04-arm }
+          - { name: macos-intel,   runner: macos-15-intel }
+          - { name: macos-arm,     runner: macos-15 }
 
     steps:
       - uses: actions/checkout@v4
@@ -145,45 +136,12 @@ jobs:
         run: |
           set -eux
           brew install libomp boost cmake ninja || true
-          brew uninstall fftw || true 
+          brew uninstall fftw || true
           bash ci/macos_arm_fftw.sh
-          {
-            echo "PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
-            echo "CMAKE_PREFIX_PATH=$HOME/.local:$CMAKE_PREFIX_PATH"
-            echo "LIBRARY_PATH=$HOME/.local/lib:$HOME/.local/lib64:$LIBRARY_PATH"
-            echo "CPATH=$HOME/.local/include:$CPATH"
-          } >> "$GITHUB_ENV"
 
       - name: Build wheels with cibuildwheel
         uses: pypa/cibuildwheel@v2.21.3
-        env:
-          CIBW_BUILD: "cp310-* cp311-* cp312-*"
-          CIBW_SKIP: "pp* *-musllinux_*"
-          # Linux: arches & image
-          CIBW_ARCHS_LINUX: ${{ matrix.cibw-archs }}
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
-          # macOS: target baseline
-          CIBW_ARCHS_MACOS: native
-          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deploy }}
-          # Install build deps inside manylinux container
-          CIBW_BEFORE_ALL_LINUX: "bash ci/linux_before_all.sh"
-          # CMake flags for both platforms
-          CIBW_ENVIRONMENT_LINUX: >
-            CC=gcc CXX=g++
-            CMAKE_ARGS="-G Ninja -DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON"
-          CIBW_ENVIRONMENT_MACOS: >
-            PKG_CONFIG_PATH=$PKG_CONFIG_PATH
-            CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH
-            LIBRARY_PATH=$LIBRARY_PATH
-            CPATH=$CPATH
-            CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
-          # Use the shared smoke test file everywhere
-          CIBW_TEST_REQUIRES: numpy
-          CIBW_TEST_COMMAND: "python ci/smoke_test.py"
-          # Ensure delocate sees user-local FFTW on macOS
-          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
-            bash -lc 'delocate-listdeps -d {wheel} || true; delocate-wheel -L $HOME/.local/lib -L /opt/homebrew/lib -L /usr/local/lib --require-archs {delocate_archs} -w {dest_dir} -v {wheel}'
+        # All config lives in pyproject.toml now
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -219,7 +177,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build-test, wheels, sdist]
     runs-on: ubuntu-latest
-    environment: pypi
+    environment: cpp_hf_env
     permissions:
       contents: read
       id-token: write

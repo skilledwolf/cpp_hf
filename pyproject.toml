@@ -65,31 +65,56 @@ include = [
   "THIRD_PARTY_NOTICES.md",
 ]
 
+# pyproject.toml  (add/merge these)
+
+[tool.scikit-build]
+# Make builds consistent & fast; scikit-build-core will fetch Ninja/CMake if needed.
+minimum-version = "build-system.requires"
+cmake.version = ">=3.26.1"
+ninja.version = ">=1.11"
+ninja.make-fallback = false
+
+# Static CMake options used everywhere
+[tool.scikit-build.cmake.define]
+HF_USE_OPENMP = true
+HF_USE_FFTW_THREADS = true
+# Drive the CMake deployment target from the env (falls back to 11.0)
+CMAKE_OSX_DEPLOYMENT_TARGET = { env = "MACOSX_DEPLOYMENT_TARGET", default = "11.0" }
+
+# ---------- cibuildwheel: shared options ----------
 [tool.cibuildwheel]
+# Which CPython tags to build on release
 build = "cp310-* cp311-* cp312-*"
-skip = "pp*"
+# Skip pypy & musllinux for this project
+skip = "pp* *-musllinux_*"
+
+# Test setup
 test-requires = ["numpy"]
 test-command = "python ci/smoke_test.py"
 
-before-all = "bash ci/linux_before_all.sh"
-
-[tool.cibuildwheel.macos]
-environment = [
-  "PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig",
-  "CMAKE_PREFIX_PATH=$HOME/.local",
-  "LIBRARY_PATH=$HOME/.local/lib:$HOME/.local/lib64",
-  "CPATH=$HOME/.local/include",
-  'CMAKE_ARGS="-DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON"'
-]
-repair-wheel-command = [
-  'delocate-listdeps -d {wheel} || true',
-  'delocate-wheel -L $HOME/.local/lib -L /opt/homebrew/lib -L /usr/local/lib --require-archs {delocate_archs} -w {dest_dir} -v {wheel}'
-]
-
+# Linux before-all (runs inside the manylinux container)
 [tool.cibuildwheel.linux]
-environment = [
-  "CC=gcc", "CXX=g++",
-  'CMAKE_ARGS="-G Ninja -DHF_USE_OPENMP=ON -DHF_USE_FFTW_THREADS=ON"'
-]
+before-all = "bash ci/linux_before_all.sh"
+# Pin images explicitly (matches your workflow intent)
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
+
+# macOS settings (applies to both Intel & ARM runners)
+[tool.cibuildwheel.macos]
+# Build for the host arch (x86_64 on Intel runner, arm64 on ARM runner)
+archs = ["native"]
+# Ensure delocate finds your locally built FFTW (ARM) or Homebrew libs
+repair-wheel-command = """
+delocate-wheel -L $HOME/.local/lib -L /opt/homebrew/lib -L /usr/local/lib \
+  --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
+"""
+
+# macOS environment during wheel builds
+[tool.cibuildwheel.macos.environment]
+# Deployment baseline (used by scikit-build via CMAKE_OSX_DEPLOYMENT_TARGET define above)
+MACOSX_DEPLOYMENT_TARGET = "11.0"
+# Help CMake/pkg-config find user-local FFTW on ARM builds (safe no-ops on Intel)
+PKG_CONFIG_PATH = "$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
+CMAKE_PREFIX_PATH = "$HOME/.local:$CMAKE_PREFIX_PATH"
+LIBRARY_PATH = "$HOME/.local/lib:$HOME/.local/lib64:$LIBRARY_PATH"
+CPATH = "$HOME/.local/include:$CPATH"
