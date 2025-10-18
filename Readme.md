@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/cpp-hf.svg)](https://pypi.org/project/cpp-hf/)
 [![Wheel](https://img.shields.io/pypi/wheel/cpp-hf.svg)](https://pypi.org/project/cpp-hf/#files)
 [![License](https://img.shields.io/pypi/l/cpp-hf.svg)](LICENSE)
-[![Release](https://github.com/skilledwolf/cpp_hf/actions/workflows/release.yml/badge.svg)](https://github.com/skilledwolf/cpp_hf/actions/workflows/release.yml)
+[![Release](https://github.com/skilledwolf/cpp_hf/actions/workflows/ci-and-release.yml/badge.svg)](https://github.com/skilledwolf/cpp_hf/actions/workflows/ci-and-release.yml)
 
 cpp_hf provides a compiled extension module exposing a fast Hartree–Fock
 self‑consistent field (SCF) loop for uniform 2D k‑grids. It uses

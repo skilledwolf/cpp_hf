@@ -15,18 +15,22 @@ jobs:
   # =========================
   # Build & test on PR/push
   # =========================
+jobs:
   build-test:
     name: Build & Test (${{ matrix.os }} / py${{ matrix.python }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest, os: Linux, python: "3.10" }
-          - { runner: ubuntu-latest, os: Linux, python: "3.11" }
-          - { runner: ubuntu-latest, os: Linux, python: "3.12" }
-          - { runner: macos-latest,  os: macOS, python: "3.10" }
-          - { runner: macos-latest,  os: macOS, python: "3.11" }
-          - { runner: macos-latest,  os: macOS, python: "3.12" }
+          - { runner: ubuntu-latest,  os: Linux, python: "3.10" }
+          - { runner: ubuntu-latest,  os: Linux, python: "3.11" }
+          - { runner: ubuntu-latest,  os: Linux, python: "3.12" }
+          - { runner: macos-15-intel, os: macOS-Intel, python: "3.10" }
+          - { runner: macos-15-intel, os: macOS-Intel, python: "3.11" }
+          - { runner: macos-15-intel, os: macOS-Intel, python: "3.12" }
+          - { runner: macos-15,       os: macOS-ARM,   python: "3.10" }
+          - { runner: macos-15,       os: macOS-ARM,   python: "3.11" }
+          - { runner: macos-15,       os: macOS-ARM,   python: "3.12" }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -37,29 +41,58 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
-      # System deps for host builds (Eigen fetched if missing)
-      - name: Install system deps
+      # ---------- System deps ----------
+      - name: Install system deps (Linux)
+        if: startsWith(matrix.os, 'Linux')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfftw3-dev cmake ninja-build pkg-config libboost-dev
+
+      - name: Install toolchain (macOS Intel)
+        if: matrix.os == 'macOS-Intel'
+        env: { HOMEBREW_NO_AUTO_UPDATE: "1" }
+        run: brew install fftw cmake ninja libomp boost || true
+
+      # ---------- Apple Silicon: build & cache FFTW in ~/.local ----------
+      - name: Cache FFTW (macOS ARM)
+        if: matrix.os == 'macOS-ARM'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/include/fftw3.h
+            ~/.local/lib/libfftw*
+            ~/.local/lib/pkgconfig/fftw3*.pc
+          key: fftw-macos-arm-${{ hashFiles('ci/macos_arm_fftw.sh') }}
+
+      - name: Install toolchain & build FFTW (macOS ARM)
+        if: matrix.os == 'macOS-ARM'
         env: { HOMEBREW_NO_AUTO_UPDATE: "1" }
         run: |
-          if [ "${{ matrix.os }}" = "Linux" ]; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends \
-              libfftw3-dev cmake ninja-build pkg-config libboost-dev
-          else
-            brew install fftw cmake ninja libomp boost || true
+          brew install libomp boost cmake ninja || true
+          if [ ! -f "$HOME/.local/lib/libfftw3.dylib" ]; then
+            bash ci/macos_arm_fftw.sh
           fi
+          {
+            echo "PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
+            echo "CMAKE_PREFIX_PATH=$HOME/.local:$CMAKE_PREFIX_PATH"
+            echo "LIBRARY_PATH=$HOME/.local/lib:$HOME/.local/lib64:$LIBRARY_PATH"
+            echo "CPATH=$HOME/.local/include:$CPATH"
+          } >> "$GITHUB_ENV"
 
-      - name: Build wheel (scikit-build-core)
+      # ---------- Build wheel via scikit-build-core ----------
+      - name: Build wheel
         run: |
           python -m pip install -U pip numpy scikit-build-core build
           python -m build -w \
             -C cmake.define.HF_USE_OPENMP=ON \
             -C cmake.define.HF_USE_FFTW_THREADS=ON
 
+      # ---------- Smoke test ----------
       - name: Smoke test
         env:
-          # helps the extension find Homebrew dylibs on fresh macOS runners
-          DYLD_FALLBACK_LIBRARY_PATH: /opt/homebrew/lib:/usr/local/lib
+          # Ensure dynamic loader can see FFTW/OMP on fresh macOS runners
+          DYLD_FALLBACK_LIBRARY_PATH: ${{ matrix.os == 'macOS-ARM' && format('{0}:{1}', env.HOME, '/.local/lib') || '/opt/homebrew/lib:/usr/local/lib' }}
         run: python ci/smoke_test.py
 
       - name: Upload test wheels (optional)
@@ -110,6 +143,7 @@ jobs:
         run: |
           set -eux
           brew install libomp boost cmake ninja || true
+          brew uninstall fftw || true 
           bash ci/macos_arm_fftw.sh
           {
             echo "PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
