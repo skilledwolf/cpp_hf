@@ -12,8 +12,6 @@
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 
-#include <pybind11/numpy.h>
-
 #ifdef _OPENMP
   #include <omp.h>
 #endif
@@ -22,8 +20,6 @@
 #include "cpp_hf/fftw_batched2d.hpp"
 
 namespace hf {
-
-namespace py = pybind11;
 using cxd  = std::complex<double>;
 using MatC = Eigen::Matrix<std::complex<double>, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
@@ -49,9 +45,10 @@ struct HFKernel {
     cxd* scratch_fft = nullptr;
 
     HFKernel(std::size_t nk1_, std::size_t nk2_, std::size_t d_,
-             const py::array_t<double>& W,
-             const py::array_t<cxd>& H_in,
-             const py::array_t<cxd>& V_in,
+             const std::vector<double>& W,
+             const std::vector<cxd>& H_in,
+             const std::vector<cxd>& V_in,
+             std::size_t dv1, std::size_t dv2,
              double T_,
              double n_target_)
         : nk1(nk1_), nk2(nk2_), d(d_),
@@ -63,26 +60,22 @@ struct HFKernel {
         Eigen::setNbThreads(1); // let OpenMP own outer parallelism
 
         // weights
-        if (W.ndim()!=2 || (std::size_t)W.shape(0)!=nk1 || (std::size_t)W.shape(1)!=nk2) throw std::invalid_argument("weights must be (nk1,nk2)");
-        weights.assign(W.data(), W.data()+ (nk1*nk2));
+        if (W.size() != nk1*nk2)
+            throw std::invalid_argument("weights must be length nk1*nk2");
+        weights = W;
         weight_sum = std::accumulate(weights.begin(), weights.end(), 0.0);
         weight_mean = weight_sum / static_cast<double>(nk1*nk2);
 
         // H
-        if (H_in.ndim()!=4 || (std::size_t)H_in.shape(0)!=nk1 || (std::size_t)H_in.shape(1)!=nk2
-            || (std::size_t)H_in.shape(2)!=d || (std::size_t)H_in.shape(3)!=d)
-            throw std::invalid_argument("H must be (nk1,nk2,d,d)");
-        H.assign(H_in.data(), H_in.data() + n_tot);
+        if (H_in.size() != n_tot)
+            throw std::invalid_argument("H must be (nk1,nk2,d,d) flattened length nk1*nk2*d*d");
+        H = H_in;
 
         // Scratch
         scratch_fft = reinterpret_cast<cxd*>(fftw_malloc(sizeof(cxd) * n_tot));
         if (!scratch_fft) throw std::bad_alloc{};
 
         // Vhat = FFT(weight_mean * V) along (0,1)
-        if (V_in.ndim()!=4 || (std::size_t)V_in.shape(0)!=nk1 || (std::size_t)V_in.shape(1)!=nk2)
-            throw std::invalid_argument("V must be (nk1,nk2,dv1,dv2)");
-        const std::size_t dv1 = V_in.shape(2), dv2 = V_in.shape(3);
-
         if (!((dv1==1 && dv2==1) || (dv1==d && dv2==d)))
             throw std::invalid_argument("V last dims must be (1,1) or (d,d)");
 
@@ -91,6 +84,8 @@ struct HFKernel {
             Vhat_scalar.resize(nk1*nk2);
             cxd* buf = reinterpret_cast<cxd*>(fftw_malloc(sizeof(cxd) * nk1 * nk2));
             if (!buf) throw std::bad_alloc{};
+            if (V_in.size() != nk1*nk2)
+                throw std::invalid_argument("V scalar must be (nk1,nk2,1,1) flattened length nk1*nk2");
             const cxd* vptr = V_in.data();
             {
                 Eigen::Map<      Eigen::ArrayXcd> B(reinterpret_cast<cxd*>(buf), (Eigen::Index)(nk1*nk2));
@@ -112,6 +107,8 @@ struct HFKernel {
             fftw_destroy_plan(pf);
             fftw_free(buf);
         } else {
+            if (V_in.size() != n_tot)
+                throw std::invalid_argument("V full must be (nk1,nk2,d,d) flattened length nk1*nk2*d*d");
             Vhat_full.resize(n_tot);
             const cxd* vptr = V_in.data();
             Eigen::Map<      Eigen::ArrayXcd> D(Vhat_full.data(), (Eigen::Index)n_tot);

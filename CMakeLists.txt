@@ -125,7 +125,7 @@ if (HF_USE_OPENMP)
 endif()
 
 # Build module (Python name: cpp_hf)
-pybind11_add_module(cpp_hf cpp_hf.cpp)
+pybind11_add_module(cpp_hf cpp_hf.cpp src/hartreefock.cpp)
 target_compile_features(cpp_hf PRIVATE cxx_std_17)
 if (MSVC)
   target_compile_options(cpp_hf PRIVATE /O2 /DNDEBUG)
