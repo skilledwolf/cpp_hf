@@ -1,8 +1,8 @@
 [build-system]
 requires = [
-  "scikit-build-core>=0.9",
-  "pybind11>=2.11",
-  "numpy",
+  "scikit-build-core>=0.10",
+  "pybind11>=2.12",
+  "oldest-supported-numpy",
   "setuptools_scm>=7",
 ]
 build-backend = "scikit_build_core.build"
@@ -11,65 +11,38 @@ build-backend = "scikit_build_core.build"
 name = "cpp_hf"
 dynamic = ["version"]
 description = "Hartree–Fock (k-grid) with FFTW + Eigen via pybind11"
-readme = "Readme.md"
-requires-python = ">=3.8"
-authors = [{name = "ContiMod contributors"}]
-license = {file = "LICENSE"}
+readme = "Readme.md"  # keep as-is if this filename exists; otherwise rename file to README.md
+requires-python = ">=3.10"
+authors = [{ name = "ContiMod contributors" }]
+license = { file = "LICENSE" }
 keywords = ["hartree-fock", "fftw", "eigen", "pybind11", "condensed-matter", "physics"]
 classifiers = [
   "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Programming Language :: C++",
-  "Operating System :: MacOS",
+  "Operating System :: MacOS :: MacOS X",
   "Operating System :: POSIX :: Linux",
   "Topic :: Scientific/Engineering :: Physics",
 ]
 
 [project.urls]
 Homepage = "https://github.com/skilledwolf/cpp_hf"
-Issues = "https://github.com/skilledwolf/cpp_hf/issues"
+Issues   = "https://github.com/skilledwolf/cpp_hf/issues"
 
+# -------------------- scikit-build-core --------------------
 [tool.scikit-build]
-# Optional: produce a per-tag build dir (nice for local dev)
-build-dir = "build/{wheel_tag}"
-# Required to enable non-builtin metadata version providers (setuptools_scm)
-experimental = true
-
-[tool.scikit-build.cmake]
-version = ">=3.21"
-
-# You can pass -C cmake.define.X=... flags via pip to toggle features:
-#   pip install . -C cmake.define.HF_USE_OPENMP=ON -C cmake.define.HF_USE_FFTW_THREADS=ON
-
-[tool.scikit-build.metadata.version]
-provider = "scikit_build_core.metadata.setuptools_scm"
-
-[tool.setuptools_scm]
-# Strip leading 'v' from tags like v1.2.3 automatically
-version_scheme = "guess-next-dev"
-local_scheme = "node-and-date"
-fallback_version = "0.0"
-
-[tool.scikit-build.wheel]
-# Ensure license and notices are embedded in the wheel metadata
-license-files = [
-  "LICENSE",
-  "THIRD_PARTY_NOTICES.md",
-]
-
-[tool.scikit-build.sdist]
-# Ensure third-party notices are included in the source distribution
-include = [
-  "LICENSE",
-  "THIRD_PARTY_NOTICES.md",
-]
-
-# pyproject.toml  (add/merge these)
-
-[tool.scikit-build]
-# Make builds consistent & fast; scikit-build-core will fetch Ninja/CMake if needed.
+# Lock behavior/defaults to your required backend version
 minimum-version = "build-system.requires"
+
+# Faster local rebuilds
+build-dir = "build/{wheel_tag}"
+
+# Let skbuild fetch CMake/Ninja if system versions are too old
 cmake.version = ">=3.26.1"
 ninja.version = ">=1.11"
 ninja.make-fallback = false
@@ -78,42 +51,54 @@ ninja.make-fallback = false
 [tool.scikit-build.cmake.define]
 HF_USE_OPENMP = true
 HF_USE_FFTW_THREADS = true
-# Drive the CMake deployment target from the env (falls back to 11.0)
+# Drive the CMake deployment target from env (fallback 11.0)
 CMAKE_OSX_DEPLOYMENT_TARGET = { env = "MACOSX_DEPLOYMENT_TARGET", default = "11.0" }
 
-# ---------- cibuildwheel: shared options ----------
+# Dynamic version from setuptools_scm (built-in provider)
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.setuptools_scm"
+
+[tool.setuptools_scm]
+version_scheme   = "guess-next-dev"
+local_scheme     = "node-and-date"
+fallback_version = "0.0"
+
+[tool.scikit-build.wheel]
+# Ensure license/notice files are embedded in the wheel
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+
+[tool.scikit-build.sdist]
+# Ensure third-party notices are included in the sdist
+include = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+
+# -------------------- cibuildwheel --------------------
 [tool.cibuildwheel]
-# Which CPython tags to build on release
 build = "cp310-* cp311-* cp312-*"
-# Skip pypy & musllinux for this project
-skip = "pp* *-musllinux_*"
+skip  = "pp* *-musllinux_*"
 
-# Test setup
+# Tests
 test-requires = ["numpy"]
-test-command = "python ci/smoke_test.py"
+test-command  = "python ci/smoke_test.py"
 
-# Linux before-all (runs inside the manylinux container)
+# Linux image + pre-steps (runs inside manylinux container)
 [tool.cibuildwheel.linux]
-before-all = "bash ci/linux_before_all.sh"
-# Pin images explicitly (matches your workflow intent)
-manylinux-x86_64-image = "manylinux_2_28"
-manylinux-aarch64-image = "manylinux_2_28"
+before-all               = "bash ci/linux_before_all.sh"
+manylinux-x86_64-image   = "manylinux_2_28"
+manylinux-aarch64-image  = "manylinux_2_28"
 
-# macOS settings (applies to both Intel & ARM runners)
+# macOS builds (Intel & ARM runners use native arch)
 [tool.cibuildwheel.macos]
-# Build for the host arch (x86_64 on Intel runner, arm64 on ARM runner)
 archs = ["native"]
-# Ensure delocate finds your locally built FFTW (ARM) or Homebrew libs
+# Ensure delocate finds local FFTW (ARM) / Homebrew libs (Intel)
 repair-wheel-command = """
 delocate-wheel -L $HOME/.local/lib -L /opt/homebrew/lib -L /usr/local/lib \
   --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
 """
 
-# macOS environment during wheel builds
 [tool.cibuildwheel.macos.environment]
-# Deployment baseline (used by scikit-build via CMAKE_OSX_DEPLOYMENT_TARGET define above)
+# Baseline deployment target (also feeds scikit-build via define above)
 MACOSX_DEPLOYMENT_TARGET = "11.0"
-# Help CMake/pkg-config find user-local FFTW on ARM builds (safe no-ops on Intel)
+# Help CMake/pkg-config find user-local FFTW on ARM builds
 PKG_CONFIG_PATH = "$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 CMAKE_PREFIX_PATH = "$HOME/.local:$CMAKE_PREFIX_PATH"
 LIBRARY_PATH = "$HOME/.local/lib:$HOME/.local/lib64:$LIBRARY_PATH"
