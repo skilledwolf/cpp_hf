@@ -136,7 +136,6 @@ jobs:
         run: |
           set -eux
           brew install libomp boost cmake ninja || true
-          brew uninstall fftw || true
           bash ci/macos_arm_fftw.sh
 
       - name: Build wheels with cibuildwheel
