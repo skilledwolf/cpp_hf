@@ -43,8 +43,42 @@ if (NOT Eigen3_FOUND)
   endif()
 endif()
 
-# Boost headers (for Boost.Math)
-find_package(Boost 1.66.0 REQUIRED COMPONENTS headers)
+set(HF_BOOST_MIN "1.66.0")
+find_package(Boost ${HF_BOOST_MIN} QUIET COMPONENTS headers)
+
+if (NOT Boost_FOUND)
+  include(FetchContent)
+
+  # Allow overriding on the command line: -DHF_BOOST_FC_VERSION=1.84.0
+  if (NOT DEFINED HF_BOOST_FC_VERSION)
+    set(HF_BOOST_FC_VERSION "1.84.0")
+  endif()
+  string(REPLACE "." "_" _boost_ver_us "${HF_BOOST_FC_VERSION}")
+
+  # Fetch a release tarball (headers only; no build step). Add URL_HASH for reproducibility if you like.
+  FetchContent_Declare(boost_headers_src
+    URL "https://archives.boost.io/release/${HF_BOOST_FC_VERSION}/source/boost_${_boost_ver_us}.tar.gz"
+    # URL_HASH SHA256=<put_hash_here>
+  )
+
+  FetchContent_GetProperties(boost_headers_src)
+  if (NOT boost_headers_src_POPULATED)
+    FetchContent_Populate(boost_headers_src)
+
+    # Create a target compatible with the rest of this CMakeLists
+    add_library(boost_headers INTERFACE)
+    add_library(Boost::headers ALIAS boost_headers)
+    target_include_directories(boost_headers INTERFACE "${boost_headers_src_SOURCE_DIR}")
+    # Optional: advertise a version for logs
+    set(Boost_VERSION "${HF_BOOST_FC_VERSION}")
+  endif()
+endif()
+
+if (NOT TARGET Boost::headers)
+  message(FATAL_ERROR
+    "Boost headers not found. Install Boost ${HF_BOOST_MIN}+ (with CMake package) "
+    "or enable the FetchContent fallback (internet access required).")
+endif()
 
 # mdspan availability and optional vendoring
 include(CheckCXXSourceCompiles)
@@ -208,7 +242,7 @@ target_include_directories(cpp_hf PRIVATE
 )
 target_link_libraries(cpp_hf PRIVATE
   Eigen3::Eigen
-  Boost::headers
+  Boost::boost
   ${HF_FFTW_LIBS}
   ${HF_OPENMP_LIB}
 )
