@@ -46,9 +46,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libfftw3-dev cmake ninja-build pkg-config libboost-dev g++-14
-          echo "CC=gcc-14" >> $GITHUB_ENV
-          echo "CXX=g++-14" >> $GITHUB_ENV
+            libfftw3-dev cmake ninja-build pkg-config libboost-dev 
 
       - name: Install toolchain (macOS Intel)
         if: matrix.os == 'macOS-Intel'

@@ -46,6 +46,40 @@ endif()
 # Boost headers (for Boost.Math)
 find_package(Boost 1.70 REQUIRED COMPONENTS headers)
 
+# mdspan availability and optional vendoring
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_QUIET ON)
+
+# Ensure the test compiles with at least C++23 so <mdspan> is detectable where supported
+if (NOT DEFINED CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 23)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
+
+check_cxx_source_compiles(
+  "#include <mdspan>\nint main(){ std::mdspan<int, std::extents<size_t,2>> m(nullptr, std::extents<size_t,2>{}); return 0; }"
+  HAVE_STD_MDSPAN)
+
+if (NOT HAVE_STD_MDSPAN)
+  check_cxx_source_compiles(
+    "#include <experimental/mdspan>\nusing mdspan_t = std::experimental::mdspan<int, std::experimental::extents<size_t,2>>; int main(){ return 0; }"
+    HAVE_EXP_MDSPAN)
+endif()
+
+if (NOT HAVE_STD_MDSPAN AND NOT HAVE_EXP_MDSPAN)
+  include(FetchContent)
+  FetchContent_Declare(
+    mdspan_ref
+    GIT_REPOSITORY https://github.com/kokkos/mdspan.git
+    GIT_TAG main
+  )
+  FetchContent_MakeAvailable(mdspan_ref)
+  add_library(mdspan_ref INTERFACE)
+  # Reference impl installs headers under include/mdspan/...
+  target_include_directories(mdspan_ref INTERFACE "${mdspan_ref_SOURCE_DIR}/include")
+endif()
+
 # FFTW: prefer CMake package config, then fall back to pkg-config
 set(HF_FFTW_LIBS "")
 set(HF_HAVE_FFTW_THREADS FALSE)
@@ -178,6 +212,9 @@ target_link_libraries(cpp_hf PRIVATE
   ${HF_FFTW_LIBS}
   ${HF_OPENMP_LIB}
 )
+if (TARGET mdspan_ref)
+  target_link_libraries(cpp_hf PRIVATE mdspan_ref)
+endif()
 if (HF_HAVE_FFTW_THREADS)
   target_compile_definitions(cpp_hf PRIVATE FFTW3_THREADS=1)
 endif()
@@ -198,4 +235,7 @@ if (HF_BUILD_BENCH)
   target_compile_features(bench_fftw PRIVATE cxx_std_23)
   target_include_directories(bench_fftw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(bench_fftw PRIVATE ${HF_FFTW_LIBS})
+  if (TARGET mdspan_ref)
+    target_link_libraries(bench_fftw PRIVATE mdspan_ref)
+  endif()
 endif()

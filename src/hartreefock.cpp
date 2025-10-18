@@ -6,7 +6,6 @@
 #include <stdexcept>
 #include <algorithm>
 #include <span>
-#include <mdspan>
 #include "cpp_hf/views.hpp"
 #include "cpp_hf/platform.hpp"
 

@@ -9,7 +9,6 @@
 #include <limits>
 #include <cmath>
 #include <span>
-#include <mdspan>
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
