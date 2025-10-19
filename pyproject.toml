@@ -72,11 +72,4 @@ PKG_CONFIG_PATH   = "/project/.cache/fftw-3.3.10-x86_64/lib/pkgconfig:/project/.
 CMAKE_PREFIX_PATH = "/project/.cache/fftw-3.3.10-x86_64:/project/.cache/fftw-3.3.10-aarch64:$CMAKE_PREFIX_PATH"
 LIBRARY_PATH      = "/project/.cache/fftw-3.3.10-x86_64/lib:/project/.cache/fftw-3.3.10-aarch64/lib:$LIBRARY_PATH"
 CPATH             = "/project/.cache/fftw-3.3.10-x86_64/include:/project/.cache/fftw-3.3.10-aarch64/include:$CPATH"
-
-[tool.cibuildwheel.macos.environment]
-MACOSX_DEPLOYMENT_TARGET = "11.0"
-PKG_CONFIG_PATH   = "/project/.cache/fftw-3.3.10-macos/lib/pkgconfig:$PKG_CONFIG_PATH"
-CMAKE_PREFIX_PATH = "/project/.cache/fftw-3.3.10-macos:$CMAKE_PREFIX_PATH"
-LIBRARY_PATH      = "/project/.cache/fftw-3.3.10-macos/lib:$LIBRARY_PATH"
-CPATH             = "/project/.cache/fftw-3.3.10-macos/include:$CPATH"
-HOMEBREW_NO_AUTO_UPDATE = "1"
+BOOST_INCLUDEDIR  = "/project/.cache/boost-1.89.0/include"

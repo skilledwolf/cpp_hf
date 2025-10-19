@@ -15,10 +15,10 @@ option(HF_FETCH_FFTW         "Auto-download & build FFTW if not found" OFF)
 # C++ standard (lean default)
 # -----------------------------
 if (NOT DEFINED CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 23)
-  set(CMAKE_CXX_STANDARD_REQUIRED ON)
-  set(CMAKE_CXX_EXTENSIONS OFF)
+  set(CMAKE_CXX_STANDARD 20)
 endif()
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # -----------------------------
 # Python + pybind11
@@ -51,16 +51,15 @@ endif()
 # Boost (headers only)
 # -----------------------------
 find_package(Boost 1.66 QUIET)
-if (NOT Boost_FOUND)
-  # Create a header-only interface target if not present
+if(NOT TARGET Boost::headers)
   add_library(Boost::headers INTERFACE IMPORTED)
-else()
-  # CMake >=3.70 has Boost::headers; if not, emulate via INTERFACE_INCLUDE_DIRECTORIES
-  if(NOT TARGET Boost::headers)
-    add_library(Boost::headers INTERFACE IMPORTED)
-    set_target_properties(Boost::headers PROPERTIES
-      INTERFACE_INCLUDE_DIRECTORIES "${Boost_INCLUDE_DIRS}")
-  endif()
+endif()
+if(Boost_FOUND)
+  set_target_properties(Boost::headers PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${Boost_INCLUDE_DIRS}")
+elseif(DEFINED ENV{BOOST_INCLUDEDIR})
+  set_target_properties(Boost::headers PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "$ENV{BOOST_INCLUDEDIR}")
 endif()
 
 
@@ -168,7 +167,7 @@ file(GLOB_RECURSE CPP_HF_SOURCES CONFIGURE_DEPENDS
 # Extension target
 # -----------------------------
 pybind11_add_module(cpp_hf ${CPP_HF_SOURCES})
-target_compile_features(cpp_hf PRIVATE cxx_std_23)
+# Respect CMAKE_CXX_STANDARD set above / via scikit-build-core
 # If we vendored mdspan, add its include dir
 if (DEFINED MDSPAN_INCLUDE_DIR)
   target_include_directories(cpp_hf PRIVATE "${MDSPAN_INCLUDE_DIR}")
@@ -182,12 +181,10 @@ target_include_directories(cpp_hf
     $<INSTALL_INTERFACE:include>
 )
 target_compile_options(cpp_hf PRIVATE -fvisibility=hidden)
-target_include_directories(cpp_hf PRIVATE ${HF_FFTW_INCLUDE_DIRS})
-target_link_libraries(cpp_hf PRIVATE
-  Eigen3::Eigen
-  Boost::headers
-  ${HF_FFTW_LIBS}
-  ${HF_OPENMP_LIB}
-)
+target_link_libraries(cpp_hf PRIVATE Eigen3::Eigen Boost::headers ${HF_OPENMP_LIB})
 
-# scikit-build-core will handle installation into the wheel; no manual install()
+# Install the binary into the python package so the wheel includes it
+# (place the extension inside the 'cpp_hf' package directory)
+install(TARGETS cpp_hf
+  LIBRARY DESTINATION "${SKBUILD_PLATLIB_DIR}/cpp_hf"
+)

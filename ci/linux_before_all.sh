@@ -10,7 +10,7 @@ BOOST_VERSION=1.89.0
 BOOST_U=1_89_0
 BOOST_TARBALL="https://archives.boost.io/release/${BOOST_VERSION}/source/boost_${BOOST_U}.tar.bz2"
 BOOST_SHA256="85a33fa22621b4f314f8e85e1a5e2a9363d22e4f4992925d4bb3bc631b5a0c7a"
-BOOST_PREFIX="${REPO_ROOT}/.cache/boost-${BOOST_VERSION}-${ARCH}"
+BOOST_PREFIX="${REPO_ROOT}/.cache/boost-${BOOST_VERSION}"
 
 if [ ! -f "${BOOST_PREFIX}/include/boost/math/tools/toms748_solve.hpp" ]; then
   rm -rf "${BOOST_PREFIX}"
@@ -32,7 +32,7 @@ fi
 
 export BOOST_ROOT="${BOOST_PREFIX}"
 export BOOST_INCLUDEDIR="${BOOST_PREFIX}/include"
-export CMAKE_PREFIX_PATH="${BOOST_PREFIX}:${CMAKE_PREFIX_PATH:-}"
+# Keep CPATH to help local dev shells; cibuildwheel sets BOOST_INCLUDEDIR explicitly.
 export CPATH="${BOOST_PREFIX}/include:${CPATH:-}"
 test -f "${BOOST_PREFIX}/include/boost/math/tools/toms748_solve.hpp"
 
