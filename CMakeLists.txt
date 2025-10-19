@@ -153,16 +153,8 @@ if (NOT HAVE_STD_MDSPAN AND NOT HAVE_EXP_MDSPAN)
   set(MDSPAN_INCLUDE_DIR "${kokkos_mdspan_SOURCE_DIR}/include")
 endif()
 
-# After the HAVE_STD_MDSPAN / HAVE_EXP_MDSPAN checks:
-if (HAVE_STD_MDSPAN)
-  target_compile_definitions(cpp_hf PRIVATE HF_FORCE_STD_MDSPAN=1)
-elseif(HAVE_EXP_MDSPAN)
-  target_compile_definitions(cpp_hf PRIVATE HF_FORCE_EXP_MDSPAN=1)
-else()
-  # We fetched Kokkos mdspan
-  target_compile_definitions(cpp_hf PRIVATE HF_FORCE_REF_MDSPAN=1)
-  target_include_directories(cpp_hf PRIVATE "${MDSPAN_INCLUDE_DIR}")
-endif()
+# Note: we will apply target compile definitions for mdspan after the target
+# is created below, since target_* commands require an existing target.
 
 
 # -----------------------------
@@ -179,8 +171,14 @@ file(GLOB_RECURSE CPP_HF_SOURCES CONFIGURE_DEPENDS
 # -----------------------------
 pybind11_add_module(cpp_hf ${CPP_HF_SOURCES})
 # Respect CMAKE_CXX_STANDARD set above / via scikit-build-core
-# If we vendored mdspan, add its include dir
-if (DEFINED MDSPAN_INCLUDE_DIR)
+
+# Apply mdspan choice to the target and include vendored headers if needed
+if (HAVE_STD_MDSPAN)
+  target_compile_definitions(cpp_hf PRIVATE HF_FORCE_STD_MDSPAN=1)
+elseif(HAVE_EXP_MDSPAN)
+  target_compile_definitions(cpp_hf PRIVATE HF_FORCE_EXP_MDSPAN=1)
+elseif(DEFINED MDSPAN_INCLUDE_DIR)
+  target_compile_definitions(cpp_hf PRIVATE HF_FORCE_REF_MDSPAN=1)
   target_include_directories(cpp_hf PRIVATE "${MDSPAN_INCLUDE_DIR}")
 endif()
 target_include_directories(cpp_hf PRIVATE ${FFTW_INCLUDE_DIRS})
