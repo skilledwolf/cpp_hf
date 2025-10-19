@@ -6,22 +6,17 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  build-linux:
-    name: Linux wheels (x86_64 & aarch64)
+  build-linux-x86_64:
+    name: Linux x86_64 wheels
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Enable multi-arch emulation (QEMU)
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: all
 
       - name: Cache FFTW
         uses: actions/cache@v4
         with:
           path: .cache/fftw-*
-          key: fftw-${{ runner.os }}-linux-3.3.10
+          key: fftw-${{ runner.os }}-x86_64-3.3.10
 
       - uses: actions/setup-python@v5
         with:
@@ -31,11 +26,38 @@ jobs:
         uses: pypa/cibuildwheel@v3.1.3
         env:
           CIBW_PLATFORM: linux
-          CIBW_ARCHS: "x86_64 aarch64"
+          CIBW_ARCHS: "x86_64"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-linux
+          name: wheels-linux-x86_64
+          path: wheelhouse/*.whl
+
+  build-linux-arm64:
+    name: Linux aarch64 wheels
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache FFTW
+        uses: actions/cache@v4
+        with:
+          path: .cache/fftw-*
+          key: fftw-${{ runner.os }}-aarch64-3.3.10
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.1.3
+        env:
+          CIBW_PLATFORM: linux
+          CIBW_ARCHS: "aarch64"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-aarch64
           path: wheelhouse/*.whl
 
   build-macos-arm:
@@ -108,7 +130,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: [build-linux, build-macos-arm, build-macos-intel]
+    needs: [build-linux-x86_64, build-linux-arm64, build-macos-arm, build-macos-intel]
     runs-on: ubuntu-latest
     environment: wheels
     if: startsWith(github.ref, 'refs/tags/v')
