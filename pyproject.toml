@@ -63,9 +63,7 @@ archs = ["native"]
 # One script handles both archs: arm64 builds FFTW from source, x86_64 uses brew fftw
 before-all = "bash ci/macos_arm_fftw.sh"
 repair-wheel-command = """
-delocate-wheel -L /project/.cache/fftw-3.3.10-macos/lib \
-               -L /opt/homebrew/lib -L /usr/local/lib \
-               --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
+delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
 """
 
 # Teach CMake/pkg-config where our cached FFTW installs live
