@@ -153,6 +153,17 @@ if (NOT HAVE_STD_MDSPAN AND NOT HAVE_EXP_MDSPAN)
   set(MDSPAN_INCLUDE_DIR "${kokkos_mdspan_SOURCE_DIR}/include")
 endif()
 
+# After the HAVE_STD_MDSPAN / HAVE_EXP_MDSPAN checks:
+if (HAVE_STD_MDSPAN)
+  target_compile_definitions(cpp_hf PRIVATE HF_FORCE_STD_MDSPAN=1)
+elseif(HAVE_EXP_MDSPAN)
+  target_compile_definitions(cpp_hf PRIVATE HF_FORCE_EXP_MDSPAN=1)
+else()
+  # We fetched Kokkos mdspan
+  target_compile_definitions(cpp_hf PRIVATE HF_FORCE_REF_MDSPAN=1)
+  target_include_directories(cpp_hf PRIVATE "${MDSPAN_INCLUDE_DIR}")
+endif()
+
 
 # -----------------------------
 # Sources

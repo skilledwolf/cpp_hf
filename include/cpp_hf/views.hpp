@@ -7,10 +7,10 @@
 
 namespace hf {
 
-// Use std::dynamic_extent (from <span>) uniformly; works with std or experimental mdspan
-using Ext2 = stdx::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
-using Ext4 = stdx::extents<std::size_t, std::dynamic_extent, std::dynamic_extent,
-                                      std::dynamic_extent, std::dynamic_extent>;
+// Use stdx::dynamic_extent uniformly; works with std or experimental mdspan
+using Ext2 = stdx::extents<std::size_t, stdx::dynamic_extent, stdx::dynamic_extent>;
+using Ext4 = stdx::extents<std::size_t, stdx::dynamic_extent, stdx::dynamic_extent,
+                                      stdx::dynamic_extent, stdx::dynamic_extent>;
 
 template <class T>
 using Grid2 = stdx::mdspan<T, Ext2, stdx::layout_right>;
