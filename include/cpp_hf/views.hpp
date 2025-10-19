@@ -1,21 +1,21 @@
 // views.hpp - mdspan aliases and helpers
 #pragma once
 
-#include <mdspan>
+#include "cpp_hf/mdspan_compat.hpp"
 #include <cstddef>
 
 namespace hf {
 
-// Standard mdspan aliases
-using Ext2 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
-using Ext4 = std::extents<std::size_t, std::dynamic_extent, std::dynamic_extent,
-                                      std::dynamic_extent, std::dynamic_extent>;
+// Standard mdspan aliases (via compat namespace alias `md`)
+using Ext2 = md::extents<std::size_t, md::dynamic_extent, md::dynamic_extent>;
+using Ext4 = md::extents<std::size_t, md::dynamic_extent, md::dynamic_extent,
+                                      md::dynamic_extent, md::dynamic_extent>;
 
 template <class T>
-using Grid2 = std::mdspan<T, Ext2, std::layout_right>;
+using Grid2 = md::mdspan<T, Ext2, md::layout_right>;
 
 template <class T>
-using Grid4 = std::mdspan<T, Ext4, std::layout_right>;
+using Grid4 = md::mdspan<T, Ext4, md::layout_right>;
 
 // Access helper to avoid depending on operator() availability across lib versions
 template <class Mdspan, class... Idx>

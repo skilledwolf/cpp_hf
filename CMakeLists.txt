@@ -20,6 +20,34 @@ endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# ---- mdspan detection + optional backport ----
+include(CheckCXXSourceCompiles)
+check_cxx_source_compiles("
+  #include <version>
+  #ifndef __cpp_lib_mdspan
+  #error
+  #endif
+  #if __cpp_lib_mdspan < 202207L
+  #error
+  #endif
+  #include <mdspan>
+  int main(){return 0;}" HAVE_STD_MDSPAN)
+
+message(STATUS "HAVE_STD_MDSPAN = ${HAVE_STD_MDSPAN}")
+
+option(HF_FORCE_MDSPAN_BACKPORT "Force backport even if <mdspan> exists" OFF)
+
+if(NOT HAVE_STD_MDSPAN OR HF_FORCE_MDSPAN_BACKPORT)
+  message(STATUS "Using mdspan backport (std::experimental::mdspan)")
+  include(FetchContent)
+  FetchContent_Declare(mdspan_backport
+    GIT_REPOSITORY https://github.com/kokkos/mdspan.git
+    GIT_TAG        v0.7.0
+  )
+  FetchContent_MakeAvailable(mdspan_backport)
+  set(MDSPAN_BACKPORT_INCLUDE_DIR ${mdspan_backport_SOURCE_DIR}/include)
+endif()
+
 # -----------------------------
 # Python + pybind11
 # -----------------------------
@@ -145,6 +173,10 @@ target_include_directories(cpp_hf
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:include>
 )
+if(NOT HAVE_STD_MDSPAN OR HF_FORCE_MDSPAN_BACKPORT)
+  target_include_directories(cpp_hf PRIVATE ${MDSPAN_BACKPORT_INCLUDE_DIR})
+endif()
+
 target_compile_options(cpp_hf PRIVATE -fvisibility=hidden)
 target_link_libraries(cpp_hf PRIVATE Eigen3::Eigen Boost::headers ${HF_OPENMP_LIB})
 
