@@ -151,6 +151,12 @@ file(GLOB_RECURSE CPP_HF_SOURCES CONFIGURE_DEPENDS
 # Extension target
 # -----------------------------
 pybind11_add_module(cpp_hf ${CPP_HF_SOURCES})
+target_include_directories(cpp_hf
+  PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>
+)
 target_compile_options(cpp_hf PRIVATE -fvisibility=hidden)
 target_include_directories(cpp_hf PRIVATE ${HF_FFTW_INCLUDE_DIRS})
 target_link_libraries(cpp_hf PRIVATE
