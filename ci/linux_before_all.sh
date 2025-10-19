@@ -11,10 +11,10 @@ ARCH="$(uname -m)"
 # ==============  BOOST  ==================
 # =========================================
 # We only need Boost HEADERS (toms748_solve.hpp etc.) — no libs.
-BOOST_VERSION=1.86.0
-BOOST_U=1_86_0
-BOOST_TARBALL="https://archives.boost.io/release/${BOOST_VERSION}/source/boost_${BOOST_U}.tar.xz"
-BOOST_SHA256="0d26b79d9cf20d91bce0d5dbea83f69a65f0912f7b7c35ecd93a6e6e94f3e1b5"
+BOOST_VERSION=1.89.0
+BOOST_U=1_89_0
+BOOST_TARBALL="https://archives.boost.io/release/${BOOST_VERSION}/source/boost_${BOOST_U}.tar.bz2"
+BOOST_SHA256="85a33fa22621b4f314f8e85e1a5e2a9363d22e4f4992925d4bb3bc631b5a0c7a"
 
 BOOST_PREFIX="${REPO_ROOT}/.cache/boost-${BOOST_VERSION}-${ARCH}"
 BOOST_BUILD_DIR="${REPO_ROOT}/.cache/_build-boost-${BOOST_VERSION}-${ARCH}"
@@ -27,10 +27,10 @@ else
   mkdir -p "${BOOST_BUILD_DIR}"
   cd "${BOOST_BUILD_DIR}"
 
-  curl -L -o "boost_${BOOST_U}.tar.xz" "${BOOST_TARBALL}"
-  echo "${BOOST_SHA256}  boost_${BOOST_U}.tar.xz" | sha256sum -c
+  curl -L -o "boost_${BOOST_U}.tar.bz2" "${BOOST_TARBALL}"
+  echo "${BOOST_SHA256}  boost_${BOOST_U}.tar.bz2" | sha256sum -c
 
-  tar -xf "boost_${BOOST_U}.tar.xz"
+  tar -xf "boost_${BOOST_U}.tar.bz2"
   mkdir -p "${BOOST_PREFIX}/include"
   # Copy only headers; no build needed
   rsync -a --delete "boost_${BOOST_U}/boost" "${BOOST_PREFIX}/include/"
