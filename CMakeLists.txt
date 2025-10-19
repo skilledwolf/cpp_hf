@@ -42,7 +42,7 @@ if(NOT HAVE_STD_MDSPAN OR HF_FORCE_MDSPAN_BACKPORT)
   include(FetchContent)
   FetchContent_Declare(mdspan_backport
     GIT_REPOSITORY https://github.com/kokkos/mdspan.git
-    GIT_TAG        v0.7.0
+    GIT_TAG        stable
   )
   FetchContent_MakeAvailable(mdspan_backport)
   set(MDSPAN_BACKPORT_INCLUDE_DIR ${mdspan_backport_SOURCE_DIR}/include)
