@@ -23,7 +23,7 @@ jobs:
           python-version: "3.12"
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.20.0
+        uses: pypa/cibuildwheel@v3.1.3
         env:
           CIBW_PLATFORM: linux
           CIBW_ARCHS: "x86_64 aarch64"
@@ -50,7 +50,7 @@ jobs:
           python-version: "3.12"
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.20.0
+        uses: pypa/cibuildwheel@v3.1.3
         env:
           CIBW_PLATFORM: macos
           MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -74,7 +74,7 @@ jobs:
         run: brew update && brew install fftw
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.20.0
+        uses: pypa/cibuildwheel@v3.1.3
         env:
           CIBW_PLATFORM: macos
           MACOSX_DEPLOYMENT_TARGET: "10.13"
@@ -96,7 +96,7 @@ jobs:
           merge-multiple: true
 
       - name: Publish
-        uses: pypa/gh-action-pypi-publish@v1.12.2
+        uses: pypa/gh-action-pypi-publish@v1.13.0
         with:
           packages_dir: .
         env:
