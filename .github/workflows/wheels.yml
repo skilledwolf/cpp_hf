@@ -12,6 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Enable multi-arch emulation (QEMU)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
       - name: Cache FFTW
         uses: actions/cache@v4
         with:
