@@ -17,33 +17,43 @@ BOOST_TARBALL="https://archives.boost.io/release/${BOOST_VERSION}/source/boost_$
 BOOST_SHA256="85a33fa22621b4f314f8e85e1a5e2a9363d22e4f4992925d4bb3bc631b5a0c7a"
 
 BOOST_PREFIX="${REPO_ROOT}/.cache/boost-${BOOST_VERSION}-${ARCH}"
-BOOST_BUILD_DIR="${REPO_ROOT}/.cache/_build-boost-${BOOST_VERSION}-${ARCH}"
 
 # Short-circuit if headers already staged
 if [ -f "${BOOST_PREFIX}/include/boost/math/tools/toms748_solve.hpp" ]; then
   echo "Boost headers already present at ${BOOST_PREFIX} — skipping."
 else
-  rm -rf "${BOOST_BUILD_DIR}"
-  mkdir -p "${BOOST_BUILD_DIR}"
-  cd "${BOOST_BUILD_DIR}"
+  rm -rf "${BOOST_PREFIX}"
+  mkdir -p "${BOOST_PREFIX}/include"
+  workdir="$(mktemp -d)"
+  trap 'rm -rf "$workdir"' EXIT
+  cd "$workdir"
 
   curl -L -o "boost_${BOOST_U}.tar.bz2" "${BOOST_TARBALL}"
-  echo "${BOOST_SHA256}  boost_${BOOST_U}.tar.bz2" | sha256sum -c
 
-  tar -xf "boost_${BOOST_U}.tar.bz2"
-  mkdir -p "${BOOST_PREFIX}/include"
-  # Copy only headers; no build needed
-  rsync -a --delete "boost_${BOOST_U}/boost" "${BOOST_PREFIX}/include/"
-  # (Optional) also stage top-level headers (rarely needed)
-  rsync -a --include="*/" --include="*.hpp" --exclude="*" "boost_${BOOST_U}/" "${BOOST_PREFIX}/include/"
+  # SHA256 check (works on both GNU coreutils and macOS if you reuse this script)
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "${BOOST_SHA256}  boost_${BOOST_U}.tar.bz2" | sha256sum -c
+  else
+    echo "${BOOST_SHA256}  boost_${BOOST_U}.tar.bz2" | shasum -a 256 -c
+  fi
+
+  # Extract only what we need directly into include/ (no rsync)
+  tar -xf "boost_${BOOST_U}.tar.bz2" \
+      -C "${BOOST_PREFIX}/include" \
+      --strip-components=1 \
+      "boost_${BOOST_U}/boost"
+
+  # Optional: top-level headers (rarely needed, but mirrors your original intent)
+  tar -xf "boost_${BOOST_U}.tar.bz2" \
+      -C "${BOOST_PREFIX}/include" \
+      --strip-components=1 \
+      --wildcards "boost_${BOOST_U}/*.hpp" || true
 fi
 
 # Make Boost discoverable by CMake + compiler for the rest of the build
 export BOOST_ROOT="${BOOST_PREFIX}"
 export BOOST_INCLUDEDIR="${BOOST_PREFIX}/include"
-# Help FindBoost (uses include dirs) & general CMake searches
 export CMAKE_PREFIX_PATH="${BOOST_PREFIX}:${CMAKE_PREFIX_PATH:-}"
-# Help the compiler find headers even if CMake were to miss it
 export CPATH="${BOOST_PREFIX}/include:${CPATH:-}"
 
 # Sanity check
