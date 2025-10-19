@@ -108,10 +108,6 @@ if (FFTW_LIBS STREQUAL "")
   message(FATAL_ERROR "FFTW not found. Ensure pkg-config files or libraries are visible.")
 endif()
 
-# Consume in your module target:
-target_include_directories(cpp_hf PRIVATE ${FFTW_INCLUDE_DIRS})
-target_link_libraries(cpp_hf PRIVATE ${FFTW_LIBS})
-
 
 # -----------------------------
 # OpenMP (optional)
@@ -177,6 +173,8 @@ target_compile_features(cpp_hf PRIVATE cxx_std_23)
 if (DEFINED MDSPAN_INCLUDE_DIR)
   target_include_directories(cpp_hf PRIVATE "${MDSPAN_INCLUDE_DIR}")
 endif()
+target_include_directories(cpp_hf PRIVATE ${FFTW_INCLUDE_DIRS})
+target_link_libraries(cpp_hf PRIVATE ${FFTW_LIBS})
 target_include_directories(cpp_hf
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
