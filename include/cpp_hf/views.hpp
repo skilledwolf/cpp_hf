@@ -8,9 +8,9 @@
 namespace hf {
 
 // Standard mdspan aliases (via compat namespace alias `md`)
-using Ext2 = md::extents<std::size_t, md::dynamic_extent, md::dynamic_extent>;
-using Ext4 = md::extents<std::size_t, md::dynamic_extent, md::dynamic_extent,
-                                      md::dynamic_extent, md::dynamic_extent>;
+using Ext2 = md::extents<std::size_t, std::dynamic_extent, std::dynamic_extent>;
+using Ext4 = md::extents<std::size_t, std::dynamic_extent, std::dynamic_extent,
+                                      std::dynamic_extent, std::dynamic_extent>;
 
 template <class T>
 using Grid2 = md::mdspan<T, Ext2, md::layout_right>;
