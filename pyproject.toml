@@ -33,6 +33,12 @@ wheel.packages = ["cpp_hf"]  # if you ship a pure Python package dir; okay if ab
 HF_USE_OPENMP = true
 HF_USE_FFTW_THREADS = true
 HF_FETCH_FFTW = false
+# Use a portable modern standard; mdspan fallback handles older libstdc++
+CMAKE_CXX_STANDARD = 20
+CMAKE_CXX_STANDARD_REQUIRED = true
+CMAKE_CXX_EXTENSIONS = false
+# Vendor mdspan reference implementation automatically when needed
+HF_BUNDLE_MDSPAN = true
 # Broad macOS default; override per CI job if desired
 CMAKE_OSX_DEPLOYMENT_TARGET = { env = "MACOSX_DEPLOYMENT_TARGET", default = "11.0" }
 
@@ -52,6 +58,7 @@ manylinux-aarch64-image = "manylinux_2_28"
 
 [tool.cibuildwheel.macos]
 archs = ["native"]
+# One script handles both archs: arm64 builds FFTW, Intel uses Homebrew
 before-all = "bash ci/macos_arm_fftw.sh"
 repair-wheel-command = """
 delocate-wheel -L /project/.cache/fftw-3.3.10-macos/lib \
@@ -72,3 +79,4 @@ PKG_CONFIG_PATH   = "/project/.cache/fftw-3.3.10-macos/lib/pkgconfig:$PKG_CONFIG
 CMAKE_PREFIX_PATH = "/project/.cache/fftw-3.3.10-macos:$CMAKE_PREFIX_PATH"
 LIBRARY_PATH      = "/project/.cache/fftw-3.3.10-macos/lib:$LIBRARY_PATH"
 CPATH             = "/project/.cache/fftw-3.3.10-macos/include:$CPATH"
+HOMEBREW_NO_AUTO_UPDATE = "1"

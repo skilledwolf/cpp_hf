@@ -10,14 +10,54 @@ option(HF_USE_OPENMP         "Enable OpenMP parallelization"          ON)
 option(HF_USE_FFTW_THREADS   "Link FFTW threads and call init"        ON)
 # For wheel builds we provide FFTW via CI 'before-all'; keep OFF by default.
 option(HF_FETCH_FFTW         "Auto-download & build FFTW if not found" OFF)
+option(HF_BUNDLE_MDSPAN      "Vendor mdspan reference implementation when needed" ON)
 
 # -----------------------------
 # C++ standard (lean default)
 # -----------------------------
 if (NOT DEFINED CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 23)
+  set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
+
+# -----------------------------
+# mdspan detection & fallback
+# -----------------------------
+if (HF_BUNDLE_MDSPAN)
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_QUIET ON)
+
+  check_cxx_source_compiles([=[
+    #include <cstddef>
+    #include <mdspan>
+    int main() {
+      std::mdspan<double, std::extents<std::size_t, 2>> view(nullptr, std::extents<std::size_t, 2>{});
+      return static_cast<int>(view.rank());
+    }
+  ]=] HAVE_STD_MDSPAN)
+
+  if (NOT HAVE_STD_MDSPAN)
+    check_cxx_source_compiles([=[
+      #include <cstddef>
+      #include <experimental/mdspan>
+      using extents_t = std::experimental::extents<std::size_t, 2>;
+      int main() {
+        std::experimental::mdspan<double, extents_t> view(nullptr, extents_t{});
+        return static_cast<int>(view.rank());
+      }
+    ]=] HAVE_EXP_MDSPAN)
+  endif()
+
+  if (NOT HAVE_STD_MDSPAN AND NOT HAVE_EXP_MDSPAN)
+    include(FetchContent)
+    FetchContent_Declare(kokkos_mdspan
+      GIT_REPOSITORY https://github.com/kokkos/mdspan.git
+      GIT_TAG        stable
+    )
+    FetchContent_MakeAvailable(kokkos_mdspan)
+    set(MDSPAN_INCLUDE_DIR "${kokkos_mdspan_SOURCE_DIR}/include")
+  endif()
 endif()
 
 # -----------------------------
@@ -151,7 +191,6 @@ file(GLOB_RECURSE CPP_HF_SOURCES CONFIGURE_DEPENDS
 # Extension target
 # -----------------------------
 pybind11_add_module(cpp_hf ${CPP_HF_SOURCES})
-target_compile_features(cpp_hf PRIVATE cxx_std_23)
 target_include_directories(cpp_hf
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
@@ -160,6 +199,9 @@ target_include_directories(cpp_hf
 )
 target_compile_options(cpp_hf PRIVATE -fvisibility=hidden)
 target_include_directories(cpp_hf PRIVATE ${HF_FFTW_INCLUDE_DIRS})
+if (DEFINED MDSPAN_INCLUDE_DIR)
+  target_include_directories(cpp_hf PRIVATE "${MDSPAN_INCLUDE_DIR}")
+endif()
 target_link_libraries(cpp_hf PRIVATE
   Eigen3::Eigen
   Boost::headers
