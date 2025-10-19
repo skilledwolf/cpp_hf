@@ -38,10 +38,11 @@ cd "fftw-${FFTW_VERSION}"
 
 ./configure \
   --prefix="${PREFIX}" \
-  --enable-shared --disable-static \
+  --host=aarch64-apple-darwin --build=aarch64-apple-darwin \
+  --enable-shared \
   --disable-fortran \
   --enable-threads \
-  --enable-neon
+  --enable-neon 
 
 make -j"$(sysctl -n hw.ncpu)"
 make install
