@@ -9,6 +9,7 @@ __pycache__/
 outputs/
 
 # Local tests and dev-only scripts
+new_github_release.sh
 tests/
 compare_cpp_vs_jax_bilayer.py
 quick_sanity_check.py

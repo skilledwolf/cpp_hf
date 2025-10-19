@@ -31,13 +31,15 @@ classifiers = [
 Homepage = "https://github.com/skilledwolf/cpp_hf"
 Issues   = "https://github.com/skilledwolf/cpp_hf/issues"
 
-# Provide version dynamically from git tags via setuptools_scm
-[tool.setuptools_scm]
-fallback_version = "0.0.0"
-tag_regex = "^(?:v)?(?P<version>\d+\.\d+\.\d+)$"
 
-[tool.scikit-build.metadata]
-version = { provider = "scikit_build_core.metadata.setuptools_scm" }
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.setuptools_scm"
+
+[tool.setuptools_scm]
+# Strip leading 'v' from tags like v1.2.3 automatically
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+fallback_version = "0.0"
 
 #[tool.scikit-build]
 # No pure-Python packages shipped; wheel only contains the extension module
@@ -86,3 +88,18 @@ CMAKE_PREFIX_PATH = "/project/.cache/fftw-3.3.10-x86_64:/project/.cache/fftw-3.3
 LIBRARY_PATH      = "/project/.cache/fftw-3.3.10-x86_64/lib:/project/.cache/fftw-3.3.10-aarch64/lib:$LIBRARY_PATH"
 CPATH             = "/project/.cache/fftw-3.3.10-x86_64/include:/project/.cache/fftw-3.3.10-aarch64/include:$CPATH"
 BOOST_INCLUDEDIR  = "/project/.cache/boost-1.89.0/include"
+
+
+[tool.scikit-build.wheel]
+# Ensure license and notices are embedded in the wheel metadata
+license-files = [
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+]
+
+[tool.scikit-build.sdist]
+# Ensure third-party notices are included in the source distribution
+include = [
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+]
