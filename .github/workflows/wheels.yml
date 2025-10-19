@@ -1,0 +1,103 @@
+name: wheels
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch: {}
+
+jobs:
+  build-linux:
+    name: Linux wheels (x86_64 & aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache FFTW
+        uses: actions/cache@v4
+        with:
+          path: .cache/fftw-*
+          key: fftw-${{ runner.os }}-linux-3.3.10
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.20.0
+        env:
+          CIBW_PLATFORM: linux
+          CIBW_ARCHS: "x86_64 aarch64"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux
+          path: wheelhouse/*.whl
+
+  build-macos-arm:
+    name: macOS arm64 wheel
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache FFTW
+        uses: actions/cache@v4
+        with:
+          path: .cache/fftw-*
+          key: fftw-${{ runner.os }}-arm64-3.3.10
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.20.0
+        env:
+          CIBW_PLATFORM: macos
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-arm
+          path: wheelhouse/*.whl
+
+  build-macos-intel:
+    name: macOS x86_64 wheel
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FFTW via Homebrew
+        run: brew update && brew install fftw
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.20.0
+        env:
+          CIBW_PLATFORM: macos
+          MACOSX_DEPLOYMENT_TARGET: "10.13"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-intel
+          path: wheelhouse/*.whl
+
+  publish:
+    name: Publish to PyPI
+    needs: [build-linux, build-macos-arm, build-macos-intel]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@v1.12.2
+        with:
+          packages_dir: .
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}

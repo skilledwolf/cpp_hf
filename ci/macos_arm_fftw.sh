@@ -1,36 +1,49 @@
-# 1) Prereqs
-xcode-select --install
+#!/usr/bin/env bash
+# Build and cache NEON-enabled FFTW for Apple Silicon (arm64).
+set -euxo pipefail
 
-# 2) Fetch FFTW
-cd /tmp
-curl -LO https://fftw.org/fftw-3.3.10.tar.gz
-tar xzf fftw-3.3.10.tar.gz
-cd fftw-3.3.10
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "Not macOS; nothing to do."
+  exit 0
+fi
 
-# 3) Choose an install prefix
-PREFIX=$HOME/.local
+ARCH="$(uname -m)"
+if [ "${ARCH}" != "arm64" ]; then
+  echo "Not Apple Silicon; nothing to do (Intel can use Homebrew fftw)."
+  exit 0
+fi
 
-# 4) Common flags (optimize for your M-series CPU)
-export CC=clang
-export CFLAGS="-O3 -ffp-contract=fast -fstrict-aliasing -fno-math-errno -pipe" #-mcpu=native 
-# (Optional) Thin LTO can help: add -flto=thin to CFLAGS and LDFLAGS
+FFTW_VERSION=3.3.10
+TARBALL="https://www.fftw.org/fftw-${FFTW_VERSION}.tar.gz"
+SHA256="56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467"
 
-# 5) Build & install double precision (default)
-./configure --prefix="$PREFIX" --enable-shared \
-            --enable-threads --host=aarch64-apple-darwin --build=aarch64-apple-darwin --enable-neon
+# cibuildwheel runs from the repo root on macOS
+REPO_ROOT="${REPO_ROOT:-$PWD}"
+PREFIX="${REPO_ROOT}/.cache/fftw-${FFTW_VERSION}-macos"
+BUILD_DIR="${REPO_ROOT}/.cache/_build-fftw-${FFTW_VERSION}-macos"
+
+if [ -f "${PREFIX}/lib/pkgconfig/fftw3.pc" ]; then
+  echo "FFTW already present at ${PREFIX} — skipping build."
+  exit 0
+fi
+
+mkdir -p "${BUILD_DIR}"
+cd "${BUILD_DIR}"
+
+curl -L -o "fftw-${FFTW_VERSION}.tar.gz" "${TARBALL}"
+echo "${SHA256}  fftw-${FFTW_VERSION}.tar.gz" | shasum -a 256 -c
+
+tar xf "fftw-${FFTW_VERSION}.tar.gz"
+cd "fftw-${FFTW_VERSION}"
+
+./configure \
+  --prefix="${PREFIX}" \
+  --enable-shared --disable-static \
+  --disable-fortran \
+  --enable-threads \
+  --enable-neon
+
 make -j"$(sysctl -n hw.ncpu)"
-make check
 make install
 
-# 6) Build & install single precision (float)
-# make distclean
-# ./configure --prefix="$PREFIX" --enable-shared \
-#             --enable-threads --enable-float --host=aarch64-apple-darwin --build=aarch64-apple-darwin --enable-neon
-# make -j"$(sysctl -n hw.ncpu)"
-# make check
-# make install
-
-# Remove source dir and tarball
-cd ..
-rm -rf fftw-3.3.10 fftw-3.3.10.tar.gz
-echo "[*] FFTW installed to $PREFIX" 
+echo "FFTW installed to ${PREFIX}"
