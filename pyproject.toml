@@ -55,6 +55,10 @@ test-command  = "python ci/smoke_test.py"
 before-all = "bash ci/linux_before_all.sh"
 manylinux-x86_64-image  = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
+repair-wheel-command = """
+LD_LIBRARY_PATH=/project/.cache/fftw-3.3.10-$(uname -m)/lib:$LD_LIBRARY_PATH \
+  auditwheel repair -w {dest_dir} -v {wheel}
+"""
 
 [tool.cibuildwheel.macos]
 archs = ["native"]
