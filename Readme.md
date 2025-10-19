@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/cpp-hf.svg)](https://pypi.org/project/cpp-hf/)
 [![Wheel](https://img.shields.io/pypi/wheel/cpp-hf.svg)](https://pypi.org/project/cpp-hf/#files)
 [![License](https://img.shields.io/pypi/l/cpp-hf.svg)](LICENSE)
-[![Release](https://github.com/skilledwolf/cpp_hf/actions/workflows/ci-and-release.yml/badge.svg)](https://github.com/skilledwolf/cpp_hf/actions/workflows/ci-and-release.yml)
+[![Release](https://github.com/skilledwolf/cpp_hf/actions/workflows/wheels.yml/badge.svg)](https://github.com/skilledwolf/cpp_hf/actions/workflows/wheels.yml)
 
 cpp_hf provides a compiled extension module exposing a fast Hartree–Fock
 self‑consistent field (SCF) loop for uniform 2D k‑grids. It uses
@@ -30,34 +30,10 @@ Quick install (prebuilt wheel if available):
 pip install cpp-hf
 ```
 
-Notes:
-- The import name is `cpp_hf` (underscore), even though the package name uses a hyphen.
-- Wheels may not be available for all platforms/Python versions yet; in that case pip will build from source.
+Note: the Python import name is `cpp_hf` (underscore).
 
-Build from source (requirements):
-- Python 3.8+
-- A C++17 compiler
-- FFTW and headers (threads variant optional)
-- CMake ≥ 3.21
-
-Build via pip (with optional CMake flags):
-```
-pip install . \
-  -C cmake.define.HF_USE_OPENMP=ON \
-  -C cmake.define.HF_USE_FFTW_THREADS=ON
-```
-
-macOS (Homebrew) dependencies:
-```
-brew install fftw eigen cmake
-```
-
-If FFTW is not found, set one of `PKG_CONFIG_PATH`, `FFTW3_DIR`, or `CMAKE_PREFIX_PATH` to point to your installation.
-
-The repo includes a convenience script that activates a conda env and builds:
-```
-sh build_install.sh
-```
+Advanced installation, source builds, platform tips, and troubleshooting:
+see `Installation.md`.
 
 ## Quick start
 
