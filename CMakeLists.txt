@@ -126,8 +126,10 @@ set(CMAKE_REQUIRED_QUIET ON)
 # Try <mdspan>
 check_cxx_source_compiles([=[
   #include <mdspan>
+  using E = std::extents<std::size_t, std::dynamic_extent>;
   int main() {
-    std::mdspan<double, std::extents<size_t, 2>> a(nullptr, std::extents<size_t,2>{});
+    std::mdspan<double, E> a(nullptr, E{2});
+    (void)a;
     return 0;
   }
 ]=] HAVE_STD_MDSPAN)
@@ -136,8 +138,12 @@ check_cxx_source_compiles([=[
 if (NOT HAVE_STD_MDSPAN)
   check_cxx_source_compiles([=[
     #include <experimental/mdspan>
-    using E = std::experimental::extents<size_t,2>;
-    int main() { std::experimental::mdspan<double, E> a(nullptr, E{}); return 0; }
+    using E = std::experimental::extents<std::size_t, std::experimental::dynamic_extent>;
+    int main() {
+      std::experimental::mdspan<double, E> a(nullptr, E{2});
+      (void)a;
+      return 0;
+    }
   ]=] HAVE_EXP_MDSPAN)
 endif()
 

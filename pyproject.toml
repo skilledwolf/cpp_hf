@@ -40,7 +40,7 @@ CMAKE_CXX_EXTENSIONS = false
 # Let CMake vendor mdspan automatically when <mdspan> isn't available
 HF_BUNDLE_MDSPAN = true
 # Broad macOS default; override per CI job if desired
-CMAKE_OSX_DEPLOYMENT_TARGET = { env = "MACOSX_DEPLOYMENT_TARGET", default = "11.0" }
+CMAKE_OSX_DEPLOYMENT_TARGET = { env = "MACOSX_DEPLOYMENT_TARGET", default = "14.0" }
 
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-*"

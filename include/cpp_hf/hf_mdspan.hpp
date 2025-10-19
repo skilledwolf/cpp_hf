@@ -16,8 +16,9 @@
 
 #elif defined(HF_FORCE_REF_MDSPAN)
   #include <mdspan/mdspan.hpp>
-  // The reference implementation exposes the TS API in std::experimental::
-  namespace stdx = std::experimental;
+  // Recent Kokkos mdspan places the API in std::; prefer that.
+  // If your vendored mdspan still uses std::experimental, switch the alias here.
+  namespace stdx = std;
 
 // Auto-detect
 #else
@@ -30,7 +31,8 @@
     namespace stdx = std::experimental;
   #elif __has_include(<mdspan/mdspan.hpp>)
     #include <mdspan/mdspan.hpp>
-    namespace stdx = std::experimental;
+    // Default to std namespace for modern reference mdspan
+    namespace stdx = std;
   #else
     #error "No usable mdspan header found. Install libstdc++/libc++ with mdspan, or vendor Kokkos mdspan."
   #endif
