@@ -49,6 +49,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install boost via Homebrew
+        run: brew update && brew install boost
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.1.3
         env:
@@ -70,8 +73,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install FFTW via Homebrew
-        run: brew update && brew install fftw
+      - name: Install FFTW and boost via Homebrew
+        run: brew update && brew install fftw boost
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.1.3

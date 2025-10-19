@@ -15,7 +15,7 @@ option(HF_FETCH_FFTW         "Auto-download & build FFTW if not found" OFF)
 # C++ standard (lean default)
 # -----------------------------
 if (NOT DEFINED CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 20)
+  set(CMAKE_CXX_STANDARD 23)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
 endif()
@@ -151,6 +151,7 @@ file(GLOB_RECURSE CPP_HF_SOURCES CONFIGURE_DEPENDS
 # Extension target
 # -----------------------------
 pybind11_add_module(cpp_hf ${CPP_HF_SOURCES})
+target_compile_features(cpp_hf PRIVATE cxx_std_23)
 target_include_directories(cpp_hf
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
