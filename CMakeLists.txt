@@ -182,6 +182,5 @@ target_link_libraries(cpp_hf PRIVATE Eigen3::Eigen Boost::headers ${HF_OPENMP_LI
 
 # Install the binary into the python package so the wheel includes it
 # (place the extension inside the 'cpp_hf' package directory)
-install(TARGETS cpp_hf
-  LIBRARY DESTINATION "${SKBUILD_PLATLIB_DIR}/cpp_hf"
-)
+# Install the binary extension at the top level of site-packages
+install(TARGETS cpp_hf DESTINATION "${SKBUILD_PLATLIB_DIR}")

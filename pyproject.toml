@@ -26,8 +26,8 @@ classifiers = [
 Homepage = "https://github.com/skilledwolf/cpp_hf"
 Issues   = "https://github.com/skilledwolf/cpp_hf/issues"
 
-[tool.scikit-build]
-wheel.packages = ["cpp_hf"]  # if you ship a pure Python package dir; okay if absent
+#[tool.scikit-build]
+# No pure-Python packages shipped; wheel only contains the extension module
 
 [tool.scikit-build.cmake.define]
 HF_USE_OPENMP = true
