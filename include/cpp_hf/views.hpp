@@ -2,6 +2,7 @@
 #pragma once
 
 #include "cpp_hf/mdspan_compat.hpp"
+#include <span>
 #include <cstddef>
 
 namespace hf {
