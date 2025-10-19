@@ -63,69 +63,55 @@ else()
   endif()
 endif()
 
-# -----------------------------
-# FFTW (pkg-config preferred)
-# -----------------------------
-set(HF_FFTW_LIBS "")
-set(HF_FFTW_INCLUDE_DIRS "")
+
+# ---- FFTW via pkg-config (preferred in CI) ----
 find_package(PkgConfig QUIET)
 
+set(FFTW_LIBS "")
+set(FFTW_INCLUDE_DIRS "")
+
 if (PKG_CONFIG_FOUND)
-  # Prefer pkg-config (matches CI install location cleanly)
-  pkg_check_modules(FFTW3 QUIET fftw3)
-  if (FFTW3_FOUND)
-    list(APPEND HF_FFTW_LIBS ${FFTW3_LINK_LIBRARIES})
-    list(APPEND HF_FFTW_INCLUDE_DIRS ${FFTW3_INCLUDE_DIRS})
+  pkg_check_modules(PC_FFTW3 QUIET fftw3)
+  if (PC_FFTW3_FOUND)
+    list(APPEND FFTW_LIBS         ${PC_FFTW3_LINK_LIBRARIES})
+    list(APPEND FFTW_INCLUDE_DIRS ${PC_FFTW3_INCLUDE_DIRS})
   endif()
 
   if (HF_USE_FFTW_THREADS)
-    pkg_check_modules(FFTW3_THREADS QUIET fftw3_threads)
-    if (FFTW3_THREADS_FOUND)
-      list(APPEND HF_FFTW_LIBS ${FFTW3_THREADS_LINK_LIBRARIES})
-      list(APPEND HF_FFTW_INCLUDE_DIRS ${FFTW3_THREADS_INCLUDE_DIRS})
+    pkg_check_modules(PC_FFTW3_THREADS QUIET fftw3_threads)
+    if (PC_FFTW3_THREADS_FOUND)
+      list(APPEND FFTW_LIBS         ${PC_FFTW3_THREADS_LINK_LIBRARIES})
+      list(APPEND FFTW_INCLUDE_DIRS ${PC_FFTW3_THREADS_INCLUDE_DIRS})
       add_compile_definitions(FFTW3_THREADS=1)
     endif()
   endif()
 endif()
 
-# Fallback: try raw libraries if pkg-config didn’t find them
-if (HF_FFTW_LIBS STREQUAL "")
+# Fallback: raw find_path/find_library (for local dev)
+if (FFTW_LIBS STREQUAL "")
   find_path(FFTW3_INCLUDE_DIR fftw3.h)
-  find_library(FFTW3_LIBRARY     NAMES fftw3)
+  find_library(FFTW3_LIBRARY NAMES fftw3)
   if (FFTW3_INCLUDE_DIR AND FFTW3_LIBRARY)
-    list(APPEND HF_FFTW_INCLUDE_DIRS "${FFTW3_INCLUDE_DIR}")
-    list(APPEND HF_FFTW_LIBS         "${FFTW3_LIBRARY}")
+    list(APPEND FFTW_INCLUDE_DIRS "${FFTW3_INCLUDE_DIR}")
+    list(APPEND FFTW_LIBS         "${FFTW3_LIBRARY}")
   endif()
-
   if (HF_USE_FFTW_THREADS)
     find_library(FFTW3_THREADS_LIBRARY NAMES fftw3_threads)
     if (FFTW3_THREADS_LIBRARY)
-      list(APPEND HF_FFTW_LIBS "${FFTW3_THREADS_LIBRARY}")
+      list(APPEND FFTW_LIBS "${FFTW3_THREADS_LIBRARY}")
       add_compile_definitions(FFTW3_THREADS=1)
     endif()
   endif()
 endif()
 
-# Optional: developer convenience fetch (kept OFF in CI)
-if (HF_FETCH_FFTW AND HF_FFTW_LIBS STREQUAL "")
-  include(ExternalProject)
-  set(_fftw_url "https://www.fftw.org/fftw-3.3.10.tar.gz")
-  ExternalProject_Add(ext_fftw
-    URL               ${_fftw_url}
-    PREFIX            ${CMAKE_BINARY_DIR}/ext_fftw
-    CONFIGURE_COMMAND ./configure --prefix=${CMAKE_BINARY_DIR}/ext_fftw/prefix
-                                  --enable-shared --disable-static
-                                  --disable-fortran --enable-threads
-    BUILD_COMMAND     $(MAKE) -j
-    INSTALL_COMMAND   $(MAKE) install
-  )
-  add_library(fftw3 SHARED IMPORTED)
-  set_target_properties(fftw3 PROPERTIES
-    IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/ext_fftw/prefix/lib/libfftw3.${CMAKE_SHARED_LIBRARY_SUFFIX}")
-  add_dependencies(fftw3 ext_fftw)
-  list(APPEND HF_FFTW_LIBS fftw3)
-  include_directories("${CMAKE_BINARY_DIR}/ext_fftw/prefix/include")
+if (FFTW_LIBS STREQUAL "")
+  message(FATAL_ERROR "FFTW not found. Ensure pkg-config files or libraries are visible.")
 endif()
+
+# Consume in your module target:
+target_include_directories(cpp_hf PRIVATE ${FFTW_INCLUDE_DIRS})
+target_link_libraries(cpp_hf PRIVATE ${FFTW_LIBS})
+
 
 # -----------------------------
 # OpenMP (optional)
@@ -137,6 +123,41 @@ if (HF_USE_OPENMP)
     set(HF_OPENMP_LIB OpenMP::OpenMP_CXX)
   endif()
 endif()
+
+# ---- mdspan detection & fallback ----
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_QUIET ON)
+
+# Try <mdspan>
+check_cxx_source_compiles([=[
+  #include <mdspan>
+  int main() {
+    std::mdspan<double, std::extents<size_t, 2>> a(nullptr, std::extents<size_t,2>{});
+    return 0;
+  }
+]=] HAVE_STD_MDSPAN)
+
+# Try <experimental/mdspan> if needed
+if (NOT HAVE_STD_MDSPAN)
+  check_cxx_source_compiles([=[
+    #include <experimental/mdspan>
+    using E = std::experimental::extents<size_t,2>;
+    int main() { std::experimental::mdspan<double, E> a(nullptr, E{}); return 0; }
+  ]=] HAVE_EXP_MDSPAN)
+endif()
+
+# Vendor reference mdspan if neither header is available
+if (NOT HAVE_STD_MDSPAN AND NOT HAVE_EXP_MDSPAN)
+  include(FetchContent)
+  FetchContent_Declare(kokkos_mdspan
+    GIT_REPOSITORY https://github.com/kokkos/mdspan.git
+    GIT_TAG        stable
+  )
+  FetchContent_MakeAvailable(kokkos_mdspan)
+  # It is header-only; just add the include dir where mdspan/mdspan.hpp lives
+  set(MDSPAN_INCLUDE_DIR "${kokkos_mdspan_SOURCE_DIR}/include")
+endif()
+
 
 # -----------------------------
 # Sources
@@ -152,6 +173,10 @@ file(GLOB_RECURSE CPP_HF_SOURCES CONFIGURE_DEPENDS
 # -----------------------------
 pybind11_add_module(cpp_hf ${CPP_HF_SOURCES})
 target_compile_features(cpp_hf PRIVATE cxx_std_23)
+# If we vendored mdspan, add its include dir
+if (DEFINED MDSPAN_INCLUDE_DIR)
+  target_include_directories(cpp_hf PRIVATE "${MDSPAN_INCLUDE_DIR}")
+endif()
 target_include_directories(cpp_hf
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
