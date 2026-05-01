@@ -1,0 +1,186 @@
+#!/usr/bin/env python
+"""Bilayer graphene density scan using the reference SCF solver.
+
+Runs the cpp_hf reference SCF solver at a list of carrier densities for
+both PM and SVP branches, with warm-starting between adjacent density points.
+
+Writes a CSV and a figure of energy-per-carrier vs density.
+
+Usage:
+    python examples/multilayer_graphene_reference_scf_scan.py
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import sys
+import time
+from pathlib import Path
+
+
+import numpy as np
+import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+EXAMPLES_DIR = Path(__file__).resolve().parent
+if str(EXAMPLES_DIR) not in sys.path:
+    sys.path.insert(0, str(EXAMPLES_DIR))
+
+import cpp_hf
+from cpp_hf import SCFConfig, solve_scf
+import _bilayer_common as common
+
+
+DEFAULT_OUTPUT = REPO_ROOT / "examples" / "outputs" / "reference_scf_density_scan.csv"
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--branches", nargs="+", default=list(common.BRANCHES),
+                   choices=list(common.BRANCHES))
+    p.add_argument("--density-points", nargs="+", type=float,
+                   default=list(common.DEFAULT_DENSITY_POINTS))
+    p.add_argument("--nk", type=int, default=common.NK)
+    p.add_argument("--kmax", type=float, default=common.KMAX)
+    p.add_argument("--u-mev", type=float, default=common.U_MEV)
+    p.add_argument("--temperature", type=float, default=common.TEMPERATURE)
+    p.add_argument("--epsilon-r", type=float, default=common.EPSILON_R)
+    p.add_argument("--d-gate", type=float, default=common.D_GATE)
+    p.add_argument("--init-scale", type=float, default=common.INIT_SCALE)
+    p.add_argument("--max-iter", type=int, default=500)
+    p.add_argument("--mixing", type=float, default=0.3)
+    p.add_argument("--density-tol", type=float, default=1e-7)
+    p.add_argument("--comm-tol", type=float, default=1e-6)
+    p.add_argument("--seed-mode", choices=("cold", "warm"), default="cold",
+                   help="'cold' = fresh seed per density point. 'warm' = reuse "
+                        "previous converged density.")
+    p.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    p.add_argument("--no-figure", action="store_true")
+    return p.parse_args()
+
+
+def run_scan(args: argparse.Namespace) -> list[dict]:
+    setup = common.build_bilayer(
+        nk=args.nk, kmax=args.kmax, U_meV=args.u_mev,
+        temperature=args.temperature, epsilon_r=args.epsilon_r,
+        d_gate=args.d_gate, init_scale=args.init_scale,
+    )
+
+    kernel = cpp_hf.HartreeFockKernel(
+        weights=setup.weights,
+        hamiltonian=np.asarray(setup.h_template.hs),
+        coulomb_q=setup.Vq,
+        T=args.temperature,
+        include_hartree=False,
+        include_exchange=True,
+    )
+
+    # Walking order: CN first, then outward in both directions (warm-start friendly)
+    positive = sorted([n for n in args.density_points if n > 0])
+    negative = sorted([n for n in args.density_points if n < 0], reverse=True)
+    zero = [n for n in args.density_points if abs(n) < 1e-8]
+    walk = list(zero) + [n for pair in zip(positive, negative) for n in pair]
+    if len(positive) > len(negative):
+        walk += positive[len(negative):]
+    elif len(negative) > len(positive):
+        walk += negative[len(positive):]
+
+    rows: list[dict] = []
+    for branch in args.branches:
+        print(f"\n=== {branch} ({args.seed_mode}-seed) ===")
+        project_fn = setup.project_fns[branch]
+        config = SCFConfig(
+            max_iter=int(args.max_iter),
+            mixing=float(args.mixing),
+            density_tol=float(args.density_tol),
+            comm_tol=float(args.comm_tol),
+            project_fn=project_fn,
+        )
+
+        seed_P = None
+        for n_cm12 in walk:
+            n_e, h_run = common.n_electrons_for_density(setup, n_cm12, args.temperature)
+            if args.seed_mode == "cold" or seed_P is None:
+                P0 = common.initial_density_from_seed(
+                    h_run, setup.seeds[branch], args.temperature,
+                )
+                seed_used = np.asarray(P0)
+                seed_label = "cold-seed"
+            else:
+                seed_used = seed_P
+                seed_label = "warm-seed"
+
+            t0 = time.perf_counter()
+            r = solve_scf(kernel, seed_used, n_e, config=config)
+            t = time.perf_counter() - t0
+            row = _make_row(branch, n_cm12, n_e, r, t, seed_label)
+            rows.append(row)
+            _print_row(row)
+            seed_P = r.density_matrix
+
+    return rows
+
+
+def _make_row(branch: str, n_cm12: float, n_electrons: float, r, elapsed: float, seed_kind: str) -> dict:
+    hist_d = np.asarray(r.history["density_residual"])
+    hist_c = np.asarray(r.history["commutator_residual"])
+    k = int(r.iterations)
+    return {
+        "branch": branch,
+        "density_cm12": n_cm12,
+        "n_electrons": n_electrons,
+        "converged": bool(r.converged),
+        "iterations": k,
+        "energy": float(r.energy),
+        "density_residual_last": float(hist_d[k - 1]) if k > 0 else float("nan"),
+        "commutator_residual_last": float(hist_c[k - 1]) if k > 0 else float("nan"),
+        "mu": float(r.chemical_potential),
+        "time_s": elapsed,
+        "seed": seed_kind,
+    }
+
+
+def _print_row(row: dict) -> None:
+    print(
+        f"  n={row['density_cm12']:+.3f}  it={row['iterations']:3d}  "
+        f"E={row['energy']:.6f}  dP={row['density_residual_last']:.2e}  "
+        f"dC={row['commutator_residual_last']:.2e}  conv={row['converged']}  "
+        f"t={row['time_s']:.2f}s  {row['seed']}"
+    )
+
+
+def write_csv(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows_sorted = sorted(rows, key=lambda r: (r["branch"], float(r["density_cm12"])))
+    fieldnames = [
+        "branch", "density_cm12", "n_electrons", "converged", "iterations",
+        "energy", "density_residual_last", "commutator_residual_last",
+        "mu", "time_s", "seed",
+    ]
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows_sorted)
+
+
+def main() -> int:
+    args = parse_args()
+    rows = run_scan(args)
+    write_csv(args.output, rows)
+    print(f"\nwrote CSV: {args.output}")
+    if not args.no_figure:
+        common.write_figure(
+            csv_path=args.output, rows=rows,
+            title="Bilayer graphene PM/SVP (reference SCF)",
+        )
+    total_time = sum(r["time_s"] for r in rows)
+    n_pts = len(rows)
+    print(f"total solver time: {total_time:.1f}s  ({total_time/n_pts:.2f}s/point over {n_pts} points)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

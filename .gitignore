@@ -8,10 +8,10 @@ ci/.cache/
 
 # Local outputs and generated images
 outputs/
+examples/outputs/
 
-# Local tests and dev-only scripts
+# Dev-only scripts
 new_github_release.sh
-tests/
 compare_cpp_vs_jax_bilayer.py
 quick_sanity_check.py
 
