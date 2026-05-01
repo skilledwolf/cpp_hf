@@ -13,6 +13,7 @@
 #include <complex>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 namespace cpp_hf {
@@ -44,6 +45,43 @@ struct DMResult {
 };
 
 namespace dm_internal {
+
+inline bool block_sizes_enabled(const std::vector<std::size_t>& sizes,
+                                std::size_t nb) {
+    if (sizes.empty()) return false;
+    std::size_t total = 0;
+    for (std::size_t s : sizes) {
+        if (s == 0) throw std::invalid_argument("block_sizes entries must be positive.");
+        total += s;
+    }
+    if (total != nb) throw std::invalid_argument("block_sizes must sum to nb.");
+    return sizes.size() > 1;
+}
+
+inline bool block_structure_ok(const c64* M, std::size_t nk, std::size_t nb,
+                               const std::vector<std::size_t>& sizes) {
+    const f32 scale = max_abs(M, nk * nb * nb);
+    const f32 off = max_offblock_sizes(M, nk, nb, sizes);
+    const f32 tol = 1.0e-10 + 1.0e-10 * scale;
+    return off <= tol;
+}
+
+inline bool block_problem_invariant(const HFKernel& K, const ProjectFn* project_fn,
+                                    const std::vector<std::size_t>& sizes) {
+    if (project_fn && *project_fn) return false;
+    const std::size_t nk = K.nk();
+    const std::size_t nb = K.nb;
+    if (!block_structure_ok(K.h.data(), nk, nb, sizes)) return false;
+    if (!block_structure_ok(K.refP.data(), nk, nb, sizes)) return false;
+    for (std::size_t t = 0; t < K.n_contact; ++t) {
+        if (K.contact_g[t] == 0.0) continue;
+        if (!block_structure_ok(K.contact_Oi.data() + t * nb * nb, 1, nb, sizes))
+            return false;
+        if (!block_structure_ok(K.contact_Oj.data() + t * nb * nb, 1, nb, sizes))
+            return false;
+    }
+    return true;
+}
 
 inline void density_from_Qp(const c64* Q, const f32* p, c64* P,
                             std::size_t nk, std::size_t nb) {
@@ -152,6 +190,32 @@ inline void cayley_spectral_setup(const c64* d, c64* V, f32* lam,
     }
 }
 
+inline void cayley_spectral_setup_block_sizes(const c64* d, c64* V, f32* lam,
+                                               std::size_t nk, std::size_t nb,
+                                               const std::vector<std::size_t>& sizes) {
+    const std::size_t nb2 = nb * nb;
+    std::vector<c64> iA(nb2);
+    for (std::size_t k = 0; k < nk; ++k) {
+        const c64* dk = d + k * nb2;
+        for (std::size_t i = 0; i < nb2; ++i) iA[i] = c64(0.0, 1.0) * dk[i];
+        MapMatXcf iAm(iA.data(), nb, nb);
+        MapMatXcf VOut(V + k * nb2, nb, nb);
+        VOut.setZero();
+
+        std::size_t start = 0;
+        for (std::size_t s : sizes) {
+            MatXcf sub = iAm.block(start, start, s, s);
+            sub = 0.5 * (sub + sub.adjoint());
+            Eigen::SelfAdjointEigenSolver<MatXcf> es(sub);
+            const auto& w = es.eigenvalues();
+            const auto& Vk = es.eigenvectors();
+            for (std::size_t i = 0; i < s; ++i) lam[k * nb + start + i] = w[i];
+            VOut.block(start, start, s, s) = Vk;
+            start += s;
+        }
+    }
+}
+
 // c_t = (1 + i τλ/2) / (1 − i τλ/2),  |c_t| = 1 by construction.
 inline c64 cayley_factor(f32 lam, f32 tau) {
     const f32 arg = 0.5 * tau * lam;
@@ -244,6 +308,9 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     const std::size_t nk = nk1 * nk2;
     const std::size_t nb2 = nb * nb;
     const std::size_t n_tot = nk * nb2;
+    const bool block_cfg_enabled = block_sizes_enabled(cfg.block_sizes, nb);
+    bool use_block_ops = block_cfg_enabled
+        && block_problem_invariant(K, project_fn, cfg.block_sizes);
 
     // Normalised weights and target electron count
     std::vector<f32> w_norm(nk);
@@ -285,7 +352,13 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
         hermitize_inplace(P0_h.data(), nk, nb);
         build_fock_compact(K, P0_h.data(), Sigma.data(), F.data(),
                            hartree_diag.data(), project_fn);
-        eigh_batched(F.data(), eps.data(), Q.data(), nk1, nk2, nb);
+        if (use_block_ops && !block_structure_ok(F.data(), nk, nb, cfg.block_sizes))
+            use_block_ops = false;
+        if (use_block_ops)
+            eigh_block_sizes_batched(F.data(), eps.data(), Q.data(), nk1, nk2, nb,
+                                     cfg.block_sizes, false);
+        else
+            eigh_batched(F.data(), eps.data(), Q.data(), nk1, nk2, nb);
         const f32 mu0 = solve_mu_inloop(eps.data(), nk * nb, w_norm.data(),
                                          nk, nb, n_target_norm, 0.0, T_r,
                                          cfg.mu_maxiter);
@@ -383,7 +456,11 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
             d_p[i] = h_p[i] + beta * d_p_prev[i];
 
         // 5. Line search (frozen-F free energy, spectral Cayley)
-        cayley_spectral_setup(d_Q.data(), V_d.data(), lam_d.data(), nk, nb);
+        if (use_block_ops)
+            cayley_spectral_setup_block_sizes(d_Q.data(), V_d.data(), lam_d.data(),
+                                              nk, nb, cfg.block_sizes);
+        else
+            cayley_spectral_setup(d_Q.data(), V_d.data(), lam_d.data(), nk, nb);
         compute_Ft_eig(Ft.data(), V_d.data(), Ft_eig.data(), nk, nb);
 
         const f32 d_Q_norm = norm_matrix(d_Q.data(), w_norm.data(), nk, nb);
@@ -466,7 +543,11 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     {
         std::vector<f32> eps_fin(nk * nb);
         std::vector<c64> V_fin(n_tot);
-        eigh_batched(Ft.data(), eps_fin.data(), V_fin.data(), nk1, nk2, nb);
+        if (use_block_ops)
+            eigh_block_sizes_batched(Ft.data(), eps_fin.data(), V_fin.data(),
+                                     nk1, nk2, nb, cfg.block_sizes, false);
+        else
+            eigh_batched(Ft.data(), eps_fin.data(), V_fin.data(), nk1, nk2, nb);
         // Q = Q @ V_fin
         for (std::size_t kk = 0; kk < nk; ++kk) {
             ConstMapMatXcf Qk(Q.data() + kk * nb2, nb, nb);

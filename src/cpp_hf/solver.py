@@ -18,6 +18,14 @@ from .utils import validate_electron_count
 
 @dataclass(frozen=True)
 class SolverConfig:
+    """Configuration for the direct-minimization solver.
+
+    ``block_sizes`` enables a checked block-diagonal acceleration for problems
+    whose Fock matrices remain block diagonal in the original orbital basis.
+    The solver falls back to the full dense path if a generated Fock matrix has
+    off-block entries above numerical tolerance.
+    """
+
     max_iter: int = 200
     tol_E: float = 1e-7
     tol_grad: float = 0.0
