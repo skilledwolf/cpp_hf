@@ -4,6 +4,7 @@ dist/
 wheelhouse/
 *.egg-info/
 __pycache__/
+ci/.cache/
 
 # Local outputs and generated images
 outputs/
@@ -18,4 +19,3 @@ quick_sanity_check.py
 .DS_Store
 .vscode/
 .idea/
-
