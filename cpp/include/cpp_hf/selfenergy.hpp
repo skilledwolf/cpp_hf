@@ -62,6 +62,11 @@ inline void multiply_VR_inplace(c64* P, const c64* VR,
     }
 }
 
+inline void selfenergy_fft_full_inplace(c64* sigma, const c64* VR,
+                                        std::size_t nk1, std::size_t nk2,
+                                        std::size_t nb,
+                                        std::size_t dv1, std::size_t dv2);
+
 // Σ(k) = -FFT⁻¹[FFT(P) · VR], no ifftshift.  P, sigma, VR are c64* in C-order.
 //   P, sigma   : (nk1, nk2, nb, nb)
 //   VR         : (nk1, nk2, dv1, dv2)
@@ -72,6 +77,19 @@ inline void selfenergy_fft_full(const c64* P, c64* sigma, const c64* VR,
     const std::size_t nb2 = nb * nb;
     const std::size_t n_tot = nk1 * nk2 * nb2;
     std::memcpy(sigma, P, n_tot * sizeof(c64));
+
+    selfenergy_fft_full_inplace(sigma, VR, nk1, nk2, nb, dv1, dv2);
+}
+
+// Same transform as selfenergy_fft_full, but the caller has already populated
+// sigma with the input density difference.  This avoids one full-buffer copy in
+// solver Fock builds.
+inline void selfenergy_fft_full_inplace(c64* sigma, const c64* VR,
+                                        std::size_t nk1, std::size_t nk2,
+                                        std::size_t nb,
+                                        std::size_t dv1, std::size_t dv2) {
+    const std::size_t nb2 = nb * nb;
+    const std::size_t n_tot = nk1 * nk2 * nb2;
 
     auto& plan = FftPlanCache::instance().get(nk1, nk2, nb2);
     plan.forward(sigma);

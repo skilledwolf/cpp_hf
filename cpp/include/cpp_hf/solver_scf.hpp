@@ -110,7 +110,8 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
 
     std::vector<c64> density(P0, P0 + n_tot);
     std::vector<c64> fock(n_tot);
-    std::vector<c64> Sigma(n_tot), Hh(n_tot), F(n_tot), P_new(n_tot);
+    std::vector<c64> Sigma(n_tot), F(n_tot), P_new(n_tot);
+    std::vector<f32> hartree_diag(nb, 0.0);
     std::vector<c64> delta(n_tot), comm(n_tot);
 
     f32 mu = 0.0;
@@ -125,8 +126,10 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
             (*project_fn)(d.data(), K.nk1, K.nk2, K.nb);
         }
         hermitize_inplace(d.data(), nk, nb);
-        build_fock(K, d.data(), Sigma.data(), Hh.data(), F.data(), project_fn);
-        E_out = hf_energy(K, d.data(), Sigma.data(), Hh.data());
+        build_fock_compact(K, d.data(), Sigma.data(), F.data(),
+                           hartree_diag.data(), project_fn);
+        E_out = hf_energy_with_hartree_diag(K, d.data(), Sigma.data(),
+                                            hartree_diag.data());
         mu_out = density_from_fock(F.data(), K.nk1, K.nk2, K.nb,
                                    K.w2d.data(), n_e, K.T, cfg.level_shift,
                                    P_out);

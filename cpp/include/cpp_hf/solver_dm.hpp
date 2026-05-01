@@ -184,13 +184,13 @@ inline void diag_UFU_from_spectrum(const c64* V, const c64* Ft_eig,
                                     const f32* lam, f32 tau, f32* diag_out,
                                     std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
+    std::vector<c64> c_vec(nb);
+    MatXcf M(nb, nb);
     for (std::size_t k = 0; k < nk; ++k) {
         ConstMapMatXcf Vk(V + k * nb2, nb, nb);
         ConstMapMatXcf Fe(Ft_eig + k * nb2, nb, nb);
-        std::vector<c64> c_vec(nb);
         for (std::size_t i = 0; i < nb; ++i) c_vec[i] = cayley_factor(lam[k * nb + i], tau);
 
-        MatXcf M(nb, nb);
         for (std::size_t i = 0; i < nb; ++i) {
             const c64 cb_i = std::conj(c_vec[i]);
             for (std::size_t j = 0; j < nb; ++j) {
@@ -257,7 +257,8 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     std::vector<c64> Q(n_tot), Q_new(n_tot);
     std::vector<f32> p(nk * nb), p_new(nk * nb);
     std::vector<c64> P_cur(n_tot);
-    std::vector<c64> Sigma(n_tot), Hh(n_tot), F(n_tot);
+    std::vector<c64> Sigma(n_tot), F(n_tot);
+    std::vector<f32> hartree_diag(nb, 0.0);
     std::vector<c64> Ft(n_tot);
     std::vector<f32> eps(nk * nb);
     std::vector<c64> G_Q(n_tot), H_Q(n_tot);
@@ -270,6 +271,9 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     std::vector<f32> lam_d(nk * nb);
     std::vector<c64> Ft_eig(n_tot);
     std::vector<c64> U(n_tot);
+    std::vector<f32> p_clip(nk * nb);
+    std::vector<f32> eps_trial(nk * nb), p_trial(nk * nb);
+    std::vector<f32> eps_new(nk * nb);
 
     DMResult out;
     out.hist_E.assign(cfg.max_iter, 0.0);
@@ -279,7 +283,8 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     {
         std::vector<c64> P0_h(P0, P0 + n_tot);
         hermitize_inplace(P0_h.data(), nk, nb);
-        build_fock(K, P0_h.data(), Sigma.data(), Hh.data(), F.data(), project_fn);
+        build_fock_compact(K, P0_h.data(), Sigma.data(), F.data(),
+                           hartree_diag.data(), project_fn);
         eigh_batched(F.data(), eps.data(), Q.data(), nk1, nk2, nb);
         const f32 mu0 = solve_mu_inloop(eps.data(), nk * nb, w_norm.data(),
                                          nk, nb, n_target_norm, 0.0, T_r,
@@ -313,8 +318,10 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
         hermitize_inplace(P_cur.data(), nk, nb);
 
         const ProjectFn* fock_proj = nullptr;  // F-projection skipped (matches jax_hf)
-        build_fock(K, P_cur.data(), Sigma.data(), Hh.data(), F.data(), fock_proj);
-        E = hf_energy(K, P_cur.data(), Sigma.data(), Hh.data());
+        build_fock_compact(K, P_cur.data(), Sigma.data(), F.data(),
+                           hartree_diag.data(), fock_proj);
+        E = hf_energy_with_hartree_diag(K, P_cur.data(), Sigma.data(),
+                                        hartree_diag.data());
         fock_in_orbital_basis(Q.data(), F.data(), Ft.data(), nk, nb);
         for (std::size_t kk = 0; kk < nk; ++kk) {
             const c64* Ftk = Ft.data() + kk * nb2;
@@ -383,7 +390,6 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
         f32 tau0 = std::min(1.0, cfg.max_step / std::max(d_Q_norm, TINY_REAL));
 
         // Omega_0 (no-step free energy)
-        std::vector<f32> p_clip(nk * nb);
         for (std::size_t i = 0; i < nk * nb; ++i)
             p_clip[i] = std::clamp(p[i], OCC_CLIP, 1.0 - OCC_CLIP);
         double E_frozen0 = 0.0;
@@ -397,7 +403,6 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
                                               p_clip.data(), w_norm.data(),
                                               nk, nb, T_r);
 
-        std::vector<f32> eps_trial(nk * nb), p_trial(nk * nb);
         f32 tau_final = tau0;
         bool bt_accepted = false;
         for (std::size_t bt = 0; bt < cfg.bt_max; ++bt) {
@@ -427,7 +432,6 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
         cayley_unitary_from_spectrum(V_d.data(), lam_d.data(), tau_final,
                                      U.data(), nk, nb);
         Q_times_U(Q.data(), U.data(), Q_new.data(), nk, nb);
-        std::vector<f32> eps_new(nk * nb);
         diag_UFU_from_spectrum(V_d.data(), Ft_eig.data(), lam_d.data(),
                                tau_final, eps_new.data(), nk, nb);
         const f32 mu_new = solve_mu_inloop(eps_new.data(), nk * nb, w_norm.data(),
@@ -456,7 +460,8 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     density_from_Qp(Q.data(), p.data(), P_cur.data(), nk, nb);
     project_in_place(P_cur.data());
     hermitize_inplace(P_cur.data(), nk, nb);
-    build_fock(K, P_cur.data(), Sigma.data(), Hh.data(), F.data(), nullptr);
+    build_fock_compact(K, P_cur.data(), Sigma.data(), F.data(),
+                       hartree_diag.data(), nullptr);
     fock_in_orbital_basis(Q.data(), F.data(), Ft.data(), nk, nb);
     {
         std::vector<f32> eps_fin(nk * nb);
@@ -479,8 +484,10 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     density_from_Qp(Q.data(), p.data(), P_cur.data(), nk, nb);
     project_in_place(P_cur.data());
     hermitize_inplace(P_cur.data(), nk, nb);
-    build_fock(K, P_cur.data(), Sigma.data(), Hh.data(), F.data(), nullptr);
-    const f32 E_fin = hf_energy(K, P_cur.data(), Sigma.data(), Hh.data());
+    build_fock_compact(K, P_cur.data(), Sigma.data(), F.data(),
+                       hartree_diag.data(), nullptr);
+    const f32 E_fin = hf_energy_with_hartree_diag(K, P_cur.data(), Sigma.data(),
+                                                  hartree_diag.data());
 
     out.Q = Q;
     out.p = p;

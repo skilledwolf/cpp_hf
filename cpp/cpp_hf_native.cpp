@@ -138,17 +138,20 @@ PYBIND11_MODULE(_native, m) {
               const std::size_t dv1 = VR.shape(2);
               const std::size_t dv2 = VR.shape(3);
               std::vector<c64> sigma(nk1 * nk2 * nb * nb);
-              if (hcp) {
-                  if (dv1 != 1 || dv2 != 1)
-                      throw std::invalid_argument(
-                          "hermitian_channel_packing requires VR with shape (...,1,1)");
-                  selfenergy_fft_full_hcp(P.data(), sigma.data(), VR.data(), nk1, nk2, nb);
-              } else {
-                  selfenergy_fft_full(P.data(), sigma.data(), VR.data(),
-                                       nk1, nk2, nb, dv1, dv2);
-              }
-              if (apply_ifftshift) {
-                  ifftshift_2d_batch(sigma.data(), nk1, nk2, nb * nb);
+              {
+                  py::gil_scoped_release release;
+                  if (hcp) {
+                      if (dv1 != 1 || dv2 != 1)
+                          throw std::invalid_argument(
+                              "hermitian_channel_packing requires VR with shape (...,1,1)");
+                      selfenergy_fft_full_hcp(P.data(), sigma.data(), VR.data(), nk1, nk2, nb);
+                  } else {
+                      selfenergy_fft_full(P.data(), sigma.data(), VR.data(),
+                                           nk1, nk2, nb, dv1, dv2);
+                  }
+                  if (apply_ifftshift) {
+                      ifftshift_2d_batch(sigma.data(), nk1, nk2, nb * nb);
+                  }
               }
               return make_array(sigma, {(py::ssize_t)nk1, (py::ssize_t)nk2,
                                          (py::ssize_t)nb, (py::ssize_t)nb});
@@ -168,7 +171,10 @@ PYBIND11_MODULE(_native, m) {
               for (int i = 0; i < M.ndim() - 2; ++i) nk *= M.shape(i);
               std::vector<f32> w(nk * nb);
               std::vector<c64> V(nk * nb * nb);
-              eigh_batched(M.data(), w.data(), V.data(), nk, 1, nb);
+              {
+                  py::gil_scoped_release release;
+                  eigh_batched(M.data(), w.data(), V.data(), nk, 1, nb);
+              }
               std::vector<py::ssize_t> w_shape, v_shape;
               for (int i = 0; i < M.ndim() - 2; ++i) {
                   w_shape.push_back(M.shape(i));
@@ -194,8 +200,11 @@ PYBIND11_MODULE(_native, m) {
               for (int i = 0; i < M.ndim() - 2; ++i) nk *= M.shape(i);
               std::vector<f32> w(nk * nb);
               std::vector<c64> V(nk * nb * nb);
-              eigh_block_sizes_batched(M.data(), w.data(), V.data(),
-                                        nk, 1, nb, sizes, sort);
+              {
+                  py::gil_scoped_release release;
+                  eigh_block_sizes_batched(M.data(), w.data(), V.data(),
+                                            nk, 1, nb, sizes, sort);
+              }
               std::vector<py::ssize_t> w_shape, v_shape;
               for (int i = 0; i < M.ndim() - 2; ++i) {
                   w_shape.push_back(M.shape(i));
@@ -215,7 +224,12 @@ PYBIND11_MODULE(_native, m) {
               std::size_t nb = M.shape(M.ndim() - 1);
               std::size_t nk = 1;
               for (int i = 0; i < M.ndim() - 2; ++i) nk *= M.shape(i);
-              return max_offblock_sizes(M.data(), nk, nb, sizes);
+              f32 mx = 0.0;
+              {
+                  py::gil_scoped_release release;
+                  mx = max_offblock_sizes(M.data(), nk, nb, sizes);
+              }
+              return mx;
           });
 
     // --- μ solvers ---
@@ -226,8 +240,13 @@ PYBIND11_MODULE(_native, m) {
               std::size_t nk = 1;
               for (int i = 0; i < bands.ndim() - 1; ++i) nk *= bands.shape(i);
               std::size_t nb = bands.shape(bands.ndim() - 1);
-              return find_mu_bisection(bands.data(), nk * nb,
-                                        weights.data(), nk, nb, n_e, T, maxiter);
+              f32 mu = 0.0;
+              {
+                  py::gil_scoped_release release;
+                  mu = find_mu_bisection(bands.data(), nk * nb,
+                                          weights.data(), nk, nb, n_e, T, maxiter);
+              }
+              return mu;
           },
           py::arg("bands"), py::arg("weights"),
           py::arg("n_e"), py::arg("T"), py::arg("maxiter") = 0);
@@ -254,8 +273,12 @@ PYBIND11_MODULE(_native, m) {
               std::vector<c64> Sigma(n_tot), Hh(n_tot), F(n_tot);
               ProjectFn pf = wrap_project_fn(project_fn);
               const ProjectFn* pfp = pf ? &pf : nullptr;
-              build_fock(K, P.data(), Sigma.data(), Hh.data(), F.data(), pfp);
-              const f32 E = hf_energy(K, P.data(), Sigma.data(), Hh.data());
+              f32 E = 0.0;
+              {
+                  py::gil_scoped_release release;
+                  build_fock(K, P.data(), Sigma.data(), Hh.data(), F.data(), pfp);
+                  E = hf_energy(K, P.data(), Sigma.data(), Hh.data());
+              }
               std::vector<py::ssize_t> shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
                                               (py::ssize_t)K.nb, (py::ssize_t)K.nb};
               return py::make_tuple(make_array(Sigma, shape),
@@ -295,7 +318,11 @@ PYBIND11_MODULE(_native, m) {
               cfg.level_shift = level_shift;
               ProjectFn pf = wrap_project_fn(project_fn);
               const ProjectFn* pfp = pf ? &pf : nullptr;
-              SCFResult res = solve_scf(K, P0.data(), n_e, cfg, pfp);
+              SCFResult res;
+              {
+                  py::gil_scoped_release release;
+                  res = solve_scf(K, P0.data(), n_e, cfg, pfp);
+              }
 
               std::vector<py::ssize_t> dense_shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
                                                     (py::ssize_t)K.nb, (py::ssize_t)K.nb};
@@ -345,7 +372,11 @@ PYBIND11_MODULE(_native, m) {
               cfg.block_sizes = block_sizes;
               ProjectFn pf = wrap_project_fn(project_fn);
               const ProjectFn* pfp = pf ? &pf : nullptr;
-              DMResult res = solve_dm(K, P0.data(), n_e, cfg, pfp);
+              DMResult res;
+              {
+                  py::gil_scoped_release release;
+                  res = solve_dm(K, P0.data(), n_e, cfg, pfp);
+              }
 
               std::vector<py::ssize_t> dense_shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
                                                     (py::ssize_t)K.nb, (py::ssize_t)K.nb};
@@ -372,7 +403,10 @@ PYBIND11_MODULE(_native, m) {
               for (int i = 0; i < d.ndim() - 2; ++i) nk *= d.shape(i);
               std::vector<c64> V(nk * nb * nb);
               std::vector<f32> lam(nk * nb);
-              cpp_hf::dm_internal::cayley_spectral_setup(d.data(), V.data(), lam.data(), nk, nb);
+              {
+                  py::gil_scoped_release release;
+                  cpp_hf::dm_internal::cayley_spectral_setup(d.data(), V.data(), lam.data(), nk, nb);
+              }
               std::vector<py::ssize_t> v_shape, l_shape;
               for (int i = 0; i < d.ndim() - 2; ++i) {
                   v_shape.push_back(d.shape(i));
@@ -393,8 +427,11 @@ PYBIND11_MODULE(_native, m) {
               std::size_t nk = 1;
               for (int i = 0; i < V.ndim() - 2; ++i) nk *= V.shape(i);
               std::vector<c64> U(nk * nb * nb);
-              cpp_hf::dm_internal::cayley_unitary_from_spectrum(
-                  V.data(), lam.data(), tau, U.data(), nk, nb);
+              {
+                  py::gil_scoped_release release;
+                  cpp_hf::dm_internal::cayley_unitary_from_spectrum(
+                      V.data(), lam.data(), tau, U.data(), nk, nb);
+              }
               std::vector<py::ssize_t> u_shape;
               for (int i = 0; i < V.ndim() - 2; ++i) u_shape.push_back(V.shape(i));
               u_shape.push_back(nb);
@@ -412,8 +449,11 @@ PYBIND11_MODULE(_native, m) {
               std::size_t nk = 1;
               for (int i = 0; i < V.ndim() - 2; ++i) nk *= V.shape(i);
               std::vector<f32> diag(nk * nb);
-              cpp_hf::dm_internal::diag_UFU_from_spectrum(
-                  V.data(), Ft_eig.data(), lam.data(), tau, diag.data(), nk, nb);
+              {
+                  py::gil_scoped_release release;
+                  cpp_hf::dm_internal::diag_UFU_from_spectrum(
+                      V.data(), Ft_eig.data(), lam.data(), tau, diag.data(), nk, nb);
+              }
               std::vector<py::ssize_t> shape;
               for (int i = 0; i < V.ndim() - 2; ++i) shape.push_back(V.shape(i));
               shape.push_back(nb);
@@ -436,7 +476,11 @@ PYBIND11_MODULE(_native, m) {
                   inner *= values.shape(i);
                   out_shape.push_back(values.shape(i));
               }
-              auto out = resample_kgrid_2d(values.data(), nk_old, nk_new, inner);
+              std::vector<c64> out;
+              {
+                  py::gil_scoped_release release;
+                  out = resample_kgrid_2d(values.data(), nk_old, nk_new, inner);
+              }
               return make_array(out, out_shape);
           });
 }

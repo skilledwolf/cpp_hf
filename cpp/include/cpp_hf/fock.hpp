@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <vector>
 
 namespace cpp_hf {
@@ -19,10 +20,18 @@ using ProjectFn = std::function<void(c64* /*F*/,
                                      std::size_t nk1, std::size_t nk2,
                                      std::size_t nb)>;
 
-// Build Fock matrix at density P.  Outputs Sigma, H, F (each (nk1,nk2,nb,nb)).
-inline void build_fock(const HFKernel& K, const c64* P,
-                       c64* Sigma, c64* Hh, c64* F,
-                       const ProjectFn* project_fn = nullptr) {
+inline bool has_contact_terms(const HFKernel& K) {
+    for (std::size_t t = 0; t < K.n_contact; ++t)
+        if (K.contact_g[t] != 0.0) return true;
+    return K.n_contact > 1;
+}
+
+// Solver-oriented Fock builder.  It writes Sigma and F, and returns the
+// k-independent Hartree diagonal separately to avoid allocating and clearing a
+// full dense Hartree array in every solver iteration.
+inline void build_fock_compact(const HFKernel& K, const c64* P,
+                               c64* Sigma, c64* F, f32* hartree_diag,
+                               const ProjectFn* project_fn = nullptr) {
     const std::size_t nk = K.nk();
     const std::size_t nb = K.nb;
     const std::size_t nb2 = K.nb2();
@@ -30,23 +39,20 @@ inline void build_fock(const HFKernel& K, const c64* P,
 
     // Σ = -FFT⁻¹[FFT(P − refP) · VR]  (no ifftshift; VR is phase-shifted)
     if (K.include_exchange) {
-        // dP = P - refP, in-place into a temporary
-        std::vector<c64> dP(n_tot);
-        for (std::size_t i = 0; i < n_tot; ++i) dP[i] = P[i] - K.refP[i];
+        for (std::size_t i = 0; i < n_tot; ++i) Sigma[i] = P[i] - K.refP[i];
 
         if (K.exchange_hcp && K.dv1 == 1 && K.dv2 == 1) {
-            selfenergy_fft_full_hcp(dP.data(), Sigma, K.VR.data(),
+            selfenergy_fft_full_hcp(Sigma, Sigma, K.VR.data(),
                                     K.nk1, K.nk2, nb);
         } else {
-            selfenergy_fft_full(dP.data(), Sigma, K.VR.data(),
-                                K.nk1, K.nk2, nb, K.dv1, K.dv2);
+            selfenergy_fft_full_inplace(Sigma, K.VR.data(),
+                                        K.nk1, K.nk2, nb, K.dv1, K.dv2);
         }
     } else {
         std::memset(Sigma, 0, n_tot * sizeof(c64));
     }
 
-    // Hartree term (k-independent diagonal)
-    std::memset(Hh, 0, n_tot * sizeof(c64));
+    std::fill(hartree_diag, hartree_diag + nb, 0.0);
     if (K.include_hartree) {
         std::vector<f32> n_vec(nb, 0.0);
         for (std::size_t k = 0; k < nk; ++k) {
@@ -58,74 +64,91 @@ inline void build_fock(const HFKernel& K, const c64* P,
                 n_vec[i] += wk * dr;
             }
         }
-        std::vector<f32> sigma_diag(nb, 0.0);
         for (std::size_t i = 0; i < nb; ++i) {
             f32 s = 0.0;
             for (std::size_t j = 0; j < nb; ++j)
                 s += K.HH[i * nb + j] * n_vec[j];
-            sigma_diag[i] = s;
-        }
-        // Broadcast diag(sigma_diag) across all k.
-        for (std::size_t k = 0; k < nk; ++k) {
-            c64* hk = Hh + k * nb2;
-            for (std::size_t i = 0; i < nb; ++i)
-                hk[i * nb + i] = c64(sigma_diag[i], 0.0);
+            hartree_diag[i] = s;
         }
     }
 
     // Contact terms: ρ̄ = Σ_k w_k (P_k − refP_k) is a single (nb, nb) matrix.
-    {
-        const f32 g0 = K.contact_g[0];
-        bool any_nonzero = false;
-        for (std::size_t t = 0; t < K.n_contact; ++t)
-            if (K.contact_g[t] != 0.0) { any_nonzero = true; break; }
-        if (any_nonzero || K.n_contact > 1) {
-            // Compute rho_bar
-            std::vector<c64> rho_bar(nb2, c64(0.0, 0.0));
-            for (std::size_t k = 0; k < nk; ++k) {
-                const c64* pk = P + k * nb2;
-                const c64* rk = K.refP.data() + k * nb2;
-                const f32 wk = K.w2d[k];
-                for (std::size_t i = 0; i < nb2; ++i)
-                    rho_bar[i] += static_cast<c64>(wk) * (pk[i] - rk[i]);
-            }
-            // sigma_contact = sigma_h_contact + sigma_f_contact, (nb, nb)
-            std::vector<c64> sigma_contact(nb2, c64(0.0, 0.0));
-            ConstMapMatXcf rho(rho_bar.data(), nb, nb);
-            for (std::size_t t = 0; t < K.n_contact; ++t) {
-                const f32 g = K.contact_g[t];
-                if (g == 0.0) continue;
-                ConstMapMatXcf Oi(K.contact_Oi.data() + t * nb2, nb, nb);
-                ConstMapMatXcf Oj(K.contact_Oj.data() + t * nb2, nb, nb);
-                // tr(Oj * rho_bar)
-                c64 tr_oj_rho(0.0, 0.0);
-                for (std::size_t i = 0; i < nb; ++i)
-                    for (std::size_t j = 0; j < nb; ++j)
-                        tr_oj_rho += Oj(i, j) * rho(j, i);
-                // Hartree-channel: g * Oi * tr(Oj * rho_bar)
-                MatXcf herm = Oi * tr_oj_rho * c64(g);
-                // Fock-channel: -g * Oi * rho_bar * Oj
-                MatXcf fk = -c64(g) * (Oi * rho * Oj);
-                MapMatXcf SC(sigma_contact.data(), nb, nb);
-                SC += herm + fk;
-            }
-            // Add sigma_contact to every k of Sigma
-            for (std::size_t k = 0; k < nk; ++k) {
-                c64* sk = Sigma + k * nb2;
-                for (std::size_t i = 0; i < nb2; ++i) sk[i] += sigma_contact[i];
-            }
+    if (has_contact_terms(K)) {
+        // Compute rho_bar
+        std::vector<c64> rho_bar(nb2, c64(0.0, 0.0));
+        for (std::size_t k = 0; k < nk; ++k) {
+            const c64* pk = P + k * nb2;
+            const c64* rk = K.refP.data() + k * nb2;
+            const f32 wk = K.w2d[k];
+            for (std::size_t i = 0; i < nb2; ++i)
+                rho_bar[i] += static_cast<c64>(wk) * (pk[i] - rk[i]);
         }
-        (void)g0;
+        // sigma_contact = sigma_h_contact + sigma_f_contact, (nb, nb)
+        std::vector<c64> sigma_contact(nb2, c64(0.0, 0.0));
+        ConstMapMatXcf rho(rho_bar.data(), nb, nb);
+        MapMatXcf SC(sigma_contact.data(), nb, nb);
+        for (std::size_t t = 0; t < K.n_contact; ++t) {
+            const f32 g = K.contact_g[t];
+            if (g == 0.0) continue;
+            ConstMapMatXcf Oi(K.contact_Oi.data() + t * nb2, nb, nb);
+            ConstMapMatXcf Oj(K.contact_Oj.data() + t * nb2, nb, nb);
+            // tr(Oj * rho_bar)
+            c64 tr_oj_rho(0.0, 0.0);
+            for (std::size_t i = 0; i < nb; ++i)
+                for (std::size_t j = 0; j < nb; ++j)
+                    tr_oj_rho += Oj(i, j) * rho(j, i);
+            // Hartree-channel: g * Oi * tr(Oj * rho_bar)
+            MatXcf herm = Oi * tr_oj_rho * c64(g);
+            // Fock-channel: -g * Oi * rho_bar * Oj
+            MatXcf fk = -c64(g) * (Oi * rho * Oj);
+            SC += herm + fk;
+        }
+        // Add sigma_contact to every k of Sigma
+        for (std::size_t k = 0; k < nk; ++k) {
+            c64* sk = Sigma + k * nb2;
+            for (std::size_t i = 0; i < nb2; ++i) sk[i] += sigma_contact[i];
+        }
     }
 
     // F = hermitize(h + Sigma + H)
-    for (std::size_t i = 0; i < n_tot; ++i)
-        F[i] = K.h[i] + Sigma[i] + Hh[i];
+    for (std::size_t k = 0; k < nk; ++k) {
+        const c64* hk = K.h.data() + k * nb2;
+        const c64* sk = Sigma + k * nb2;
+        c64* fk = F + k * nb2;
+        for (std::size_t i = 0; i < nb2; ++i)
+            fk[i] = hk[i] + sk[i];
+        if (K.include_hartree) {
+            for (std::size_t i = 0; i < nb; ++i)
+                fk[i * nb + i] += c64(hartree_diag[i], 0.0);
+        }
+    }
     hermitize_inplace(F, nk, nb);
 
     if (project_fn && *project_fn) {
         (*project_fn)(F, K.nk1, K.nk2, K.nb);
         hermitize_inplace(F, nk, nb);
+    }
+}
+
+// Build Fock matrix at density P.  Outputs Sigma, H, F (each (nk1,nk2,nb,nb)).
+inline void build_fock(const HFKernel& K, const c64* P,
+                       c64* Sigma, c64* Hh, c64* F,
+                       const ProjectFn* project_fn = nullptr) {
+    const std::size_t nk = K.nk();
+    const std::size_t nb = K.nb;
+    const std::size_t nb2 = K.nb2();
+    const std::size_t n_tot = K.n_dense();
+
+    std::vector<f32> hartree_diag(nb, 0.0);
+    build_fock_compact(K, P, Sigma, F, hartree_diag.data(), project_fn);
+
+    std::memset(Hh, 0, n_tot * sizeof(c64));
+    if (K.include_hartree) {
+        for (std::size_t k = 0; k < nk; ++k) {
+            c64* hk = Hh + k * nb2;
+            for (std::size_t i = 0; i < nb; ++i)
+                hk[i * nb + i] = c64(hartree_diag[i], 0.0);
+        }
     }
 }
 
@@ -148,6 +171,35 @@ inline f32 hf_energy(const HFKernel& K, const c64* P,
         for (std::size_t i = 0; i < nb; ++i) {
             for (std::size_t j = 0; j < nb; ++j) {
                 const c64 m = hk[i * nb + j] + 0.5 * (sk[i * nb + j] + hh[i * nb + j]);
+                const c64 p = pk[j * nb + i];
+                sum_re += static_cast<double>((m * p).real());
+            }
+        }
+        total += static_cast<double>(wk) * sum_re;
+    }
+    return static_cast<f32>(total);
+}
+
+// Same energy calculation as hf_energy, with the k-independent Hartree
+// diagonal represented compactly.
+inline f32 hf_energy_with_hartree_diag(const HFKernel& K, const c64* P,
+                                       const c64* Sigma,
+                                       const f32* hartree_diag) {
+    const std::size_t nk = K.nk();
+    const std::size_t nb = K.nb;
+    const std::size_t nb2 = K.nb2();
+    double total = 0.0;
+    for (std::size_t k = 0; k < nk; ++k) {
+        const c64* hk = K.h.data() + k * nb2;
+        const c64* sk = Sigma + k * nb2;
+        const c64* pk = P + k * nb2;
+        const f32 wk = K.w2d[k];
+        double sum_re = 0.0;
+        for (std::size_t i = 0; i < nb; ++i) {
+            for (std::size_t j = 0; j < nb; ++j) {
+                c64 m = hk[i * nb + j] + 0.5 * sk[i * nb + j];
+                if (K.include_hartree && i == j)
+                    m += c64(0.5 * hartree_diag[i], 0.0);
                 const c64 p = pk[j * nb + i];
                 sum_re += static_cast<double>((m * p).real());
             }
