@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from cpp_hf import HartreeFockKernel, HartreeNewtonConfig, solve_hartree_newton
+from cpp_hf import HartreeFockKernel
 from cpp_hf._compat import _native
 from cpp_hf.fock import build_fock, hf_energy
 from cpp_hf.solver import _kernel_args_for_native
@@ -175,55 +175,6 @@ def test_hf_energy_with_reference_density_has_fock_derivative():
     )
 
     np.testing.assert_allclose(finite_difference, fock_derivative, rtol=1e-7, atol=1e-8)
-
-
-def test_hartree_newton_reports_total_hartree_energy_with_reference_density():
-    weights = np.ones((1, 1), dtype=np.float64)
-    h = np.diag([-0.3, 0.4]).astype(np.complex128)[None, None, :, :]
-    refP = np.diag([0.35, 0.15]).astype(np.complex128)[None, None, :, :]
-    HH = np.array([[0.6, 0.1], [0.1, 0.4]], dtype=np.float64)
-    Vq = np.zeros((1, 1, 1, 1), dtype=np.float64)
-    kernel = HartreeFockKernel(
-        weights,
-        h,
-        Vq,
-        T=0.05,
-        include_hartree=True,
-        include_exchange=False,
-        reference_density=refP,
-        hartree_matrix=HH,
-    )
-
-    result = solve_hartree_newton(
-        kernel,
-        refP,
-        n_electrons=1.0,
-        config=HartreeNewtonConfig(max_iter=3, tol_E=0.0, tol_sigma=0.0),
-    )
-    sigma, hartree, _fock = build_fock(
-        result.density_matrix,
-        h=kernel.h,
-        VR=kernel._VR_shifted,
-        refP=kernel.refP,
-        HH=kernel.HH,
-        w2d=kernel.w2d,
-        include_exchange=kernel.include_exchange,
-        include_hartree=kernel.include_hartree,
-        exchange_hermitian_channel_packing=kernel.exchange_hermitian_channel_packing,
-        contact_g=kernel.contact_g,
-        contact_Oi=kernel.contact_Oi,
-        contact_Oj=kernel.contact_Oj,
-    )
-    expected = hf_energy(
-        result.density_matrix,
-        h=kernel.h,
-        Sigma=sigma,
-        H=hartree,
-        weights_b=kernel.weights_b,
-        refP=kernel.refP,
-    )
-
-    np.testing.assert_allclose(float(result.energy), float(expected), rtol=1e-11, atol=1e-11)
 
 
 def test_native_build_fock_project_callback_after_gil_release():

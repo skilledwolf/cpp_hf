@@ -111,46 +111,6 @@ class TestMultiKPoint:
         assert bool(result.converged)
 
 
-class TestHartreePreconditioner:
-    def test_hartree_preconditioner_runs_on_hartree_problem(self):
-        nk, nb = 2, 2
-        weights = np.ones((nk, nk), dtype=np.float64) / (nk * nk)
-        hamiltonian = np.zeros((nk, nk, nb, nb), dtype=np.complex128)
-        hamiltonian[..., 0, 0] = -0.3
-        hamiltonian[..., 1, 1] = 0.3
-        hamiltonian[..., 0, 1] = 0.05
-        hamiltonian[..., 1, 0] = 0.05
-        coulomb_q = np.zeros((nk, nk, 1, 1), dtype=np.float64)
-        reference_density = np.zeros_like(hamiltonian)
-        hartree_matrix = np.array([[20.0, -20.0], [-20.0, 20.0]], dtype=np.float64)
-        kernel = HartreeFockKernel(
-            weights,
-            hamiltonian,
-            coulomb_q,
-            T=0.1,
-            include_hartree=True,
-            include_exchange=False,
-            reference_density=reference_density,
-            hartree_matrix=hartree_matrix,
-        )
-
-        result = solve(
-            kernel,
-            np.zeros_like(hamiltonian),
-            n_electrons=1.0,
-            config=SolverConfig(
-                max_iter=80,
-                tol_E=1e-8,
-                hartree_precondition=True,
-                occupation_precondition=True,
-            ),
-        )
-
-        assert np.isfinite(float(result.energy))
-        total = float(np.sum(kernel.w2d[..., None] * result.p))
-        np.testing.assert_allclose(total, 1.0, atol=1e-6)
-
-
 class TestSolveResult:
     def test_result_is_named_tuple(self):
         kernel = _make_two_band_kernel()

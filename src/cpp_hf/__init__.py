@@ -39,11 +39,6 @@ from .reference_scf import (
     SCFResult,
     solve_scf,
 )
-from .hartree_newton import (
-    HartreeNewtonConfig,
-    HartreeNewtonResult,
-    solve_hartree_newton,
-)
 from .fock import (
     build_fock,
     hf_energy,
@@ -65,9 +60,6 @@ __all__ = [
     "SCFConfig",
     "SCFResult",
     "solve_scf",
-    "HartreeNewtonConfig",
-    "HartreeNewtonResult",
-    "solve_hartree_newton",
     "build_fock",
     "hf_energy",
     "free_energy",

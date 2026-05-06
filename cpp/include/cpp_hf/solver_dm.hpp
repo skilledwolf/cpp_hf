@@ -29,15 +29,6 @@ struct SolverConfig {
     std::size_t bt_max = 8;
     int mu_maxiter = 25;
     std::vector<std::size_t> block_sizes;  // empty = no block structure
-    // Hartree-aware local preconditioner.  Orbital rotations use the actual
-    // first-order layer-density response (p_j-p_i) Q_i conj(Q_j), while
-    // occupation moves use the |Q_i|^2 charge-transfer curvature.
-    bool hartree_precondition = false;
-    f32 hartree_pc_scale = 1.0;
-    // Keep occupations as direct minimization variables instead of exactly
-    // rethermalizing them after each orbital step.  This lets the occupation
-    // preconditioner act on stiff layer-charge modes.
-    bool occupation_precondition = false;
 };
 
 struct DMResult {
@@ -172,50 +163,6 @@ inline f32 norm_matrix(const c64* X, const f32* w_norm,
                        std::size_t nk, std::size_t nb) {
     const f32 sq = ip_matrix(X, X, w_norm, nk, nb);
     return std::sqrt(std::max(0.0, sq));
-}
-
-inline f32 constrained_mu_from_p(const f32* eps, const f32* p,
-                                 const f32* w_norm, std::size_t nk,
-                                 std::size_t nb, f32 T_r) {
-    double num = 0.0;
-    double den = 0.0;
-    for (std::size_t kk = 0; kk < nk; ++kk) {
-        const f32 wk = w_norm[kk];
-        for (std::size_t b = 0; b < nb; ++b) {
-            const std::size_t idx = kk * nb + b;
-            const f32 pv = std::clamp(p[idx], LOGIT_CLIP, 1.0 - LOGIT_CLIP);
-            const f32 logit = std::log(pv) - std::log1p(-pv);
-            num += static_cast<double>(wk)
-                 * static_cast<double>(eps[idx] + T_r * logit);
-            den += static_cast<double>(wk);
-        }
-    }
-    return static_cast<f32>(num / std::max(den, static_cast<double>(TINY_REAL)));
-}
-
-inline void project_occupations_to_count(f32* p, const f32* w_norm,
-                                         std::size_t nk, std::size_t nb,
-                                         f32 n_target_norm) {
-    f32 lo = -1.0;
-    f32 hi = 1.0;
-    for (int it = 0; it < 64; ++it) {
-        const f32 mid = 0.5 * (lo + hi);
-        double n_mid = 0.0;
-        for (std::size_t kk = 0; kk < nk; ++kk) {
-            for (std::size_t b = 0; b < nb; ++b) {
-                n_mid += static_cast<double>(w_norm[kk])
-                       * static_cast<double>(std::clamp(p[kk * nb + b] - mid,
-                                                        OCC_CLIP, 1.0 - OCC_CLIP));
-            }
-        }
-        if (n_mid > static_cast<double>(n_target_norm))
-            lo = mid;
-        else
-            hi = mid;
-    }
-    const f32 shift = 0.5 * (lo + hi);
-    for (std::size_t i = 0; i < nk * nb; ++i)
-        p[i] = std::clamp(p[i] - shift, OCC_CLIP, 1.0 - OCC_CLIP);
 }
 
 // Cayley spectral setup: eigh(i * d) where d is skew-Hermitian.  Returns
@@ -475,155 +422,26 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
         const f32 eps_scale = static_cast<f32>(
             std::sqrt(eps_sq_sum / std::max<std::size_t>(nk * nb, 1) + static_cast<double>(TINY_REAL)));
         const f32 lam_pc = std::max(T_r, cfg.denom_scale * eps_scale);
-        const bool use_hartree_pc = cfg.hartree_precondition && K.include_hartree;
-        std::vector<f32> q_re(nb, 0.0);
-        std::vector<f32> q_im(nb, 0.0);
-        std::vector<f32> q_abs(nb, 0.0);
-        std::vector<f32> occ_inv_curv(nk * nb, 0.0);
 
         for (std::size_t kk = 0; kk < nk; ++kk) {
             const c64* Gk = G_Q.data() + kk * nb2;
             c64* Hk = H_Q.data() + kk * nb2;
             const f32* eb = eps.data() + kk * nb;
-            const f32* pk = p.data() + kk * nb;
-            const c64* Qk = Q.data() + kk * nb2;
             for (std::size_t i = 0; i < nb; ++i) {
                 for (std::size_t j = 0; j < nb; ++j) {
                     const f32 gap = eb[i] - eb[j];
                     const f32 base = std::sqrt(gap * gap + lam_pc * lam_pc);
-                    if (!use_hartree_pc || i == j) {
-                        Hk[i * nb + j] = Gk[i * nb + j] / base;
-                        continue;
-                    }
-
-                    const f32 dp_occ = pk[j] - pk[i];
-                    const f32 pair_scale = 4.0 * K.w2d[kk] * dp_occ * dp_occ;
-                    if (pair_scale <= TINY_REAL) {
-                        Hk[i * nb + j] = Gk[i * nb + j] / base;
-                        continue;
-                    }
-                    for (std::size_t a = 0; a < nb; ++a) {
-                        const c64 q = Qk[a * nb + i] * std::conj(Qk[a * nb + j]);
-                        q_re[a] = q.real();
-                        q_im[a] = q.imag();
-                    }
-                    double rr = 0.0;
-                    double ii = 0.0;
-                    double ri = 0.0;
-                    for (std::size_t a = 0; a < nb; ++a) {
-                        double h_re_a = 0.0;
-                        double h_im_a = 0.0;
-                        for (std::size_t b = 0; b < nb; ++b) {
-                            const double hh = static_cast<double>(K.HH[a * nb + b]);
-                            h_re_a += hh * static_cast<double>(q_re[b]);
-                            h_im_a += hh * static_cast<double>(q_im[b]);
-                        }
-                        rr += static_cast<double>(q_re[a]) * h_re_a;
-                        ii += static_cast<double>(q_im[a]) * h_im_a;
-                        ri += static_cast<double>(q_re[a]) * h_im_a;
-                    }
-                    rr = std::max(0.0, rr);
-                    ii = std::max(0.0, ii);
-                    const double ri_max = std::sqrt(rr * ii);
-                    ri = std::clamp(ri, -ri_max, ri_max);
-
-                    const double s = static_cast<double>(cfg.hartree_pc_scale)
-                                   * static_cast<double>(pair_scale);
-                    const double a00 = static_cast<double>(base) + s * rr;
-                    const double a11 = static_cast<double>(base) + s * ii;
-                    const double a01 = -s * ri;
-                    const double det = a00 * a11 - a01 * a01;
-                    if (!(det > static_cast<double>(TINY_REAL))) {
-                        Hk[i * nb + j] = Gk[i * nb + j] / base;
-                        continue;
-                    }
-                    const double gr = static_cast<double>(Gk[i * nb + j].real());
-                    const double gi = static_cast<double>(Gk[i * nb + j].imag());
-                    const double hr = (a11 * gr - a01 * gi) / det;
-                    const double hi = (-a01 * gr + a00 * gi) / det;
-                    Hk[i * nb + j] = c64(static_cast<f32>(hr), static_cast<f32>(hi));
+                    Hk[i * nb + j] = Gk[i * nb + j] / base;
                 }
             }
         }
         for (std::size_t kk = 0; kk < nk; ++kk) {
-            const c64* Qk = Q.data() + kk * nb2;
             for (std::size_t i = 0; i < nb; ++i) {
                 const std::size_t idx = kk * nb + i;
                 f32 ps = std::clamp(p[idx], OCC_CLIP, 1.0 - OCC_CLIP);
-                double curv = static_cast<double>(T_r) / (
+                const double curv = static_cast<double>(T_r) / (
                     static_cast<double>(ps) * static_cast<double>(1.0 - ps));
-                if (use_hartree_pc) {
-                    for (std::size_t a = 0; a < nb; ++a) {
-                        const c64 q = Qk[a * nb + i];
-                        q_abs[a] = static_cast<f32>(std::norm(q));
-                    }
-                    double hh_occ = 0.0;
-                    for (std::size_t a = 0; a < nb; ++a) {
-                        double h_abs_a = 0.0;
-                        for (std::size_t b = 0; b < nb; ++b) {
-                            h_abs_a += static_cast<double>(K.HH[a * nb + b])
-                                     * static_cast<double>(q_abs[b]);
-                        }
-                        hh_occ += static_cast<double>(q_abs[a]) * h_abs_a;
-                    }
-                    if (hh_occ > 0.0) {
-                        curv += static_cast<double>(cfg.hartree_pc_scale)
-                              * static_cast<double>(K.w2d[kk]) * hh_occ;
-                    }
-                }
-                occ_inv_curv[idx] = static_cast<f32>(1.0 / curv);
-                h_p[idx] = g_p[idx] * occ_inv_curv[idx];
-            }
-        }
-        if (use_hartree_pc && cfg.occupation_precondition) {
-            Eigen::Matrix<f32, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
-                S_layer(nb, nb);
-            Eigen::Matrix<f32, Eigen::Dynamic, 1> q0(nb);
-            S_layer.setZero();
-            q0.setZero();
-            for (std::size_t kk = 0; kk < nk; ++kk) {
-                const c64* Qk = Q.data() + kk * nb2;
-                const f32 wk = K.w2d[kk];
-                for (std::size_t i = 0; i < nb; ++i) {
-                    const std::size_t idx = kk * nb + i;
-                    for (std::size_t a = 0; a < nb; ++a) {
-                        const c64 qa = Qk[a * nb + i];
-                        q_abs[a] = static_cast<f32>(std::norm(qa));
-                    }
-                    for (std::size_t a = 0; a < nb; ++a) {
-                        q0[a] += wk * q_abs[a] * h_p[idx];
-                        for (std::size_t b = 0; b < nb; ++b) {
-                            S_layer(a, b) += wk * q_abs[a] * occ_inv_curv[idx] * q_abs[b];
-                        }
-                    }
-                }
-            }
-
-            Eigen::Map<const Eigen::Matrix<f32, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
-                HHmat(K.HH.data(), nb, nb);
-            Eigen::Matrix<f32, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
-                A_layer = Eigen::Matrix<f32, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>::Identity(nb, nb)
-                        + static_cast<f32>(cfg.hartree_pc_scale) * HHmat * S_layer;
-            Eigen::Matrix<f32, Eigen::Dynamic, 1> rhs =
-                static_cast<f32>(cfg.hartree_pc_scale) * HHmat * q0;
-            Eigen::Matrix<f32, Eigen::Dynamic, 1> y = A_layer.fullPivLu().solve(rhs);
-            bool y_ok = true;
-            for (std::size_t a = 0; a < nb; ++a)
-                y_ok = y_ok && std::isfinite(static_cast<double>(y[a]));
-            if (y_ok) {
-                for (std::size_t kk = 0; kk < nk; ++kk) {
-                    const c64* Qk = Q.data() + kk * nb2;
-                    for (std::size_t i = 0; i < nb; ++i) {
-                        const std::size_t idx = kk * nb + i;
-                        double gy = 0.0;
-                        for (std::size_t a = 0; a < nb; ++a) {
-                            const c64 qa = Qk[a * nb + i];
-                            gy += static_cast<double>(std::norm(qa))
-                                * static_cast<double>(y[a]);
-                        }
-                        h_p[idx] -= occ_inv_curv[idx] * static_cast<f32>(gy);
-                    }
-                }
+                h_p[idx] = g_p[idx] / static_cast<f32>(curv);
             }
         }
 
@@ -644,18 +462,6 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
             d_Q[i] = H_Q[i] + beta * d_Q_prev[i];
         for (std::size_t i = 0; i < nk * nb; ++i)
             d_p[i] = h_p[i] + beta * d_p_prev[i];
-        if (cfg.occupation_precondition) {
-            double weighted_sum = 0.0;
-            for (std::size_t kk = 0; kk < nk; ++kk) {
-                for (std::size_t b = 0; b < nb; ++b)
-                    weighted_sum += static_cast<double>(w_norm[kk])
-                                  * static_cast<double>(d_p[kk * nb + b]);
-            }
-            const f32 shift = static_cast<f32>(
-                weighted_sum / std::max(static_cast<double>(nb), static_cast<double>(TINY_REAL)));
-            for (std::size_t i = 0; i < nk * nb; ++i)
-                d_p[i] -= shift;
-        }
 
         // 5. Line search (frozen-F free energy, spectral Cayley)
         if (use_block_ops)
@@ -706,15 +512,6 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
             tau_final = tau0 * std::pow(cfg.bt_shrink,
                                         static_cast<f32>(cfg.bt_max));
         }
-        std::vector<f32> p_step;
-        if (cfg.occupation_precondition) {
-            p_step.resize(nk * nb);
-            for (std::size_t i = 0; i < nk * nb; ++i)
-                p_step[i] = std::clamp(p[i] - tau_final * d_p[i], OCC_CLIP, 1.0 - OCC_CLIP);
-            project_occupations_to_count(p_step.data(), w_norm.data(), nk, nb,
-                                         n_target_norm);
-        }
-
         // 6. Retraction
         cayley_unitary_from_spectrum(V_d.data(), lam_d.data(), tau_final,
                                      U.data(), nk, nb);
@@ -724,15 +521,9 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
         const f32 mu_new = solve_mu_inloop(eps_new.data(), nk * nb, w_norm.data(),
                                             nk, nb, n_target_norm, mu, T_r,
                                             cfg.mu_maxiter);
-        if (cfg.occupation_precondition) {
-            p_new = p_step;
-            mu = constrained_mu_from_p(eps_new.data(), p_new.data(), w_norm.data(),
-                                       nk, nb, T_r);
-        } else {
-            for (std::size_t i = 0; i < nk * nb; ++i)
-                p_new[i] = expit_scalar((mu_new - eps_new[i]) / T_r);
-            mu = mu_new;
-        }
+        for (std::size_t i = 0; i < nk * nb; ++i)
+            p_new[i] = expit_scalar((mu_new - eps_new[i]) / T_r);
+        mu = mu_new;
 
         // 7. Record + advance
         out.hist_E[k] = E;
@@ -756,7 +547,7 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     build_fock_compact(K, P_cur.data(), Sigma.data(), F.data(),
                        hartree_diag.data(), nullptr);
     fock_in_orbital_basis(Q.data(), F.data(), Ft.data(), nk, nb);
-    if (!cfg.occupation_precondition) {
+    {
         std::vector<f32> eps_fin(nk * nb);
         std::vector<c64> V_fin(n_tot);
         if (use_block_ops)
@@ -776,14 +567,6 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
                               nk, nb, n_target_norm, mu, T_r, cfg.mu_maxiter);
         for (std::size_t i = 0; i < nk * nb; ++i)
             p[i] = expit_scalar((mu - eps_fin[i]) / T_r);
-    } else {
-        std::vector<f32> eps_fin(nk * nb);
-        for (std::size_t kk = 0; kk < nk; ++kk) {
-            const c64* Ftk = Ft.data() + kk * nb2;
-            for (std::size_t b = 0; b < nb; ++b)
-                eps_fin[kk * nb + b] = Ftk[b * nb + b].real();
-        }
-        mu = constrained_mu_from_p(eps_fin.data(), p.data(), w_norm.data(), nk, nb, T_r);
     }
 
     density_from_Qp(Q.data(), p.data(), P_cur.data(), nk, nb);
