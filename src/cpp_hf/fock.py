@@ -87,11 +87,13 @@ def hf_energy(
     Sigma: np.ndarray,
     H: np.ndarray,
     weights_b: np.ndarray,
+    refP: np.ndarray | None = None,
 ) -> np.ndarray:
-    """E = Σ_k w_k Tr[(h + ½(Σ+H)) P]."""
-    return np.sum(
-        np.real(np.einsum("...ij,...ji->...", weights_b * (h + 0.5 * (Sigma + H)), P))
-    )
+    """E = Σ_k w_k Tr[hP] + ½Σ_k w_k Tr[(Σ+H)(P-refP)]."""
+    dP = P if refP is None else P - refP
+    one_body = np.einsum("...ij,...ji->...", weights_b * h, P)
+    interaction = 0.5 * np.einsum("...ij,...ji->...", weights_b * (Sigma + H), dP)
+    return np.sum(np.real(one_body + interaction))
 
 
 def occupation_entropy(p: np.ndarray, w_norm: np.ndarray) -> np.ndarray:

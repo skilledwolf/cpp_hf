@@ -152,7 +152,7 @@ inline void build_fock(const HFKernel& K, const c64* P,
     }
 }
 
-// E = sum_k w_k Re Tr[(h + 0.5*(Sigma + H)) P]
+// E = sum_k w_k Re Tr[h P] + 0.5 * Re Tr[(Sigma + H) (P - refP)]
 inline f32 hf_energy(const HFKernel& K, const c64* P,
                      const c64* Sigma, const c64* Hh) {
     const std::size_t nk = K.nk();
@@ -164,15 +164,17 @@ inline f32 hf_energy(const HFKernel& K, const c64* P,
         const c64* sk = Sigma + k * nb2;
         const c64* hh = Hh + k * nb2;
         const c64* pk = P + k * nb2;
+        const c64* rk = K.refP.data() + k * nb2;
         const f32 wk = K.w2d[k];
-        // Tr(M · P) = sum_i sum_j M_ij P_ji
-        // Here M_ij = hk[ij] + 0.5*(sk[ij]+hh[ij])
+        // Tr(A · B) = sum_i sum_j A_ij B_ji.
         double sum_re = 0.0;
         for (std::size_t i = 0; i < nb; ++i) {
             for (std::size_t j = 0; j < nb; ++j) {
-                const c64 m = hk[i * nb + j] + 0.5 * (sk[i * nb + j] + hh[i * nb + j]);
                 const c64 p = pk[j * nb + i];
-                sum_re += static_cast<double>((m * p).real());
+                const c64 dp = p - rk[j * nb + i];
+                const c64 interaction = 0.5 * (sk[i * nb + j] + hh[i * nb + j]);
+                sum_re += static_cast<double>((hk[i * nb + j] * p).real());
+                sum_re += static_cast<double>((interaction * dp).real());
             }
         }
         total += static_cast<double>(wk) * sum_re;
@@ -193,15 +195,18 @@ inline f32 hf_energy_with_hartree_diag(const HFKernel& K, const c64* P,
         const c64* hk = K.h.data() + k * nb2;
         const c64* sk = Sigma + k * nb2;
         const c64* pk = P + k * nb2;
+        const c64* rk = K.refP.data() + k * nb2;
         const f32 wk = K.w2d[k];
         double sum_re = 0.0;
         for (std::size_t i = 0; i < nb; ++i) {
             for (std::size_t j = 0; j < nb; ++j) {
-                c64 m = hk[i * nb + j] + 0.5 * sk[i * nb + j];
+                c64 interaction = 0.5 * sk[i * nb + j];
                 if (K.include_hartree && i == j)
-                    m += c64(0.5 * hartree_diag[i], 0.0);
+                    interaction += c64(0.5 * hartree_diag[i], 0.0);
                 const c64 p = pk[j * nb + i];
-                sum_re += static_cast<double>((m * p).real());
+                const c64 dp = p - rk[j * nb + i];
+                sum_re += static_cast<double>((hk[i * nb + j] * p).real());
+                sum_re += static_cast<double>((interaction * dp).real());
             }
         }
         total += static_cast<double>(wk) * sum_re;

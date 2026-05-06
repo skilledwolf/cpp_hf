@@ -37,6 +37,9 @@ class SolverConfig:
     mu_maxiter: int = 25
     block_sizes: tuple[int, ...] | None = None
     project_fn: Any = None
+    hartree_precondition: bool = False
+    hartree_pc_scale: float = 1.0
+    occupation_precondition: bool = False
 
 
 class SolveResult(NamedTuple):
@@ -100,6 +103,8 @@ def solve_direct_minimization(
         int(config.bt_max), int(config.cg_restart), int(config.mu_maxiter),
         block_sizes,
         config.project_fn,
+        bool(config.hartree_precondition), float(config.hartree_pc_scale),
+        bool(config.occupation_precondition),
     )
     return SolveResult(
         Q=Q,

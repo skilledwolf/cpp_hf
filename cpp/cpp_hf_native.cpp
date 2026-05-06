@@ -12,6 +12,7 @@
 #include "cpp_hf/selfenergy.hpp"
 #include "cpp_hf/solver_dm.hpp"
 #include "cpp_hf/solver_scf.hpp"
+#include "cpp_hf/solver_hartree_newton.hpp"
 #include "cpp_hf/types.hpp"
 #include "cpp_hf/utils.hpp"
 
@@ -295,7 +296,11 @@ PYBIND11_MODULE(_native, m) {
              std::size_t max_iter,
              f32 density_tol, f32 comm_tol,
              f32 mixing, f32 level_shift,
-             py::object project_fn) {
+             py::object project_fn,
+             std::vector<std::size_t> block_sizes,
+             std::string acceleration,
+             std::size_t diis_size, std::size_t diis_start,
+             f32 diis_damping, f32 trust_radius) {
               auto K = make_kernel(
                   py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["w2d"]),
                   py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["h"]),
@@ -316,6 +321,12 @@ PYBIND11_MODULE(_native, m) {
               cfg.comm_tol = comm_tol;
               cfg.mixing = mixing;
               cfg.level_shift = level_shift;
+              cfg.block_sizes = block_sizes;
+              cfg.acceleration = acceleration;
+              cfg.diis_size = diis_size;
+              cfg.diis_start = diis_start;
+              cfg.diis_damping = diis_damping;
+              cfg.trust_radius = trust_radius;
               ProjectFn pf = wrap_project_fn(project_fn);
               const ProjectFn* pfp = pf ? &pf : nullptr;
               SCFResult res;
@@ -344,7 +355,9 @@ PYBIND11_MODULE(_native, m) {
              f32 max_step, f32 bt_shrink, f32 denom_scale,
              std::size_t bt_max, std::size_t cg_restart, int mu_maxiter,
              std::vector<std::size_t> block_sizes,
-             py::object project_fn) {
+             py::object project_fn,
+             bool hartree_precondition, f32 hartree_pc_scale,
+             bool occupation_precondition) {
               auto K = make_kernel(
                   py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["w2d"]),
                   py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["h"]),
@@ -370,6 +383,9 @@ PYBIND11_MODULE(_native, m) {
               cfg.cg_restart = cg_restart;
               cfg.mu_maxiter = mu_maxiter;
               cfg.block_sizes = block_sizes;
+              cfg.hartree_precondition = hartree_precondition;
+              cfg.hartree_pc_scale = hartree_pc_scale;
+              cfg.occupation_precondition = occupation_precondition;
               ProjectFn pf = wrap_project_fn(project_fn);
               const ProjectFn* pfp = pf ? &pf : nullptr;
               DMResult res;
@@ -388,6 +404,58 @@ PYBIND11_MODULE(_native, m) {
                   make_array(res.density, dense_shape),
                   make_array(res.fock, dense_shape),
                   res.mu, res.energy, res.n_iter, res.converged,
+                  make_array(res.hist_E, {(py::ssize_t)res.hist_E.size()}),
+                  make_array(res.hist_grad, {(py::ssize_t)res.hist_grad.size()}));
+          });
+
+    // --- Newton-on-charge Hartree-only solver ---
+    m.def("solve_hartree_newton",
+          [](py::object kernel_args,
+             py::array_t<c64, py::array::c_style | py::array::forcecast> P0,
+             f32 n_e,
+             std::size_t max_iter, f32 tol_E, f32 tol_sigma,
+             int mu_maxiter, f32 level_shift,
+             std::vector<std::size_t> block_sizes,
+             std::size_t backtrack_max, f32 backtrack_shrink,
+             bool fix_pi_at_start,
+             py::object project_fn) {
+              auto K = make_kernel(
+                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["w2d"]),
+                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["h"]),
+                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["VR"]),
+                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["refP"]),
+                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["HH"]),
+                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["contact_g"]),
+                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["contact_Oi"]),
+                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["contact_Oj"]),
+                  py::cast<f32>(kernel_args["weight_sum"]),
+                  py::cast<f32>(kernel_args["T"]),
+                  py::cast<bool>(kernel_args["include_hartree"]),
+                  py::cast<bool>(kernel_args["include_exchange"]),
+                  py::cast<bool>(kernel_args["exchange_hcp"]));
+              HartreeNewtonConfig cfg;
+              cfg.max_iter = max_iter;
+              cfg.tol_E = tol_E;
+              cfg.tol_sigma = tol_sigma;
+              cfg.mu_maxiter = mu_maxiter;
+              cfg.level_shift = level_shift;
+              cfg.block_sizes = block_sizes;
+              cfg.backtrack_max = backtrack_max;
+              cfg.backtrack_shrink = backtrack_shrink;
+              cfg.fix_pi_at_start = fix_pi_at_start;
+              ProjectFn pf = wrap_project_fn(project_fn);
+              const ProjectFn* pfp = pf ? &pf : nullptr;
+              DMResult res;
+              {
+                  py::gil_scoped_release release;
+                  res = solve_hartree_newton(K, P0.data(), n_e, cfg, pfp);
+              }
+              std::vector<py::ssize_t> dense_shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
+                                                    (py::ssize_t)K.nb, (py::ssize_t)K.nb};
+              return py::make_tuple(
+                  make_array(res.density, dense_shape),
+                  make_array(res.fock, dense_shape),
+                  res.energy, res.mu, res.n_iter, res.converged,
                   make_array(res.hist_E, {(py::ssize_t)res.hist_E.size()}),
                   make_array(res.hist_grad, {(py::ssize_t)res.hist_grad.size()}));
           });

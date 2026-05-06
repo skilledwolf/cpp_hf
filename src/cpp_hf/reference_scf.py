@@ -23,6 +23,20 @@ class SCFConfig:
     mixing: float = 0.5
     level_shift: float = 0.0
     project_fn: Callable[[Any], Any] | None = None
+    # Block-diagonal acceleration for the Fock eigh (4× speedup when usable).
+    block_sizes: tuple[int, ...] | None = None
+    # Acceleration scheme: "linear" (α-mixing), "diis" (Pulay commutator-DIIS
+    # extrapolation of Fock), or "oda" (analytic optimal damping).
+    acceleration: str = "linear"
+    diis_size: int = 6
+    diis_start: int = 2
+    # Damping for DIIS extrapolation: F_used = damp·F_extrap + (1-damp)·F_curr.
+    # 1.0 = pure DIIS (default); ~0.7 suppresses late-iter oscillation.
+    diis_damping: float = 1.0
+    # Trust-region clip on the per-iter density step (Frobenius norm).
+    # 0.0 = disabled.  Useful for ill-conditioned cases where DIIS extrapolates
+    # to unphysical states (ungated 1/q + high doping).
+    trust_radius: float = 0.0
 
     def __post_init__(self) -> None:
         if self.max_iter <= 0:
@@ -79,6 +93,11 @@ def solve_scf(
         float(config.density_tol), float(config.comm_tol),
         float(config.mixing), float(config.level_shift),
         config.project_fn,
+        list(int(s) for s in (config.block_sizes or ())),
+        str(config.acceleration),
+        int(config.diis_size), int(config.diis_start),
+        float(config.diis_damping),
+        float(config.trust_radius),
     )
     n_iter = int(iterations)
     is_conv = bool(converged)
