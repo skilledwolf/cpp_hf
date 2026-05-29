@@ -154,18 +154,13 @@ def _eigh_block_sizes(
     sizes = _validate_block_sizes(block_sizes, n)
     blocks = _block_slices(sizes)
 
-    eigenvals = []
-    eigenvecs = []
-    for s in blocks:
-        w, v = batched_eigh(array[..., s, s])
-        eigenvals.append(w)
-        eigenvecs.append(v)
-
-    w_full = np.concatenate(eigenvals, axis=-1)
+    w_full = np.empty(array.shape[:-1], dtype=array.real.dtype)
     v_full = np.zeros(array.shape, dtype=array.dtype)
     col_start = 0
-    for s, v in zip(blocks, eigenvecs):
+    for s in blocks:
+        w, v = batched_eigh(array[..., s, s])
         size = int(s.stop - s.start)
+        w_full[..., col_start : col_start + size] = w
         v_full[..., s, col_start : col_start + size] = v
         col_start += size
 
@@ -183,21 +178,15 @@ def _eigh_block_indices(
     n = int(array.shape[-1])
     blocks = _validate_block_indices(block_indices, n)
 
-    eigenvals = []
-    eigenvecs = []
+    w_full = np.empty(array.shape[:-1], dtype=array.real.dtype)
+    v_full = np.zeros(array.shape, dtype=array.dtype)
+    col_start = 0
     for idx in blocks:
         idx_arr = np.asarray(idx, dtype=np.intp)
         sub = array[..., idx_arr[:, None], idx_arr[None, :]]
         w, v = batched_eigh(sub)
-        eigenvals.append(w)
-        eigenvecs.append(v)
-
-    w_full = np.concatenate(eigenvals, axis=-1)
-    v_full = np.zeros(array.shape, dtype=array.dtype)
-    col_start = 0
-    for idx, v in zip(blocks, eigenvecs):
         size = int(len(idx))
-        idx_arr = np.asarray(idx, dtype=np.intp)
+        w_full[..., col_start : col_start + size] = w
         v_full[..., idx_arr[:, None], col_start : col_start + size] = v
         col_start += size
 

@@ -12,10 +12,12 @@
 #include "cpp_hf/selfenergy.hpp"
 #include "cpp_hf/solver_dm.hpp"
 #include "cpp_hf/solver_scf.hpp"
+#include "cpp_hf/superlattice.hpp"
 #include "cpp_hf/types.hpp"
 #include "cpp_hf/utils.hpp"
 
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -25,32 +27,27 @@ using namespace cpp_hf;
 namespace {
 
 template <typename T>
-py::array_t<T> make_array(const std::vector<T>& v, std::vector<py::ssize_t> shape) {
-    py::array_t<T> arr(shape);
-    std::memcpy(arr.mutable_data(), v.data(), v.size() * sizeof(T));
-    return arr;
-}
-
-template <typename T>
-py::array_t<T> make_array_from(const T* data, std::vector<py::ssize_t> shape) {
-    py::ssize_t total = 1;
-    for (auto s : shape) total *= s;
-    py::array_t<T> arr(shape);
-    std::memcpy(arr.mutable_data(), data, total * sizeof(T));
-    return arr;
+py::array_t<T> move_array(std::vector<T>&& v, std::vector<py::ssize_t> shape) {
+    auto owner = std::make_unique<std::vector<T>>(std::move(v));
+    T* data = owner->data();
+    py::capsule cap(owner.release(), [](void* p) {
+        delete static_cast<std::vector<T>*>(p);
+    });
+    return py::array_t<T>(shape, data, cap);
 }
 
 // Build a HFKernel from raw numpy arrays.  All inputs are validated at the
 // Python level before being passed in here.
 HFKernel make_kernel(
-    py::array_t<f32, py::array::c_style | py::array::forcecast> w2d,
-    py::array_t<c64, py::array::c_style | py::array::forcecast> h,
-    py::array_t<c64, py::array::c_style | py::array::forcecast> VR_shifted,
-    py::array_t<c64, py::array::c_style | py::array::forcecast> refP,
-    py::array_t<f32, py::array::c_style | py::array::forcecast> HH,
-    py::array_t<f32, py::array::c_style | py::array::forcecast> contact_g,
-    py::array_t<c64, py::array::c_style | py::array::forcecast> contact_Oi,
-    py::array_t<c64, py::array::c_style | py::array::forcecast> contact_Oj,
+    py::array_t<f32, py::array::c_style> w2d,
+    py::array_t<c64, py::array::c_style> h,
+    py::array_t<c64, py::array::c_style> VR_shifted,
+    py::array_t<c64, py::array::c_style> refP,
+    bool has_refP,
+    py::array_t<f32, py::array::c_style> HH,
+    py::array_t<f32, py::array::c_style> contact_g,
+    py::array_t<c64, py::array::c_style> contact_Oi,
+    py::array_t<c64, py::array::c_style> contact_Oj,
     f32 weight_sum,
     f32 T,
     bool include_hartree,
@@ -74,25 +71,144 @@ HFKernel make_kernel(
     K.include_hartree = include_hartree;
     K.include_exchange = include_exchange;
     K.exchange_hcp = exchange_hcp;
+    K.has_refP = has_refP;
     K.T = T;
     K.weight_sum = weight_sum;
 
-    const std::size_t n_dense = K.n_dense();
-    const std::size_t n_VR = K.nk1 * K.nk2 * K.dv1 * K.dv2;
+    if (has_refP) {
+        if (refP.ndim() != 4 ||
+            static_cast<std::size_t>(refP.shape(0)) != K.nk1 ||
+            static_cast<std::size_t>(refP.shape(1)) != K.nk2 ||
+            static_cast<std::size_t>(refP.shape(2)) != K.nb ||
+            static_cast<std::size_t>(refP.shape(3)) != K.nb) {
+            throw std::invalid_argument("refP must match h shape when has_refP is true");
+        }
+    }
 
-    K.h.assign(h.data(), h.data() + n_dense);
-    K.VR.assign(VR_shifted.data(), VR_shifted.data() + n_VR);
-    K.refP.assign(refP.data(), refP.data() + n_dense);
-    K.w2d.assign(w2d.data(), w2d.data() + K.nk1 * K.nk2);
-    K.HH.assign(HH.data(), HH.data() + K.nb * K.nb);
+    K.h = h.data();
+    K.VR = VR_shifted.data();
+    K.refP = has_refP ? refP.data() : nullptr;
+    K.w2d = w2d.data();
+    K.HH = HH.data();
 
     if (contact_g.ndim() != 1) throw std::invalid_argument("contact_g must be 1-D");
     K.n_contact = static_cast<std::size_t>(contact_g.shape(0));
-    K.contact_g.assign(contact_g.data(), contact_g.data() + K.n_contact);
-    K.contact_Oi.assign(contact_Oi.data(), contact_Oi.data() + K.n_contact * K.nb * K.nb);
-    K.contact_Oj.assign(contact_Oj.data(), contact_Oj.data() + K.n_contact * K.nb * K.nb);
+    K.contact_g = contact_g.data();
+    K.contact_Oi = contact_Oi.data();
+    K.contact_Oj = contact_Oj.data();
 
     return K;
+}
+
+// Inject the optional superlattice Fock / Hartree configuration from a
+// kernel_args dict into a HFKernel.  No-op when the dict lacks a truthy
+// ``superlattice_fock_active`` / ``superlattice_hartree_active`` flag.  All
+// array pointers are sourced from the kernel_args dict so they stay alive
+// for the duration of the surrounding solver call (caller holds the dict).
+void inject_superlattice_into_kernel(HFKernel& K, py::object kernel_args) {
+    const bool fock_active = kernel_args.contains("superlattice_fock_active")
+        ? py::cast<bool>(kernel_args["superlattice_fock_active"])
+        : false;
+    const bool hartree_active = kernel_args.contains("superlattice_hartree_active")
+        ? py::cast<bool>(kernel_args["superlattice_hartree_active"])
+        : false;
+    if (!fock_active && !hartree_active) return;
+
+    K.superlattice_fock_active = fock_active;
+    K.superlattice_hartree_active = hartree_active;
+
+    if (kernel_args.contains("hartree_degeneracy")) {
+        K.hartree_degeneracy = py::cast<f32>(kernel_args["hartree_degeneracy"]);
+    }
+    K.n_G = py::cast<std::size_t>(kernel_args["n_G"]);
+    K.dim_orb = py::cast<std::size_t>(kernel_args["dim_orb"]);
+    K.n_delta = py::cast<std::size_t>(kernel_args["n_delta"]);
+    K.N_ext_x = py::cast<std::size_t>(kernel_args["N_ext_x"]);
+    K.N_ext_y = py::cast<std::size_t>(kernel_args["N_ext_y"]);
+
+    if (K.n_G * K.dim_orb != K.nb) {
+        throw std::invalid_argument(
+            "superlattice mode requires n_G × dim_orb == nb");
+    }
+
+    auto V_lag_fft = py::cast<py::array_t<c64, py::array::c_style>>(
+        kernel_args["V_lag_fft"]);
+    auto g_a_off = py::cast<py::array_t<std::int64_t, py::array::c_style>>(
+        kernel_args["g_a_off"]);
+    auto pair_i = py::cast<py::array_t<std::int64_t, py::array::c_style>>(
+        kernel_args["pair_i"]);
+    auto pair_j = py::cast<py::array_t<std::int64_t, py::array::c_style>>(
+        kernel_args["pair_j"]);
+    auto pair_start = py::cast<py::array_t<std::int64_t, py::array::c_style>>(
+        kernel_args["pair_start"]);
+    auto pair_to_delta = py::cast<py::array_t<std::int64_t, py::array::c_style>>(
+        kernel_args["pair_to_delta"]);
+
+    if (static_cast<std::size_t>(V_lag_fft.shape(0)) != K.N_ext_x ||
+        static_cast<std::size_t>(V_lag_fft.shape(1)) != K.N_ext_y) {
+        throw std::invalid_argument(
+            "V_lag_fft must have shape (N_ext_x, N_ext_y)");
+    }
+    if (static_cast<std::size_t>(g_a_off.shape(0)) != K.n_G ||
+        g_a_off.shape(1) != 2) {
+        throw std::invalid_argument("g_a_off must be (n_G, 2)");
+    }
+    if (static_cast<std::size_t>(pair_start.shape(0)) != K.n_delta + 1) {
+        throw std::invalid_argument("pair_start must have length n_delta + 1");
+    }
+    if (pair_i.shape(0) != pair_j.shape(0)) {
+        throw std::invalid_argument("pair_i and pair_j must have the same length");
+    }
+    if (static_cast<std::size_t>(pair_to_delta.shape(0)) != K.n_G ||
+        static_cast<std::size_t>(pair_to_delta.shape(1)) != K.n_G) {
+        throw std::invalid_argument("pair_to_delta must be (n_G, n_G)");
+    }
+
+    K.V_lag_fft = V_lag_fft.data();
+    K.g_a_off = g_a_off.data();
+    K.pair_i = pair_i.data();
+    K.pair_j = pair_j.data();
+    K.pair_start = pair_start.data();
+    K.pair_to_delta = pair_to_delta.data();
+
+    if (kernel_args.contains("V_lag_fft_orbital")) {
+        auto V_orb = py::cast<py::array_t<c64, py::array::c_style>>(
+            kernel_args["V_lag_fft_orbital"]);
+        if (V_orb.ndim() != 4 ||
+            static_cast<std::size_t>(V_orb.shape(0)) != K.N_ext_x ||
+            static_cast<std::size_t>(V_orb.shape(1)) != K.N_ext_y ||
+            static_cast<std::size_t>(V_orb.shape(2)) != K.dim_orb ||
+            static_cast<std::size_t>(V_orb.shape(3)) != K.dim_orb) {
+            throw std::invalid_argument(
+                "V_lag_fft_orbital must be "
+                "(N_ext_x, N_ext_y, dim_orb, dim_orb)");
+        }
+        K.V_lag_fft_orbital = V_orb.data();
+    }
+
+    if (hartree_active) {
+        auto HH_GG = py::cast<py::array_t<f32, py::array::c_style>>(
+            kernel_args["HH_GG"]);
+        if (static_cast<std::size_t>(HH_GG.shape(0)) != K.n_G ||
+            static_cast<std::size_t>(HH_GG.shape(1)) != K.n_G) {
+            throw std::invalid_argument("HH_GG must be (n_G, n_G)");
+        }
+        K.HH_GG = HH_GG.data();
+
+        if (kernel_args.contains("HH_GG_orbital")) {
+            auto HH_orb = py::cast<py::array_t<f32, py::array::c_style>>(
+                kernel_args["HH_GG_orbital"]);
+            if (HH_orb.ndim() != 4 ||
+                static_cast<std::size_t>(HH_orb.shape(0)) != K.n_G ||
+                static_cast<std::size_t>(HH_orb.shape(1)) != K.n_G ||
+                static_cast<std::size_t>(HH_orb.shape(2)) != K.dim_orb ||
+                static_cast<std::size_t>(HH_orb.shape(3)) != K.dim_orb) {
+                throw std::invalid_argument(
+                    "HH_GG_orbital must be (n_G, n_G, dim_orb, dim_orb)");
+            }
+            K.HH_GG_orbital = HH_orb.data();
+        }
+    }
 }
 
 ProjectFn wrap_project_fn(py::object py_fn) {
@@ -153,12 +269,18 @@ PYBIND11_MODULE(_native, m) {
                       ifftshift_2d_batch(sigma.data(), nk1, nk2, nb * nb);
                   }
               }
-              return make_array(sigma, {(py::ssize_t)nk1, (py::ssize_t)nk2,
-                                         (py::ssize_t)nb, (py::ssize_t)nb});
+              return move_array(std::move(sigma), {(py::ssize_t)nk1, (py::ssize_t)nk2,
+                                                    (py::ssize_t)nb, (py::ssize_t)nb});
           },
           py::arg("VR"), py::arg("P"),
           py::arg("apply_ifftshift") = true,
           py::arg("hermitian_channel_packing") = false);
+
+    m.def("clear_fft_plan_cache",
+          []() {
+              py::gil_scoped_release release;
+              FftPlanCache::instance().clear();
+          });
 
     // --- Hermitian eigh (batched + block-sizes) ---
     m.def("eigh_batched",
@@ -183,7 +305,8 @@ PYBIND11_MODULE(_native, m) {
               w_shape.push_back(nb);
               v_shape.push_back(nb);
               v_shape.push_back(nb);
-              return py::make_tuple(make_array(w, w_shape), make_array(V, v_shape));
+              return py::make_tuple(move_array(std::move(w), w_shape),
+                                    move_array(std::move(V), v_shape));
           },
           py::arg("M"));
 
@@ -213,7 +336,8 @@ PYBIND11_MODULE(_native, m) {
               w_shape.push_back(nb);
               v_shape.push_back(nb);
               v_shape.push_back(nb);
-              return py::make_tuple(make_array(w, w_shape), make_array(V, v_shape));
+              return py::make_tuple(move_array(std::move(w), w_shape),
+                                    move_array(std::move(V), v_shape));
           },
           py::arg("M"), py::arg("sizes"), py::arg("sort") = true);
 
@@ -256,19 +380,21 @@ PYBIND11_MODULE(_native, m) {
           [](py::object kernel_args, py::array_t<c64, py::array::c_style | py::array::forcecast> P,
              py::object project_fn) {
               auto K = make_kernel(
-                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["w2d"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["h"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["VR"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["refP"]),
-                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["HH"]),
-                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["contact_g"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["contact_Oi"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["contact_Oj"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["w2d"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["h"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["VR"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["refP"]),
+                  py::cast<bool>(kernel_args["has_refP"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["HH"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["contact_g"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["contact_Oi"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["contact_Oj"]),
                   py::cast<f32>(kernel_args["weight_sum"]),
                   py::cast<f32>(kernel_args["T"]),
                   py::cast<bool>(kernel_args["include_hartree"]),
                   py::cast<bool>(kernel_args["include_exchange"]),
                   py::cast<bool>(kernel_args["exchange_hcp"]));
+              inject_superlattice_into_kernel(K, kernel_args);
               const std::size_t n_tot = K.n_dense();
               std::vector<c64> Sigma(n_tot), Hh(n_tot), F(n_tot);
               ProjectFn pf = wrap_project_fn(project_fn);
@@ -281,9 +407,9 @@ PYBIND11_MODULE(_native, m) {
               }
               std::vector<py::ssize_t> shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
                                               (py::ssize_t)K.nb, (py::ssize_t)K.nb};
-              return py::make_tuple(make_array(Sigma, shape),
-                                     make_array(Hh, shape),
-                                     make_array(F, shape),
+              return py::make_tuple(move_array(std::move(Sigma), shape),
+                                     move_array(std::move(Hh), shape),
+                                     move_array(std::move(F), shape),
                                      E);
           });
 
@@ -299,21 +425,24 @@ PYBIND11_MODULE(_native, m) {
              std::vector<std::size_t> block_sizes,
              std::string acceleration,
              std::size_t diis_size, std::size_t diis_start,
-             f32 diis_damping, f32 trust_radius) {
+             f32 diis_damping, f32 trust_radius,
+             bool return_density, bool return_fock) {
               auto K = make_kernel(
-                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["w2d"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["h"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["VR"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["refP"]),
-                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["HH"]),
-                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["contact_g"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["contact_Oi"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["contact_Oj"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["w2d"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["h"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["VR"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["refP"]),
+                  py::cast<bool>(kernel_args["has_refP"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["HH"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["contact_g"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["contact_Oi"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["contact_Oj"]),
                   py::cast<f32>(kernel_args["weight_sum"]),
                   py::cast<f32>(kernel_args["T"]),
                   py::cast<bool>(kernel_args["include_hartree"]),
                   py::cast<bool>(kernel_args["include_exchange"]),
                   py::cast<bool>(kernel_args["exchange_hcp"]));
+              inject_superlattice_into_kernel(K, kernel_args);
               SCFConfig cfg;
               cfg.max_iter = max_iter;
               cfg.density_tol = density_tol;
@@ -326,6 +455,8 @@ PYBIND11_MODULE(_native, m) {
               cfg.diis_start = diis_start;
               cfg.diis_damping = diis_damping;
               cfg.trust_radius = trust_radius;
+              cfg.return_density = return_density;
+              cfg.return_fock = return_fock;
               ProjectFn pf = wrap_project_fn(project_fn);
               const ProjectFn* pfp = pf ? &pf : nullptr;
               SCFResult res;
@@ -336,13 +467,20 @@ PYBIND11_MODULE(_native, m) {
 
               std::vector<py::ssize_t> dense_shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
                                                     (py::ssize_t)K.nb, (py::ssize_t)K.nb};
+              std::vector<py::ssize_t> hE_shape{(py::ssize_t)res.hist_E.size()};
+              std::vector<py::ssize_t> hD_shape{(py::ssize_t)res.hist_density.size()};
+              std::vector<py::ssize_t> hC_shape{(py::ssize_t)res.hist_comm.size()};
+              py::object density_obj = py::none();
+              py::object fock_obj = py::none();
+              if (return_density) density_obj = move_array(std::move(res.density), dense_shape);
+              if (return_fock) fock_obj = move_array(std::move(res.fock), dense_shape);
               return py::make_tuple(
-                  make_array(res.density, dense_shape),
-                  make_array(res.fock, dense_shape),
+                  density_obj,
+                  fock_obj,
                   res.energy, res.mu, res.iterations, res.converged,
-                  make_array(res.hist_E, {(py::ssize_t)res.hist_E.size()}),
-                  make_array(res.hist_density, {(py::ssize_t)res.hist_density.size()}),
-                  make_array(res.hist_comm, {(py::ssize_t)res.hist_comm.size()}));
+                  move_array(std::move(res.hist_E), hE_shape),
+                  move_array(std::move(res.hist_density), hD_shape),
+                  move_array(std::move(res.hist_comm), hC_shape));
           });
 
     // --- Direct minimization solver ---
@@ -354,21 +492,24 @@ PYBIND11_MODULE(_native, m) {
              f32 max_step, f32 bt_shrink, f32 denom_scale,
              std::size_t bt_max, std::size_t cg_restart, int mu_maxiter,
              std::vector<std::size_t> block_sizes,
-             py::object project_fn) {
+             py::object project_fn,
+             bool return_Q, bool return_density, bool return_fock) {
               auto K = make_kernel(
-                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["w2d"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["h"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["VR"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["refP"]),
-                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["HH"]),
-                  py::cast<py::array_t<f32, py::array::c_style | py::array::forcecast>>(kernel_args["contact_g"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["contact_Oi"]),
-                  py::cast<py::array_t<c64, py::array::c_style | py::array::forcecast>>(kernel_args["contact_Oj"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["w2d"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["h"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["VR"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["refP"]),
+                  py::cast<bool>(kernel_args["has_refP"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["HH"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["contact_g"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["contact_Oi"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["contact_Oj"]),
                   py::cast<f32>(kernel_args["weight_sum"]),
                   py::cast<f32>(kernel_args["T"]),
                   py::cast<bool>(kernel_args["include_hartree"]),
                   py::cast<bool>(kernel_args["include_exchange"]),
                   py::cast<bool>(kernel_args["exchange_hcp"]));
+              inject_superlattice_into_kernel(K, kernel_args);
               SolverConfig cfg;
               cfg.max_iter = max_iter;
               cfg.tol_E = tol_E;
@@ -380,6 +521,9 @@ PYBIND11_MODULE(_native, m) {
               cfg.cg_restart = cg_restart;
               cfg.mu_maxiter = mu_maxiter;
               cfg.block_sizes = block_sizes;
+              cfg.return_Q = return_Q;
+              cfg.return_density = return_density;
+              cfg.return_fock = return_fock;
               ProjectFn pf = wrap_project_fn(project_fn);
               const ProjectFn* pfp = pf ? &pf : nullptr;
               DMResult res;
@@ -392,14 +536,22 @@ PYBIND11_MODULE(_native, m) {
                                                     (py::ssize_t)K.nb, (py::ssize_t)K.nb};
               std::vector<py::ssize_t> p_shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
                                                 (py::ssize_t)K.nb};
+              std::vector<py::ssize_t> hE_shape{(py::ssize_t)res.hist_E.size()};
+              std::vector<py::ssize_t> hG_shape{(py::ssize_t)res.hist_grad.size()};
+              py::object Q_obj = py::none();
+              py::object density_obj = py::none();
+              py::object fock_obj = py::none();
+              if (return_Q) Q_obj = move_array(std::move(res.Q), dense_shape);
+              if (return_density) density_obj = move_array(std::move(res.density), dense_shape);
+              if (return_fock) fock_obj = move_array(std::move(res.fock), dense_shape);
               return py::make_tuple(
-                  make_array(res.Q, dense_shape),
-                  make_array(res.p, p_shape),
-                  make_array(res.density, dense_shape),
-                  make_array(res.fock, dense_shape),
+                  Q_obj,
+                  move_array(std::move(res.p), p_shape),
+                  density_obj,
+                  fock_obj,
                   res.mu, res.energy, res.n_iter, res.converged,
-                  make_array(res.hist_E, {(py::ssize_t)res.hist_E.size()}),
-                  make_array(res.hist_grad, {(py::ssize_t)res.hist_grad.size()}));
+                  move_array(std::move(res.hist_E), hE_shape),
+                  move_array(std::move(res.hist_grad), hG_shape));
           });
 
     // --- DM solver test hooks: cayley spectral helpers, exposed for diagnostics ---
@@ -425,7 +577,8 @@ PYBIND11_MODULE(_native, m) {
               v_shape.push_back(nb);
               v_shape.push_back(nb);
               l_shape.push_back(nb);
-              return py::make_tuple(make_array(V, v_shape), make_array(lam, l_shape));
+              return py::make_tuple(move_array(std::move(V), v_shape),
+                                    move_array(std::move(lam), l_shape));
           });
 
     m.def("_cayley_unitary_from_spectrum",
@@ -446,7 +599,7 @@ PYBIND11_MODULE(_native, m) {
               for (int i = 0; i < V.ndim() - 2; ++i) u_shape.push_back(V.shape(i));
               u_shape.push_back(nb);
               u_shape.push_back(nb);
-              return make_array(U, u_shape);
+              return move_array(std::move(U), u_shape);
           });
 
     m.def("_diag_UFU_from_spectrum",
@@ -467,8 +620,103 @@ PYBIND11_MODULE(_native, m) {
               std::vector<py::ssize_t> shape;
               for (int i = 0; i < V.ndim() - 2; ++i) shape.push_back(V.shape(i));
               shape.push_back(nb);
-              return make_array(diag, shape);
+              return move_array(std::move(diag), shape);
           });
+
+    // --- Superlattice Fock (ΔG-streamed) ---
+    m.def("selfenergy_superlattice_streamed",
+          [](py::array_t<c64, py::array::c_style | py::array::forcecast> rho,
+             py::array_t<c64, py::array::c_style | py::array::forcecast> VR_fft,
+             py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> g_a_off,
+             py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> pair_i,
+             py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> pair_j,
+             py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> pair_start,
+             std::size_t nkx, std::size_t nky,
+             std::size_t n_G, std::size_t dim_orb,
+             std::size_t N_ext_x, std::size_t N_ext_y,
+             py::object VR_fft_orbital_obj) {
+              if (rho.ndim() != 6) {
+                  throw std::invalid_argument(
+                      "rho must be (nkx, nky, n_G, dim_orb, n_G, dim_orb)");
+              }
+              if (VR_fft.ndim() != 2) {
+                  throw std::invalid_argument("VR_fft must be (N_ext_x, N_ext_y)");
+              }
+              if (static_cast<std::size_t>(VR_fft.shape(0)) != N_ext_x ||
+                  static_cast<std::size_t>(VR_fft.shape(1)) != N_ext_y) {
+                  throw std::invalid_argument(
+                      "VR_fft shape does not match (N_ext_x, N_ext_y)");
+              }
+              if (g_a_off.ndim() != 2 ||
+                  static_cast<std::size_t>(g_a_off.shape(0)) != n_G ||
+                  g_a_off.shape(1) != 2) {
+                  throw std::invalid_argument("g_a_off must be (n_G, 2)");
+              }
+              if (pair_start.ndim() != 1 || pair_start.shape(0) < 1) {
+                  throw std::invalid_argument("pair_start must be 1-D, len >= 1");
+              }
+              const std::size_t n_delta =
+                  static_cast<std::size_t>(pair_start.shape(0)) - 1;
+              if (pair_i.ndim() != 1 || pair_j.ndim() != 1 ||
+                  pair_i.shape(0) != pair_j.shape(0)) {
+                  throw std::invalid_argument(
+                      "pair_i and pair_j must be 1-D with the same length");
+              }
+
+              const c64* VR_orb_ptr = nullptr;
+              py::array_t<c64, py::array::c_style | py::array::forcecast>
+                  VR_orb_arr;
+              if (!VR_fft_orbital_obj.is_none()) {
+                  VR_orb_arr = py::cast<
+                      py::array_t<c64, py::array::c_style | py::array::forcecast>
+                  >(VR_fft_orbital_obj);
+                  if (VR_orb_arr.ndim() != 4 ||
+                      static_cast<std::size_t>(VR_orb_arr.shape(0)) != N_ext_x ||
+                      static_cast<std::size_t>(VR_orb_arr.shape(1)) != N_ext_y ||
+                      static_cast<std::size_t>(VR_orb_arr.shape(2)) != dim_orb ||
+                      static_cast<std::size_t>(VR_orb_arr.shape(3)) != dim_orb) {
+                      throw std::invalid_argument(
+                          "VR_fft_orbital must be "
+                          "(N_ext_x, N_ext_y, dim_orb, dim_orb)");
+                  }
+                  VR_orb_ptr = VR_orb_arr.data();
+              }
+
+              // Allocate output sigma with the same layout as rho.
+              std::vector<py::ssize_t> out_shape(rho.shape(), rho.shape() + 6);
+              std::vector<c64> sigma_buf(
+                  static_cast<std::size_t>(rho.size())
+              );
+              {
+                  py::gil_scoped_release release;
+                  selfenergy_superlattice_streamed(
+                      rho.data(),
+                      sigma_buf.data(),
+                      VR_fft.data(),
+                      VR_orb_ptr,
+                      g_a_off.data(),
+                      pair_i.data(),
+                      pair_j.data(),
+                      pair_start.data(),
+                      n_delta,
+                      N_ext_x, N_ext_y,
+                      nkx, nky,
+                      n_G, dim_orb
+                  );
+              }
+              return move_array(std::move(sigma_buf), out_shape);
+          },
+          py::arg("rho"),
+          py::arg("VR_fft"),
+          py::arg("g_a_off"),
+          py::arg("pair_i"),
+          py::arg("pair_j"),
+          py::arg("pair_start"),
+          py::arg("nkx"), py::arg("nky"),
+          py::arg("n_G"), py::arg("dim_orb"),
+          py::arg("N_ext_x"), py::arg("N_ext_y"),
+          py::arg("VR_fft_orbital") = py::none(),
+          "Streaming superlattice Fock self-energy (per-ΔG FFT convolution).");
 
     // --- Resample k-grid (linear, periodic) ---
     m.def("resample_kgrid_2d",
@@ -491,6 +739,6 @@ PYBIND11_MODULE(_native, m) {
                   py::gil_scoped_release release;
                   out = resample_kgrid_2d(values.data(), nk_old, nk_new, inner);
               }
-              return make_array(out, out_shape);
+              return move_array(std::move(out), out_shape);
           });
 }

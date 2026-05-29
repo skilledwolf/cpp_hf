@@ -21,7 +21,7 @@ StageResult = Union[SolveResult, SCFResult]
 class ContinuationResult(NamedTuple):
     coarse: StageResult
     fine: StageResult
-    P0_fine: np.ndarray
+    P0_fine: np.ndarray | None
 
 
 def _resample_density(density_c: np.ndarray, nk_fine: int) -> np.ndarray:
@@ -49,7 +49,11 @@ def _run_stage(
 
 def _density_of(result: StageResult) -> np.ndarray:
     if isinstance(result, SCFResult):
+        if result.density_matrix is None:
+            raise ValueError("coarse SCF result did not retain density_matrix.")
         return result.density_matrix
+    if result.density is None:
+        raise ValueError("coarse direct-minimization result did not retain density.")
     return result.density
 
 
@@ -62,6 +66,7 @@ def solve_continuation(
     *,
     coarse_config: SolverConfig | SCFConfig | None = None,
     fine_config: SolverConfig | SCFConfig | None = None,
+    retain_P0_fine: bool = True,
 ) -> ContinuationResult:
     """Run a coarse → fine multigrid HF continuation.
 
@@ -90,7 +95,11 @@ def solve_continuation(
         stage_name="fine",
     )
 
-    return ContinuationResult(coarse=coarse_result, fine=fine_result, P0_fine=P0_fine)
+    return ContinuationResult(
+        coarse=coarse_result,
+        fine=fine_result,
+        P0_fine=P0_fine if retain_P0_fine else None,
+    )
 
 
 def _validate_kernels(coarse: HartreeFockKernel, fine: HartreeFockKernel) -> None:

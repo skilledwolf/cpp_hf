@@ -126,6 +126,56 @@ class TestSolveResult:
         assert result.Q.shape == kernel.h.shape
         assert result.p.shape == kernel.h.shape[:-1]
 
+    def test_no_reference_density_uses_broadcast_zero_view(self):
+        kernel = _make_two_band_kernel(nk=2)
+
+        assert not kernel.has_reference_density
+        assert kernel.refP.shape == kernel.h.shape
+        assert kernel.refP.strides == (0, 0, 0, 0)
+        assert not kernel.refP.flags.writeable
+
+    def test_direct_result_arrays_can_be_omitted(self):
+        kernel = _make_two_band_kernel(nk=2)
+        P0 = np.zeros_like(kernel.h)
+        result = solve(
+            kernel,
+            P0,
+            4.0,
+            config=SolverConfig(
+                max_iter=100,
+                tol_E=1e-7,
+                return_Q=False,
+                return_density=False,
+                return_fock=False,
+            ),
+        )
+
+        assert result.Q is None
+        assert result.density is None
+        assert result.fock is None
+        assert result.p.shape == kernel.h.shape[:-1]
+        assert np.isfinite(float(result.energy))
+
+    def test_scf_result_arrays_can_be_omitted(self):
+        kernel = _make_two_band_kernel(nk=2)
+        P0 = np.zeros_like(kernel.h)
+        result = solve_scf(
+            kernel,
+            P0,
+            4.0,
+            config=SCFConfig(
+                max_iter=100,
+                density_tol=1e-6,
+                comm_tol=1e-5,
+                return_density=False,
+                return_fock=False,
+            ),
+        )
+
+        assert result.density_matrix is None
+        assert result.fock_matrix is None
+        assert np.isfinite(float(result.energy))
+
 
 class TestContactTerms:
     @staticmethod

@@ -7,7 +7,7 @@ trusted:
 
 * **C3 projector fix** — earlier C3 implementations gave PM and PM+C3
   energies 28+ meV apart on cells where they should be degenerate.
-  The current `_quartermetal_common.make_c3_project_fn_numpy` averages
+  The current `_common.make_c3_project_fn_numpy` averages
   only complete in-patch C3 orbits.
 * **PM_C3 self-consistent CN reference subtraction** — earlier scripts
   used `u0` (non-interacting CN at U=0) or `sameU` (non-interacting CN
@@ -44,5 +44,5 @@ trusted:
 | `quartermetal_hartree_validation.py`, `hartree_vs_fock.py` | covered by `quartermetal_grid_pm_c3.py` Δ_tb diagnostics |
 
 If you need to revive any of these, port them onto the current
-`_quartermetal_common.pm_c3_cn_reference_density` reference and the
+`_common.pm_c3_cn_reference_density` reference and the
 physical Fock reconstruction (Σ_x[refP] + Hartree[refP]).

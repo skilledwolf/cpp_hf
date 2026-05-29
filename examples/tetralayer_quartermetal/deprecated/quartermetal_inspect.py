@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-DEFAULT_NPZ = (Path(__file__).resolve().parents[1]
+DEFAULT_NPZ = (Path(__file__).resolve().parents[3]
                 / "examples" / "outputs" / "quartermetal_grid.npz")
 CONFIGS = ("HF_PM_C3", "HF_SVP_C3", "HF_SVP", "H_PM", "HF_PM")
 

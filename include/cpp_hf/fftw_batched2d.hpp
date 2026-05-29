@@ -78,6 +78,8 @@ struct FftwBatched2D {
                 reinterpret_cast<fftw_complex*>(plan_buf),
                 FFTW_BACKWARD, plan_flag);
         if (!bwd) { fftw_destroy_plan(fwd); throw std::runtime_error("FFTW plan_guru64_dft backward failed"); }
+        fftw_free(plan_buf);
+        plan_buf = nullptr;
     }
 
     void forward(std::complex<double>* buf) const  { fftw_execute_dft(fwd, reinterpret_cast<fftw_complex*>(buf), reinterpret_cast<fftw_complex*>(buf)); }

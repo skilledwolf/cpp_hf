@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = REPO_ROOT / "src"
 EXAMPLES_DIR = Path(__file__).resolve().parent
 for p in (str(SRC_DIR), str(EXAMPLES_DIR)):
@@ -38,7 +38,7 @@ import cpp_hf
 from cpp_hf import SolverConfig, solve_direct_minimization
 from cpp_hf.fock import build_fock
 from cpp_hf.utils import selfenergy_fft, find_chemical_potential
-import _quartermetal_common as qm
+import _common as qm
 
 
 T = 0.3

@@ -50,6 +50,11 @@ from .continuation import (
     ContinuationResult,
     solve_continuation,
 )
+from .superlattice import (
+    ExtendedGridLayout,
+    build_extended_layout,
+    superlattice_fock,
+)
 
 __all__ = [
     "HartreeFockKernel",
@@ -67,4 +72,7 @@ __all__ = [
     "resample_kgrid",
     "ContinuationResult",
     "solve_continuation",
+    "ExtendedGridLayout",
+    "build_extended_layout",
+    "superlattice_fock",
 ]

@@ -30,9 +30,9 @@ from pathlib import Path
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC_DIR = REPO_ROOT / "src"
-EXAMPLES_DIR = Path(__file__).resolve().parent
+EXAMPLES_DIR = Path(__file__).resolve().parents[1]
 for p in (str(SRC_DIR), str(EXAMPLES_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
@@ -42,7 +42,7 @@ from cpp_hf import (
     SCFConfig, solve_scf,
     SolverConfig, solve_direct_minimization,
 )
-import _quartermetal_common as qm
+import _common as qm
 
 # Three "representative points" picked from the (n, D) phase landscape:
 #   (n=0.30, D=0.30)  — low n, low D: phase boundary / PM region

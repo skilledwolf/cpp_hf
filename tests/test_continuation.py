@@ -109,6 +109,19 @@ class TestContinuationMatchesManualDriver:
         assert isinstance(combined.coarse, SolveResult)
         assert isinstance(combined.fine, SolveResult)
 
+    def test_can_drop_retained_fine_seed(self):
+        kc = _two_band_kernel(2)
+        kf = _two_band_kernel(4)
+        P0_c = np.zeros_like(kc.h)
+
+        combined = solve_continuation(
+            kc, kf, P0_c, 1.0, 1.0,
+            retain_P0_fine=False,
+        )
+
+        assert isinstance(combined.fine, SolveResult)
+        assert combined.P0_fine is None
+
 
 class TestContinuationConvergesToSameFixedPoint:
     def test_fine_solve_matches_cold_start_result(self):

@@ -6,6 +6,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <vector>
 
@@ -27,11 +30,26 @@ public:
             if (e->nk1() == nk1 && e->nk2() == nk2 && e->batch() == batch)
                 return *e;
         }
+        const std::size_t max_n = max_entries();
+        while (entries_.size() >= max_n) entries_.erase(entries_.begin());
         entries_.emplace_back(std::make_unique<FftBatched2D>(nk1, nk2, batch));
         return *entries_.back();
     }
 
+    void clear() {
+        std::lock_guard<std::mutex> lock(mu_);
+        entries_.clear();
+    }
+
 private:
+    static std::size_t max_entries() {
+        if (const char* env = std::getenv("HF_FFTW_CACHE_MAX")) {
+            const int v = std::atoi(env);
+            if (v > 0) return static_cast<std::size_t>(v);
+        }
+        return 4;
+    }
+
     std::vector<std::unique_ptr<FftBatched2D>> entries_;
     std::mutex mu_;
 };

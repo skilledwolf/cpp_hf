@@ -48,8 +48,8 @@ def expit(x):
 def batched_eigh(F: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Batched Hermitian eigh via the C++ extension."""
     native_required()
-    F = hermitize(np.asarray(F))
-    Farr = np.ascontiguousarray(F.astype(np.complex128, copy=False))
+    F = np.asarray(F)
+    Farr = np.ascontiguousarray(F, dtype=np.complex128)
     w, v = _native.eigh_batched(Farr)
     return (
         w.astype(F.real.dtype, copy=False),

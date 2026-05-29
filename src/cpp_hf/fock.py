@@ -38,10 +38,19 @@ def build_fock(
     F = project(hermitize(h + Sigma[P] + H[P])) — see jax_hf docstring for the
     contact-term formula.
     """
+    if refP is None:
+        dP = P
+    else:
+        refP_arr = np.asarray(refP)
+        if refP_arr.size and all(s == 0 for s in refP_arr.strides) and refP_arr.flat[0] == 0:
+            dP = P
+        else:
+            dP = P - refP_arr
+
     if include_exchange:
         Sigma = selfenergy_fft(
             VR,
-            P - refP,
+            dP,
             block_specs=exchange_block_specs,
             check_offdiag=exchange_check_offdiag,
             offdiag_atol=exchange_offdiag_atol,
@@ -53,7 +62,6 @@ def build_fock(
         Sigma = np.zeros_like(h)
 
     if include_hartree:
-        dP = P - refP
         diag_real = np.real(np.diagonal(dP, axis1=-2, axis2=-1))
         n_vec = np.sum(w2d[..., None] * diag_real, axis=(0, 1))
         sigma_diag = HH @ n_vec
@@ -63,7 +71,7 @@ def build_fock(
         H = np.zeros_like(h)
 
     if contact_g is not None and contact_Oi is not None and contact_Oj is not None:
-        rho_bar = np.einsum("ij,ijab->ab", w2d, (P - refP))
+        rho_bar = np.einsum("ij,ijab->ab", w2d, dP)
         tr_Oj_rho = np.einsum("tij,ji->t", contact_Oj, rho_bar)
         sigma_h_contact = np.einsum(
             "t,tij->ij", contact_g * tr_Oj_rho, contact_Oi
@@ -91,8 +99,11 @@ def hf_energy(
 ) -> np.ndarray:
     """E = Σ_k w_k Tr[hP] + ½Σ_k w_k Tr[(Σ+H)(P-refP)]."""
     dP = P if refP is None else P - refP
-    one_body = np.einsum("...ij,...ji->...", weights_b * h, P)
-    interaction = 0.5 * np.einsum("...ij,...ji->...", weights_b * (Sigma + H), dP)
+    weights = np.asarray(weights_b)[..., 0, 0]
+    one_body = weights * np.einsum("...ij,...ji->...", h, P)
+    sigma_term = np.einsum("...ij,...ji->...", Sigma, dP)
+    hartree_term = np.einsum("...ij,...ji->...", H, dP)
+    interaction = 0.5 * weights * (sigma_term + hartree_term)
     return np.sum(np.real(one_body + interaction))
 
 

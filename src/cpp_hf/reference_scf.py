@@ -37,6 +37,8 @@ class SCFConfig:
     # 0.0 = disabled.  Useful for ill-conditioned cases where DIIS extrapolates
     # to unphysical states (ungated 1/q + high doping).
     trust_radius: float = 0.0
+    return_density: bool = True
+    return_fock: bool = True
 
     def __post_init__(self) -> None:
         if self.max_iter <= 0:
@@ -45,8 +47,8 @@ class SCFConfig:
 
 @dataclass(frozen=True)
 class SCFResult:
-    density_matrix: Any
-    fock_matrix: Any
+    density_matrix: Any | None
+    fock_matrix: Any | None
     energy: Any
     chemical_potential: Any
     iterations: int
@@ -56,10 +58,12 @@ class SCFResult:
 
 
 def _kernel_args_for_native(kernel) -> dict:
-    return dict(
+    refP = kernel._refP if kernel._refP is not None else kernel._empty_refP
+    args = dict(
         h=np.ascontiguousarray(kernel.h, dtype=np.complex128),
         VR=np.ascontiguousarray(kernel._VR_shifted, dtype=np.complex128),
-        refP=np.ascontiguousarray(kernel.refP, dtype=np.complex128),
+        refP=np.ascontiguousarray(refP, dtype=np.complex128),
+        has_refP=bool(kernel.has_reference_density),
         w2d=np.ascontiguousarray(kernel.w2d, dtype=np.float64),
         HH=np.ascontiguousarray(kernel.HH, dtype=np.float64),
         contact_g=np.ascontiguousarray(kernel.contact_g, dtype=np.float64),
@@ -71,6 +75,40 @@ def _kernel_args_for_native(kernel) -> dict:
         include_exchange=bool(kernel.include_exchange),
         exchange_hcp=bool(kernel.exchange_hermitian_channel_packing),
     )
+    # Superlattice path: kernel exposes the layout + CSR + HH_GG.  The
+    # native dispatcher uses these instead of the FFT exchange (VR is
+    # ignored) and instead of the diagonal Hartree (HH is ignored).
+    if getattr(kernel, "superlattice_fock_active", False) \
+            or getattr(kernel, "superlattice_hartree_active", False):
+        layout = kernel.layout
+        args.update(dict(
+            superlattice_fock_active=bool(kernel.superlattice_fock_active),
+            superlattice_hartree_active=bool(kernel.superlattice_hartree_active),
+            hartree_degeneracy=float(kernel.hartree_degeneracy),
+            n_G=int(kernel.n_G),
+            dim_orb=int(kernel.dim_orb),
+            n_delta=int(layout.n_delta),
+            N_ext_x=int(layout.N_ext_x),
+            N_ext_y=int(layout.N_ext_y),
+            V_lag_fft=np.ascontiguousarray(layout.V_lag_fft, dtype=np.complex128),
+            g_a_off=np.ascontiguousarray(layout.g_a_off, dtype=np.int64),
+            pair_i=np.ascontiguousarray(layout.delta_pair_i, dtype=np.int64),
+            pair_j=np.ascontiguousarray(layout.delta_pair_j, dtype=np.int64),
+            pair_start=np.ascontiguousarray(layout.delta_pair_start, dtype=np.int64),
+            pair_to_delta=np.ascontiguousarray(layout.pair_to_delta, dtype=np.int64),
+            HH_GG=np.ascontiguousarray(kernel.HH_GG, dtype=np.float64),
+        ))
+        HH_orb = getattr(kernel, "HH_GG_orbital", None)
+        if HH_orb is not None:
+            args["HH_GG_orbital"] = np.ascontiguousarray(
+                np.asarray(HH_orb), dtype=np.float64,
+            )
+        V_orb = getattr(kernel, "V_lag_fft_orbital", None)
+        if V_orb is not None:
+            args["V_lag_fft_orbital"] = np.ascontiguousarray(
+                np.asarray(V_orb), dtype=np.complex128,
+            )
+    return args
 
 
 def solve_scf(
@@ -98,6 +136,7 @@ def solve_scf(
         int(config.diis_size), int(config.diis_start),
         float(config.diis_damping),
         float(config.trust_radius),
+        bool(config.return_density), bool(config.return_fock),
     )
     n_iter = int(iterations)
     is_conv = bool(converged)

@@ -78,6 +78,8 @@ public:
             fftw_destroy_plan(fwd_);
             throw std::runtime_error("FFTW plan_guru64_dft backward failed");
         }
+        fftw_free(plan_buf_);
+        plan_buf_ = nullptr;
 
         norm_ = 1.0 / static_cast<double>(nk1_ * nk2_);
     }

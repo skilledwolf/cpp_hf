@@ -43,7 +43,7 @@ def _sum_unitary_conj(A: np.ndarray, G: np.ndarray) -> np.ndarray:
     for i in range(G.shape[0]):
         g = G[i]
         gH = np.conj(np.swapaxes(g, -1, -2))
-        acc = acc + (g @ A) @ gH
+        acc += (g @ A) @ gH
     return acc
 
 
@@ -61,7 +61,7 @@ def _avg_combined_group(
 ) -> np.ndarray:
     acc = _sum_unitary_conj(A, G_same)
     A_neg = _flip_k(A, k_convention, flip_axes)
-    acc = acc + _sum_unitary_conj(A_neg, G_flip)
+    acc += _sum_unitary_conj(A_neg, G_flip)
     N = G_same.shape[0] + G_flip.shape[0]
     return acc / np.asarray(float(N), dtype=A.dtype)
 

@@ -29,6 +29,9 @@ struct SolverConfig {
     std::size_t bt_max = 8;
     int mu_maxiter = 25;
     std::vector<std::size_t> block_sizes;  // empty = no block structure
+    bool return_Q = true;
+    bool return_density = true;
+    bool return_fock = true;
 };
 
 struct DMResult {
@@ -71,13 +74,13 @@ inline bool block_problem_invariant(const HFKernel& K, const ProjectFn* project_
     if (project_fn && *project_fn) return false;
     const std::size_t nk = K.nk();
     const std::size_t nb = K.nb;
-    if (!block_structure_ok(K.h.data(), nk, nb, sizes)) return false;
-    if (!block_structure_ok(K.refP.data(), nk, nb, sizes)) return false;
+    if (!block_structure_ok(K.h, nk, nb, sizes)) return false;
+    if (K.has_refP && !block_structure_ok(K.refP, nk, nb, sizes)) return false;
     for (std::size_t t = 0; t < K.n_contact; ++t) {
         if (K.contact_g[t] == 0.0) continue;
-        if (!block_structure_ok(K.contact_Oi.data() + t * nb * nb, 1, nb, sizes))
+        if (!block_structure_ok(K.contact_Oi + t * nb * nb, 1, nb, sizes))
             return false;
-        if (!block_structure_ok(K.contact_Oj.data() + t * nb * nb, 1, nb, sizes))
+        if (!block_structure_ok(K.contact_Oj + t * nb * nb, 1, nb, sizes))
             return false;
     }
     return true;
@@ -295,6 +298,68 @@ inline void Q_times_U(const c64* Q, const c64* U, c64* Q_new,
     }
 }
 
+inline void Q_times_cayley_spectrum_inplace(c64* Q, const c64* V,
+                                             const f32* lam, f32 tau,
+                                             std::size_t nk, std::size_t nb) {
+    const std::size_t nb2 = nb * nb;
+    for (std::size_t k = 0; k < nk; ++k) {
+        ConstMapMatXcf Qk(Q + k * nb2, nb, nb);
+        ConstMapMatXcf Vk(V + k * nb2, nb, nb);
+        MatXcf VcM = Vk;
+        for (std::size_t j = 0; j < nb; ++j) {
+            const c64 c = cayley_factor(lam[k * nb + j], tau);
+            VcM.col(j) *= c;
+        }
+        MatXcf U = VcM * Vk.adjoint();
+        MatXcf out = Qk * U;
+        std::memcpy(Q + k * nb2, out.data(), nb2 * sizeof(c64));
+    }
+}
+
+inline f32 frozen_free_energy_from_occ(const f32* eps, const f32* p,
+                                       const f32* w_norm,
+                                       std::size_t nk, std::size_t nb,
+                                       f32 T) {
+    double E = 0.0;
+    double S = 0.0;
+    for (std::size_t k = 0; k < nk; ++k) {
+        const f32 wk = w_norm[k];
+        for (std::size_t b = 0; b < nb; ++b) {
+            const std::size_t idx = k * nb + b;
+            const f32 pv = std::clamp(p[idx], OCC_CLIP, 1.0 - OCC_CLIP);
+            E += static_cast<double>(wk) * static_cast<double>(pv)
+               * static_cast<double>(eps[idx]);
+            const double pd = static_cast<double>(pv);
+            S -= static_cast<double>(wk) *
+                 (pd * std::log(pd) + (1.0 - pd) * std::log1p(-pd));
+        }
+    }
+    return static_cast<f32>(E - static_cast<double>(std::max(T, 1.0e-14)) * S);
+}
+
+inline f32 frozen_free_energy_trial(const f32* eps, const f32* p,
+                                    const f32* d_p, f32 tau,
+                                    const f32* w_norm,
+                                    std::size_t nk, std::size_t nb,
+                                    f32 T) {
+    double E = 0.0;
+    double S = 0.0;
+    for (std::size_t k = 0; k < nk; ++k) {
+        const f32 wk = w_norm[k];
+        for (std::size_t b = 0; b < nb; ++b) {
+            const std::size_t idx = k * nb + b;
+            const f32 pv = std::clamp(p[idx] - tau * d_p[idx],
+                                      OCC_CLIP, 1.0 - OCC_CLIP);
+            E += static_cast<double>(wk) * static_cast<double>(pv)
+               * static_cast<double>(eps[idx]);
+            const double pd = static_cast<double>(pv);
+            S -= static_cast<double>(wk) *
+                 (pd * std::log(pd) + (1.0 - pd) * std::log1p(-pd));
+        }
+    }
+    return static_cast<f32>(E - static_cast<double>(std::max(T, 1.0e-14)) * S);
+}
+
 }  // namespace dm_internal
 
 inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
@@ -321,14 +386,13 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     const f32 T_r = std::max(K.T, 1.0e-12);
 
     // Workspaces
-    std::vector<c64> Q(n_tot), Q_new(n_tot);
-    std::vector<f32> p(nk * nb), p_new(nk * nb);
+    std::vector<c64> Q(n_tot);
+    std::vector<f32> p(nk * nb);
     std::vector<c64> P_cur(n_tot);
     std::vector<c64> Sigma(n_tot), F(n_tot);
     std::vector<f32> hartree_diag(nb, 0.0);
-    std::vector<c64> Ft(n_tot);
     std::vector<f32> eps(nk * nb);
-    std::vector<c64> G_Q(n_tot), H_Q(n_tot);
+    std::vector<c64> G_Q(n_tot);
     std::vector<f32> g_p(nk * nb), h_p(nk * nb);
     std::vector<c64> G_Q_prev(n_tot, c64(0.0, 0.0));
     std::vector<f32> g_p_prev(nk * nb, 0.0);
@@ -336,11 +400,7 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     std::vector<f32> d_p(nk * nb), d_p_prev(nk * nb, 0.0);
     std::vector<c64> V_d(n_tot);
     std::vector<f32> lam_d(nk * nb);
-    std::vector<c64> Ft_eig(n_tot);
-    std::vector<c64> U(n_tot);
-    std::vector<f32> p_clip(nk * nb);
-    std::vector<f32> eps_trial(nk * nb), p_trial(nk * nb);
-    std::vector<f32> eps_new(nk * nb);
+    std::vector<f32> eps_work(nk * nb);
 
     DMResult out;
     out.hist_E.assign(cfg.max_iter, 0.0);
@@ -348,13 +408,13 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
 
     // ---- Initialize (Q, p) from Fock at P0 ----
     {
-        std::vector<c64> P0_h(P0, P0 + n_tot);
-        hermitize_inplace(P0_h.data(), nk, nb);
+        std::memcpy(P_cur.data(), P0, n_tot * sizeof(c64));
+        hermitize_inplace(P_cur.data(), nk, nb);
         // Use the physical one-body Fock for the initial eigensolve.  Symmetry
         // callbacks constrain densities below; projecting F here would also
         // project the bare continuum Hamiltonian, which is wrong for rhombic
         // C3 because that grid is C3-closed only as a torus.
-        build_fock_compact(K, P0_h.data(), Sigma.data(), F.data(),
+        build_fock_compact(K, P_cur.data(), Sigma.data(), F.data(),
                            hartree_diag.data(), nullptr);
         if (use_block_ops && !block_structure_ok(F.data(), nk, nb, cfg.block_sizes))
             use_block_ops = false;
@@ -399,15 +459,15 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
                            hartree_diag.data(), fock_proj);
         E = hf_energy_with_hartree_diag(K, P_cur.data(), Sigma.data(),
                                         hartree_diag.data());
-        fock_in_orbital_basis(Q.data(), F.data(), Ft.data(), nk, nb);
+        fock_in_orbital_basis(Q.data(), F.data(), F.data(), nk, nb);
         for (std::size_t kk = 0; kk < nk; ++kk) {
-            const c64* Ftk = Ft.data() + kk * nb2;
+            const c64* Ftk = F.data() + kk * nb2;
             for (std::size_t b = 0; b < nb; ++b)
                 eps[kk * nb + b] = Ftk[b * nb + b].real();
         }
 
         // 2. Gradient
-        compute_orbital_gradient(Ft.data(), p.data(), G_Q.data(), nk, nb);
+        compute_orbital_gradient(F.data(), p.data(), G_Q.data(), nk, nb);
         for (std::size_t i = 0; i < nk * nb; ++i) {
             f32 pv = std::clamp(p[i], LOGIT_CLIP, 1.0 - LOGIT_CLIP);
             const f32 logit = std::log(pv) - std::log1p(-pv);
@@ -425,7 +485,7 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
 
         for (std::size_t kk = 0; kk < nk; ++kk) {
             const c64* Gk = G_Q.data() + kk * nb2;
-            c64* Hk = H_Q.data() + kk * nb2;
+            c64* Hk = d_Q.data() + kk * nb2;
             const f32* eb = eps.data() + kk * nb;
             for (std::size_t i = 0; i < nb; ++i) {
                 for (std::size_t j = 0; j < nb; ++j) {
@@ -447,8 +507,8 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
 
         // 4. CG direction (Polak-Ribière+)
         const f32 pr_num = (
-            ip_matrix(G_Q.data(), H_Q.data(), w_norm.data(), nk, nb)
-            - ip_matrix(G_Q_prev.data(), H_Q.data(), w_norm.data(), nk, nb)
+            ip_matrix(G_Q.data(), d_Q.data(), w_norm.data(), nk, nb)
+            - ip_matrix(G_Q_prev.data(), d_Q.data(), w_norm.data(), nk, nb)
             + ip_vec(g_p.data(), h_p.data(), w_norm.data(), nk, nb)
             - ip_vec(g_p_prev.data(), h_p.data(), w_norm.data(), nk, nb));
         const f32 pr_den = (
@@ -459,7 +519,7 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
         if (k == 0 || (cfg.cg_restart > 0 && k % cfg.cg_restart == 0)) beta = 0.0;
 
         for (std::size_t i = 0; i < n_tot; ++i)
-            d_Q[i] = H_Q[i] + beta * d_Q_prev[i];
+            d_Q[i] = d_Q[i] + beta * d_Q_prev[i];
         for (std::size_t i = 0; i < nk * nb; ++i)
             d_p[i] = h_p[i] + beta * d_p_prev[i];
 
@@ -469,42 +529,22 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
                                               nk, nb, cfg.block_sizes);
         else
             cayley_spectral_setup(d_Q.data(), V_d.data(), lam_d.data(), nk, nb);
-        compute_Ft_eig(Ft.data(), V_d.data(), Ft_eig.data(), nk, nb);
+        compute_Ft_eig(F.data(), V_d.data(), Sigma.data(), nk, nb);
 
         const f32 d_Q_norm = norm_matrix(d_Q.data(), w_norm.data(), nk, nb);
         f32 tau0 = std::min(1.0, cfg.max_step / std::max(d_Q_norm, TINY_REAL));
 
-        // Omega_0 (no-step free energy)
-        for (std::size_t i = 0; i < nk * nb; ++i)
-            p_clip[i] = std::clamp(p[i], OCC_CLIP, 1.0 - OCC_CLIP);
-        double E_frozen0 = 0.0;
-        for (std::size_t kk = 0; kk < nk; ++kk) {
-            const f32 wk = w_norm[kk];
-            for (std::size_t b = 0; b < nb; ++b)
-                E_frozen0 += static_cast<double>(wk) * static_cast<double>(p_clip[kk * nb + b])
-                           * static_cast<double>(eps[kk * nb + b]);
-        }
-        const f32 Omega0 = free_energy_value(static_cast<f32>(E_frozen0),
-                                              p_clip.data(), w_norm.data(),
-                                              nk, nb, T_r);
+        const f32 Omega0 = frozen_free_energy_from_occ(
+            eps.data(), p.data(), w_norm.data(), nk, nb, T_r);
 
         f32 tau_final = tau0;
         bool bt_accepted = false;
         for (std::size_t bt = 0; bt < cfg.bt_max; ++bt) {
-            diag_UFU_from_spectrum(V_d.data(), Ft_eig.data(), lam_d.data(),
-                                   tau_final, eps_trial.data(), nk, nb);
-            for (std::size_t i = 0; i < nk * nb; ++i)
-                p_trial[i] = std::clamp(p[i] - tau_final * d_p[i], OCC_CLIP, 1.0 - OCC_CLIP);
-            double E_frozen = 0.0;
-            for (std::size_t kk = 0; kk < nk; ++kk) {
-                const f32 wk = w_norm[kk];
-                for (std::size_t b = 0; b < nb; ++b)
-                    E_frozen += static_cast<double>(wk) * static_cast<double>(p_trial[kk * nb + b])
-                              * static_cast<double>(eps_trial[kk * nb + b]);
-            }
-            const f32 Omega_trial = free_energy_value(static_cast<f32>(E_frozen),
-                                                      p_trial.data(), w_norm.data(),
-                                                      nk, nb, T_r);
+            diag_UFU_from_spectrum(V_d.data(), Sigma.data(), lam_d.data(),
+                                   tau_final, eps_work.data(), nk, nb);
+            const f32 Omega_trial = frozen_free_energy_trial(
+                eps_work.data(), p.data(), d_p.data(), tau_final,
+                w_norm.data(), nk, nb, T_r);
             if (Omega_trial < Omega0) { bt_accepted = true; break; }
             tau_final *= cfg.bt_shrink;
         }
@@ -513,16 +553,15 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
                                         static_cast<f32>(cfg.bt_max));
         }
         // 6. Retraction
-        cayley_unitary_from_spectrum(V_d.data(), lam_d.data(), tau_final,
-                                     U.data(), nk, nb);
-        Q_times_U(Q.data(), U.data(), Q_new.data(), nk, nb);
-        diag_UFU_from_spectrum(V_d.data(), Ft_eig.data(), lam_d.data(),
-                               tau_final, eps_new.data(), nk, nb);
-        const f32 mu_new = solve_mu_inloop(eps_new.data(), nk * nb, w_norm.data(),
+        Q_times_cayley_spectrum_inplace(Q.data(), V_d.data(), lam_d.data(),
+                                        tau_final, nk, nb);
+        diag_UFU_from_spectrum(V_d.data(), Sigma.data(), lam_d.data(),
+                               tau_final, eps_work.data(), nk, nb);
+        const f32 mu_new = solve_mu_inloop(eps_work.data(), nk * nb, w_norm.data(),
                                             nk, nb, n_target_norm, mu, T_r,
                                             cfg.mu_maxiter);
         for (std::size_t i = 0; i < nk * nb; ++i)
-            p_new[i] = expit_scalar((mu_new - eps_new[i]) / T_r);
+            p[i] = expit_scalar((mu_new - eps_work[i]) / T_r);
         mu = mu_new;
 
         // 7. Record + advance
@@ -535,8 +574,6 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
         G_Q_prev = G_Q;
         g_p_prev = g_p;
         E_prev = E;
-        Q.swap(Q_new);
-        p.swap(p_new);
         ++k;
     }
 
@@ -546,28 +583,18 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     hermitize_inplace(P_cur.data(), nk, nb);
     build_fock_compact(K, P_cur.data(), Sigma.data(), F.data(),
                        hartree_diag.data(), nullptr);
-    fock_in_orbital_basis(Q.data(), F.data(), Ft.data(), nk, nb);
-    {
-        std::vector<f32> eps_fin(nk * nb);
-        std::vector<c64> V_fin(n_tot);
-        if (use_block_ops)
-            eigh_block_sizes_batched(Ft.data(), eps_fin.data(), V_fin.data(),
-                                     nk1, nk2, nb, cfg.block_sizes, false);
-        else
-            eigh_batched(Ft.data(), eps_fin.data(), V_fin.data(), nk1, nk2, nb);
-        // Q = Q @ V_fin
-        for (std::size_t kk = 0; kk < nk; ++kk) {
-            ConstMapMatXcf Qk(Q.data() + kk * nb2, nb, nb);
-            ConstMapMatXcf Vk(V_fin.data() + kk * nb2, nb, nb);
-            MatXcf NewQ = Qk * Vk;
-            std::memcpy(Q_new.data() + kk * nb2, NewQ.data(), nb2 * sizeof(c64));
-        }
-        Q.swap(Q_new);
-        mu = solve_mu_inloop(eps_fin.data(), nk * nb, w_norm.data(),
-                              nk, nb, n_target_norm, mu, T_r, cfg.mu_maxiter);
-        for (std::size_t i = 0; i < nk * nb; ++i)
-            p[i] = expit_scalar((mu - eps_fin[i]) / T_r);
-    }
+    fock_in_orbital_basis(Q.data(), F.data(), F.data(), nk, nb);
+    if (use_block_ops)
+        eigh_block_sizes_batched(F.data(), eps_work.data(), V_d.data(),
+                                 nk1, nk2, nb, cfg.block_sizes, false);
+    else
+        eigh_batched(F.data(), eps_work.data(), V_d.data(), nk1, nk2, nb);
+    // Q = Q @ V_fin
+    Q_times_U(Q.data(), V_d.data(), Q.data(), nk, nb);
+    mu = solve_mu_inloop(eps_work.data(), nk * nb, w_norm.data(),
+                          nk, nb, n_target_norm, mu, T_r, cfg.mu_maxiter);
+    for (std::size_t i = 0; i < nk * nb; ++i)
+        p[i] = expit_scalar((mu - eps_work[i]) / T_r);
 
     density_from_Qp(Q.data(), p.data(), P_cur.data(), nk, nb);
     project_in_place(P_cur.data());
@@ -577,10 +604,10 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     const f32 E_fin = hf_energy_with_hartree_diag(K, P_cur.data(), Sigma.data(),
                                                   hartree_diag.data());
 
-    out.Q = Q;
-    out.p = p;
-    out.density = P_cur;
-    out.fock = F;
+    if (cfg.return_Q) out.Q = std::move(Q);
+    out.p = std::move(p);
+    if (cfg.return_density) out.density = std::move(P_cur);
+    if (cfg.return_fock) out.fock = std::move(F);
     out.mu = mu;
     out.energy = E_fin;
     out.n_iter = k;

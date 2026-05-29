@@ -21,7 +21,7 @@ os.environ.setdefault("MPLCONFIGDIR", str(_CACHE_ROOT / "matplotlib"))
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 for optional_src in (
     REPO_ROOT.parent / "contimod" / "src",
     REPO_ROOT.parent / "contimod_graphene" / "src",

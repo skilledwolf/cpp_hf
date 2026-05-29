@@ -2,7 +2,7 @@
 
 ## Files
 
-- `examples/_quartermetal_common.py` — model + Coulomb + projectors + helpers
+- `examples/tetralayer_quartermetal/_common.py` — model + Coulomb + projectors + helpers
 - `examples/quartermetal_hartree_validation.py` — 5-cell Hartree-only validation
 - `examples/quartermetal_single_cell.py` — single-(n, D) driver across 3 configs
 - `examples/quartermetal_grid.py` — 30×30 grid driver with multiprocessing
