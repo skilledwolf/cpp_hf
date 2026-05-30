@@ -371,7 +371,16 @@ class SuperlatticeHartreeFockKernel:
         # native Hartree kernel switches to the per-orbital formula:
         #   σ_H[A, α, B, β] = δ_{αβ} · degeneracy
         #                     · Σ_γ HH_GG_orb[A, B, α, γ] · ρ_γ(ΔG_{AB}).
-        # The diagonal-G blocks must be zero on input (q=0 piece dropped).
+        # The diagonal-G (ΔG = 0) blocks are the q=0 Hartree.  Whether to keep
+        # them is the CALLER's choice, not the kernel's: the native Hartree
+        # (fock.hpp) sums over all (A, B) pairs via ``pair_to_delta`` and
+        # therefore computes the ΔG=0 term whenever ``HH_GG_orbital[i, i]`` is
+        # nonzero.  The canonical moiré/TBG convention zeros it (the uniform
+        # charge is neutralised by the gate); a layer-resolved system with a
+        # finite, gate-screened q=0 layer Hartree (e.g. multilayer-graphene
+        # CDW at finite displacement field) keeps it.  So we accept either —
+        # we no longer reject a nonzero diagonal — but we *warn* once, since a
+        # stray nonzero diagonal is also a common bug (forgetting to drop q=0).
         if HH_GG_orbital is None:
             self._HH_GG_orbital = None
         else:
@@ -384,9 +393,14 @@ class SuperlatticeHartreeFockKernel:
                 )
             diag_blocks = HH_orb[np.arange(n_G), np.arange(n_G)]
             if float(np.max(np.abs(diag_blocks))) > 1e-12:
-                raise ValueError(
-                    "HH_GG_orbital must have zero diagonal-G blocks (q=0 "
-                    "piece dropped); got nonzero HH_GG_orbital[i, i, :, :]."
+                import warnings
+                warnings.warn(
+                    "HH_GG_orbital has nonzero diagonal-G blocks; the q=0 "
+                    "(uniform/layer) Hartree will be INCLUDED.  This is "
+                    "intended for layer-resolved gate-screened systems; pass a "
+                    "version with HH_GG_orbital[i, i, :, :] = 0 to drop it "
+                    "(canonical moiré convention).",
+                    stacklevel=2,
                 )
             self._HH_GG_orbital = np.ascontiguousarray(HH_orb, dtype=np.float64)
 
