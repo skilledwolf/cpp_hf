@@ -107,6 +107,24 @@ inline void selfenergy_superlattice_streamed(
             }
         }
 
+        // --- 2.5) Skip channels whose scattered density is identically zero.
+        // The FFT-convolution of an all-zero channel produces an all-zero
+        // self-energy, and ``sigma_out`` is already zeroed, so the FFT +
+        // gather would be pure wasted work.  Empty channels dominate for
+        // sparse-coherence problems (e.g. a diagonal / no-CDW density
+        // populates only the ΔG=0 channel, leaving every other ΔG empty),
+        // so skipping their FFTs is the main speedup for the isolated-patch
+        // (CDW) layout.  Bit-identical to computing them (zero in → zero out);
+        // the early-exit scan is O(channel_size), negligible vs the FFT.
+        bool channel_nonzero = false;
+        for (std::size_t t = 0; t < channel_size; ++t) {
+            if (rho_dg[t].real() != 0.0 || rho_dg[t].imag() != 0.0) {
+                channel_nonzero = true;
+                break;
+            }
+        }
+        if (!channel_nonzero) continue;
+
         // --- 3) FFT, multiply by VR_fft, iFFT, negate. ---
         // selfenergy_fft_full_inplace expects (nk1, nk2, nb, nb) with nb*nb
         // batched FFTs.  Treat (N_ext_x, N_ext_y, dim_orb, dim_orb) as that.
