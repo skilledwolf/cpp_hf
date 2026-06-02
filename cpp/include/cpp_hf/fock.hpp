@@ -177,6 +177,11 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
             // The streaming Fock requires distinct input / output buffers
             // (it scatters from rho into a scratch grid before gathering).
             std::vector<c64> sigma_out(n_tot);
+            // hermitian_rho=true: the HF Fock input (P − refP) is always
+            // Hermitian, so the primitive can compute one of each (+ΔG, -ΔG)
+            // conjugate-partner channel pair and fill the other by Hermiticity
+            // (~2× fewer FFTs).  Same Hermitian-density assumption the regular
+            // exchange_hcp path below already relies on.
             selfenergy_superlattice_streamed(
                 Sigma, sigma_out.data(),
                 K.V_lag_fft, K.V_lag_fft_orbital, K.g_a_off,
@@ -184,7 +189,8 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
                 K.n_delta,
                 K.N_ext_x, K.N_ext_y,
                 K.nk1, K.nk2,
-                K.n_G, K.dim_orb);
+                K.n_G, K.dim_orb,
+                /*hermitian_rho=*/true);
             std::memcpy(Sigma, sigma_out.data(), n_tot * sizeof(c64));
         } else if (K.exchange_hcp && K.dv1 == 1 && K.dv2 == 1) {
             selfenergy_fft_full_hcp(Sigma, Sigma, K.VR,

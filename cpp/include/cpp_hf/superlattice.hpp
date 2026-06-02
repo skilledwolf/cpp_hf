@@ -18,7 +18,10 @@
 #include "cpp_hf/selfenergy.hpp"
 #include "cpp_hf/types.hpp"
 
+#include <algorithm>
+#include <complex>
 #include <cstring>
+#include <map>
 #include <vector>
 
 namespace cpp_hf {
@@ -58,7 +61,8 @@ inline void selfenergy_superlattice_streamed(
     std::size_t nkx,
     std::size_t nky,
     std::size_t n_G,
-    std::size_t dim_orb
+    std::size_t dim_orb,
+    bool hermitian_rho = false
 ) {
     const std::size_t orb2 = dim_orb * dim_orb;
     const std::size_t n_pix = N_ext_x * N_ext_y;
@@ -75,7 +79,59 @@ inline void selfenergy_superlattice_streamed(
 
     std::vector<c64> rho_dg(channel_size);
 
+    // --- Hermiticity ΔG <-> -ΔG halving. ---------------------------------
+    // ρ is Hermitian and V(|q|) is real-even, so the Fock self-energy is
+    // Hermitian: Σ[k, jβ, iα] = conj(Σ[k, iα, jβ]).  The channel for -ΔG holds
+    // exactly the (j, i) pairs that reverse the (i, j) pairs of the +ΔG
+    // channel, so its self-energy is the conjugate-transpose of the +ΔG
+    // result.  We therefore detect each (+ΔG, -ΔG) conjugate-partner pair
+    // straight from the CSR (the channel whose pair-set is the reverse of
+    // this one), FFT only one member, and fill the other by conjugation in
+    // the gather — ~2× fewer FFTs / scatters / gathers for a dense density
+    // where every ΔG channel is populated (the canonical TBG case, which the
+    // empty-channel skip below does nothing for).  When a channel has no
+    // partner present in the CSR (e.g. a caller-reduced layout) or is
+    // self-conjugate (ΔG = 0), it is computed directly as before, so results
+    // are bit-for-bit unchanged (to FFT roundoff) for every caller.
+    //
+    // This requires ρ Hermitian, so it is OPT-IN via ``hermitian_rho``.  When
+    // false (default) ``partner`` stays all -1 and every channel is computed
+    // directly -- the exact general convolution for arbitrary ρ.  The HF Fock
+    // build sets it true because the density (P − refP) is always Hermitian.
+    std::vector<int64_t> partner(n_delta, -1);
+    if (hermitian_rho) {
+        std::map<std::vector<int64_t>, std::size_t> key_to_channel;
+        std::vector<std::vector<int64_t>> rkeys(n_delta);
+        for (std::size_t d = 0; d < n_delta; ++d) {
+            const std::size_t a = static_cast<std::size_t>(pair_start[d]);
+            const std::size_t b = static_cast<std::size_t>(pair_start[d + 1]);
+            std::vector<int64_t> key, rkey;
+            key.reserve(b - a);
+            rkey.reserve(b - a);
+            for (std::size_t p = a; p < b; ++p) {
+                const int64_t i = pair_i[p], j = pair_j[p];
+                key.push_back(i * static_cast<int64_t>(n_G) + j);
+                rkey.push_back(j * static_cast<int64_t>(n_G) + i);
+            }
+            std::sort(key.begin(), key.end());
+            std::sort(rkey.begin(), rkey.end());
+            key_to_channel.emplace(std::move(key), d);
+            rkeys[d] = std::move(rkey);
+        }
+        for (std::size_t d = 0; d < n_delta; ++d) {
+            auto it = key_to_channel.find(rkeys[d]);
+            if (it != key_to_channel.end()) partner[d] = static_cast<int64_t>(it->second);
+        }
+    }
+
     for (std::size_t dg = 0; dg < n_delta; ++dg) {
+        const int64_t pr = partner[dg];
+        // A genuine (distinct) conjugate partner: compute the lower-indexed
+        // member of the pair and fill its partner; skip the higher-indexed one
+        // (already filled when its partner ran).  partner == self (ΔG = 0) or
+        // partner == -1 (absent) ⟹ compute directly, no partner fill.
+        const bool has_partner = (pr >= 0 && static_cast<std::size_t>(pr) != dg);
+        if (has_partner && static_cast<std::size_t>(pr) < dg) continue;
         const std::size_t a = static_cast<std::size_t>(pair_start[dg]);
         const std::size_t b = static_cast<std::size_t>(pair_start[dg + 1]);
         if (a == b) continue;
@@ -163,6 +219,19 @@ inline void selfenergy_superlattice_streamed(
                         const c64* src = dg_block + aa * dim_orb;
                         c64* dst = sig_block + aa * (n_G * dim_orb);
                         std::memcpy(dst, src, dim_orb * sizeof(c64));
+                    }
+                    // Conjugate-partner fill: Σ[k, jβ, iα] = conj(Σ[k, iα, jβ]).
+                    // Only for off-diagonal channels with a distinct partner;
+                    // ΔG = 0 (i == j) is Hermitian on its own and skipped.
+                    if (has_partner) {
+                        c64* sigp_block =
+                            sig_row + (((ky * n_G + j) * dim_orb) * n_G * dim_orb) + i * dim_orb;
+                        for (std::size_t aa = 0; aa < dim_orb; ++aa) {
+                            for (std::size_t bb = 0; bb < dim_orb; ++bb) {
+                                sigp_block[bb * (n_G * dim_orb) + aa] =
+                                    std::conj(dg_block[aa * dim_orb + bb]);
+                            }
+                        }
                     }
                 }
             }

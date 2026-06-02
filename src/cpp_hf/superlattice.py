@@ -202,6 +202,7 @@ def superlattice_fock(
     nky: int,
     *,
     V_lag_fft_orbital: np.ndarray | None = None,
+    hermitian_rho: bool = False,
 ) -> np.ndarray:
     """Streaming superlattice Fock via the native ΔG-loop primitive.
 
@@ -256,6 +257,7 @@ def superlattice_fock(
         n_G=int(n_G), dim_orb=int(dim_orb),
         N_ext_x=int(layout.N_ext_x), N_ext_y=int(layout.N_ext_y),
         VR_fft_orbital=V_orb_arr,
+        hermitian_rho=bool(hermitian_rho),
     )
     return np.asarray(sigma_6d).reshape(nkx, nky, D, D)
 

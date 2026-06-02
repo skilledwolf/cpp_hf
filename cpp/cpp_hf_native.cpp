@@ -634,7 +634,8 @@ PYBIND11_MODULE(_native, m) {
              std::size_t nkx, std::size_t nky,
              std::size_t n_G, std::size_t dim_orb,
              std::size_t N_ext_x, std::size_t N_ext_y,
-             py::object VR_fft_orbital_obj) {
+             py::object VR_fft_orbital_obj,
+             bool hermitian_rho) {
               if (rho.ndim() != 6) {
                   throw std::invalid_argument(
                       "rho must be (nkx, nky, n_G, dim_orb, n_G, dim_orb)");
@@ -701,7 +702,8 @@ PYBIND11_MODULE(_native, m) {
                       n_delta,
                       N_ext_x, N_ext_y,
                       nkx, nky,
-                      n_G, dim_orb
+                      n_G, dim_orb,
+                      hermitian_rho
                   );
               }
               return move_array(std::move(sigma_buf), out_shape);
@@ -716,7 +718,10 @@ PYBIND11_MODULE(_native, m) {
           py::arg("n_G"), py::arg("dim_orb"),
           py::arg("N_ext_x"), py::arg("N_ext_y"),
           py::arg("VR_fft_orbital") = py::none(),
-          "Streaming superlattice Fock self-energy (per-ΔG FFT convolution).");
+          py::arg("hermitian_rho") = false,
+          "Streaming superlattice Fock self-energy (per-ΔG FFT convolution). "
+          "hermitian_rho=True opts into ΔG<->-ΔG conjugate halving (valid only "
+          "for Hermitian rho; ~2x fewer FFTs).");
 
     // --- Resample k-grid (linear, periodic) ---
     m.def("resample_kgrid_2d",
