@@ -490,7 +490,8 @@ PYBIND11_MODULE(_native, m) {
              f32 n_e,
              std::size_t max_iter, f32 tol_E, f32 tol_grad,
              f32 max_step, f32 bt_shrink, f32 denom_scale,
-             std::size_t bt_max, std::size_t cg_restart, int mu_maxiter,
+             std::size_t bt_max, std::size_t cg_restart,
+             std::size_t plateau_window, int mu_maxiter,
              std::vector<std::size_t> block_sizes,
              py::object project_fn,
              bool return_Q, bool return_density, bool return_fock) {
@@ -519,6 +520,7 @@ PYBIND11_MODULE(_native, m) {
               cfg.denom_scale = denom_scale;
               cfg.bt_max = bt_max;
               cfg.cg_restart = cg_restart;
+              cfg.plateau_window = plateau_window;
               cfg.mu_maxiter = mu_maxiter;
               cfg.block_sizes = block_sizes;
               cfg.return_Q = return_Q;

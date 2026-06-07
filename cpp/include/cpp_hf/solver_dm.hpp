@@ -22,6 +22,14 @@ struct SolverConfig {
     std::size_t max_iter = 200;
     f32 tol_E = 1.0e-7;
     f32 tol_grad = 0.0;
+    // Energy convergence is judged over a sliding window: stop when the energy
+    // has improved by less than tol_E over the last plateau_window iterations.
+    // The DM line search makes E monotonically decreasing, so the windowed
+    // improvement is a reliable, physically-meaningful stop — unlike a single-
+    // iteration |dE| test, which dips below tol_E during CG warm-up / after a
+    // backtracked step and stops prematurely.  plateau_window=0 restores the
+    // per-iteration test.
+    std::size_t plateau_window = 5;
     f32 denom_scale = 1.0e-3;
     f32 max_step = 0.6;
     std::size_t cg_restart = 10;
@@ -445,7 +453,15 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     std::size_t k = 0;
 
     while (k < cfg.max_iter) {
-        bool energy_not_converged = (dE > cfg.tol_E);
+        bool energy_not_converged;
+        if (cfg.plateau_window > 0 && k > cfg.plateau_window) {
+            // Improvement over the last plateau_window recorded energies.
+            const f32 e_now = out.hist_E[k - 1];
+            const f32 e_past = out.hist_E[k - 1 - cfg.plateau_window];
+            energy_not_converged = (e_past - e_now) > cfg.tol_E;
+        } else {
+            energy_not_converged = (dE > cfg.tol_E);
+        }
         bool grad_not_converged = (cfg.tol_grad > 0.0) && (grad_norm > cfg.tol_grad);
         if (!(energy_not_converged || grad_not_converged)) break;
 

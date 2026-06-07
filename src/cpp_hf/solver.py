@@ -29,6 +29,10 @@ class SolverConfig:
     max_iter: int = 200
     tol_E: float = 1e-7
     tol_grad: float = 0.0
+    # Energy convergence judged over a sliding window: stop when E improves by
+    # < tol_E over the last `plateau_window` iters (robust to per-step CG noise
+    # that makes a single-iteration |dE| test stop early).  0 = per-iteration.
+    plateau_window: int = 5
     denom_scale: float = 1e-3
     max_step: float = 0.6
     cg_restart: int = 10
@@ -139,7 +143,8 @@ def solve_direct_minimization(
         P0, float(n_electrons),
         int(config.max_iter), float(config.tol_E), float(config.tol_grad),
         float(config.max_step), float(config.bt_shrink), float(config.denom_scale),
-        int(config.bt_max), int(config.cg_restart), int(config.mu_maxiter),
+        int(config.bt_max), int(config.cg_restart),
+        int(config.plateau_window), int(config.mu_maxiter),
         block_sizes,
         config.project_fn,
         bool(config.return_Q), bool(config.return_density), bool(config.return_fock),
