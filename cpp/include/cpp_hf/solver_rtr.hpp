@@ -267,9 +267,18 @@ inline DMResult solve_rtr(const HFKernel& K, const c64* P0, f32 n_e,
             rz = rz_new;
         }
 
-        // predicted reduction m(0) − m(v) = −(⟨g,v⟩ + ½⟨v,Hv⟩); g = (G, 0).
-        const f32 gv = ip_matrix(G.data(), vX.data(), ones.data(), nk, nb);
-        const f32 vHv = jip(vX.data(), vp.data(), HvX.data(), Hvp.data());
+        // Predicted reduction m(0) − m(v) = −(⟨g,v⟩ + ½⟨v,Hv⟩), g = (G, 0), in
+        // TRUE energy units.  The orbital gradient and Hessian-action are per-k
+        // (unweighted), while the energy is Σ_k w2d·e_k, so BOTH the linear and
+        // quadratic terms must carry the BZ measure w2d.  (The CG step above is
+        // solved in the jip metric; only this predicted reduction — which the
+        // trust-region ratio compares against the actual ΔE — must match the
+        // energy's weighting.  Using the unweighted/mixed metric here makes pred
+        // larger than ΔE by ~nk/weight_sum, so every ratio ≈ 0, the step is
+        // rejected, and the trust radius collapses without making progress.)
+        const f32 gv = ip_matrix(G.data(), vX.data(), K.w2d, nk, nb);
+        const f32 vHv = ip_matrix(vX.data(), HvX.data(), K.w2d, nk, nb)
+                      + ip_vec(vp.data(), Hvp.data(), K.w2d, nk, nb);
         const f32 pred = -(gv + 0.5 * vHv);
         if (Delta < 1e-10) break;
 
@@ -305,7 +314,10 @@ inline DMResult solve_rtr(const HFKernel& K, const c64* P0, f32 n_e,
         const f32 noise = 1e-12 * std::max(std::abs(E), 1.0);
         bool accept;
         if (pred <= noise) {
-            accept = (grad_trial <= grad_norm);  // energy below float64 noise → judge by gradient
+            // Predicted reduction below float64 energy noise: judge by the
+            // gradient, but never accept a genuine energy increase — a minimizer
+            // must not climb to a saddle/maximum.
+            accept = (grad_trial <= grad_norm) && (E_trial <= E + noise);
             if (!accept) Delta *= 0.5;
         } else {
             const f32 ratio = (E - E_trial) / pred;
@@ -313,6 +325,14 @@ inline DMResult solve_rtr(const HFKernel& K, const c64* P0, f32 n_e,
             else if (ratio > 0.75 && jfro(vX.data(), vp.data()) > 0.9 * Delta)
                 Delta = std::min(2.0 * Delta, 5.0);
             accept = (ratio > 0.1);
+        }
+
+        if (std::getenv("CPP_HF_DM_DEBUG")) {
+            std::fprintf(stderr,
+                "[rtr] k=%zu g=%.3e |v|=%.3e Delta=%.3e pred=%.3e dE=%+.3e gtr=%.3e accept=%d branch=%s\n",
+                k_outer, grad_norm, jfro(vX.data(), vp.data()), Delta, pred,
+                (E_trial - E), grad_trial, static_cast<int>(accept),
+                (pred <= noise ? "grad" : "ratio"));
         }
 
         if (accept) {
