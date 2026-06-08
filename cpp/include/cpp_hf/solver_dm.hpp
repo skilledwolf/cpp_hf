@@ -36,6 +36,14 @@ struct SolverConfig {
     f32 bt_shrink = 0.5;
     std::size_t bt_max = 8;
     int mu_maxiter = 25;
+    // optimizer: 0 = preconditioned Riemannian CG (default, solve_dm),
+    // 1 = trust-region Newton (response Hessian, solve_rtr in solver_rtr.hpp).
+    int optimizer = 0;
+    // Trust-region Newton controls (optimizer == 1): a Steihaug truncated-CG
+    // solves the joint (Q,p) response-Hessian subproblem; convergence is on the
+    // orbital gradient norm (tol_grad, falling back to 1e-6).
+    f32 tr_delta0 = 0.5;        // initial trust radius
+    std::size_t tr_cg_max = 20; // max Steihaug inner CG iterations per outer step
     std::vector<std::size_t> block_sizes;  // empty = no block structure
     bool return_Q = true;
     bool return_density = true;

@@ -39,6 +39,14 @@ class SolverConfig:
     bt_shrink: float = 0.5
     bt_max: int = 8
     mu_maxiter: int = 25
+    # Orbital optimizer: "cg" (preconditioned Riemannian CG, default) or
+    # "newton" (trust-region Newton — a Steihaug truncated-CG on the joint (Q,p)
+    # response Hessian, one Fock build per Hessian-vector product).  Newton needs
+    # far fewer Fock builds than CG on stiff problems; it converges on the
+    # gradient norm, so set tol_grad (defaults to 1e-6 internally if left 0).
+    optimizer: str = "cg"
+    tr_delta0: float = 0.5      # Newton: initial trust radius
+    tr_cg_max: int = 20         # Newton: max Steihaug inner CG iterations / outer step
     block_sizes: tuple[int, ...] | None = None
     project_fn: Any = None
     return_Q: bool = True
@@ -116,6 +124,19 @@ def _kernel_args_for_native(kernel) -> dict:
     return args
 
 
+_OPTIMIZER_CODES = {"cg": 0, "newton": 1}
+
+
+def _optimizer_code(name: str) -> int:
+    try:
+        return _OPTIMIZER_CODES[str(name).lower()]
+    except KeyError:
+        raise ValueError(
+            f"Unknown optimizer {name!r}; expected one of "
+            f"{sorted(_OPTIMIZER_CODES)}."
+        ) from None
+
+
 def solve_direct_minimization(
     kernel,
     P0,
@@ -138,6 +159,7 @@ def solve_direct_minimization(
     P0 = np.ascontiguousarray(P0, dtype=np.complex128)
 
     block_sizes = list(int(s) for s in (config.block_sizes or ()))
+    optimizer_code = _optimizer_code(config.optimizer)
     Q, p, density, fock, mu, energy, n_iter, converged, hE, hG = _native.solve_dm(
         _kernel_args_for_native(kernel),
         P0, float(n_electrons),
@@ -145,6 +167,8 @@ def solve_direct_minimization(
         float(config.max_step), float(config.bt_shrink), float(config.denom_scale),
         int(config.bt_max), int(config.cg_restart),
         int(config.plateau_window), int(config.mu_maxiter),
+        int(optimizer_code),
+        float(config.tr_delta0), int(config.tr_cg_max),
         block_sizes,
         config.project_fn,
         bool(config.return_Q), bool(config.return_density), bool(config.return_fock),

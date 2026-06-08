@@ -11,6 +11,7 @@
 #include "cpp_hf/linalg.hpp"
 #include "cpp_hf/selfenergy.hpp"
 #include "cpp_hf/solver_dm.hpp"
+#include "cpp_hf/solver_rtr.hpp"
 #include "cpp_hf/solver_scf.hpp"
 #include "cpp_hf/superlattice.hpp"
 #include "cpp_hf/types.hpp"
@@ -492,6 +493,8 @@ PYBIND11_MODULE(_native, m) {
              f32 max_step, f32 bt_shrink, f32 denom_scale,
              std::size_t bt_max, std::size_t cg_restart,
              std::size_t plateau_window, int mu_maxiter,
+             int optimizer,
+             f32 tr_delta0, std::size_t tr_cg_max,
              std::vector<std::size_t> block_sizes,
              py::object project_fn,
              bool return_Q, bool return_density, bool return_fock) {
@@ -522,6 +525,9 @@ PYBIND11_MODULE(_native, m) {
               cfg.cg_restart = cg_restart;
               cfg.plateau_window = plateau_window;
               cfg.mu_maxiter = mu_maxiter;
+              cfg.optimizer = optimizer;
+              cfg.tr_delta0 = tr_delta0;
+              cfg.tr_cg_max = tr_cg_max;
               cfg.block_sizes = block_sizes;
               cfg.return_Q = return_Q;
               cfg.return_density = return_density;
@@ -531,7 +537,9 @@ PYBIND11_MODULE(_native, m) {
               DMResult res;
               {
                   py::gil_scoped_release release;
-                  res = solve_dm(K, P0.data(), n_e, cfg, pfp);
+                  res = (optimizer == 1)
+                            ? solve_rtr(K, P0.data(), n_e, cfg, pfp)
+                            : solve_dm(K, P0.data(), n_e, cfg, pfp);
               }
 
               std::vector<py::ssize_t> dense_shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
@@ -623,6 +631,49 @@ PYBIND11_MODULE(_native, m) {
               for (int i = 0; i < V.ndim() - 2; ++i) shape.push_back(V.shape(i));
               shape.push_back(nb);
               return move_array(std::move(diag), shape);
+          });
+
+    // --- RTR joint (Q,p) Hessian-vector product (for finite-diff validation) ---
+    m.def("_rtr_joint_hvp",
+          [](py::object kernel_args,
+             py::array_t<c64, py::array::c_style | py::array::forcecast> X,
+             py::array_t<f32, py::array::c_style | py::array::forcecast> dp,
+             py::array_t<c64, py::array::c_style | py::array::forcecast> Q,
+             py::array_t<f32, py::array::c_style | py::array::forcecast> p,
+             py::array_t<c64, py::array::c_style | py::array::forcecast> Ft) {
+              auto K = make_kernel(
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["w2d"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["h"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["VR"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["refP"]),
+                  py::cast<bool>(kernel_args["has_refP"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["HH"]),
+                  py::cast<py::array_t<f32, py::array::c_style>>(kernel_args["contact_g"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["contact_Oi"]),
+                  py::cast<py::array_t<c64, py::array::c_style>>(kernel_args["contact_Oj"]),
+                  py::cast<f32>(kernel_args["weight_sum"]),
+                  py::cast<f32>(kernel_args["T"]),
+                  py::cast<bool>(kernel_args["include_hartree"]),
+                  py::cast<bool>(kernel_args["include_exchange"]),
+                  py::cast<bool>(kernel_args["exchange_hcp"]));
+              inject_superlattice_into_kernel(K, kernel_args);
+              const std::size_t nk = K.nk(), nb = K.nb, n_tot = K.n_dense();
+              std::vector<c64> HX(n_tot), dPb(n_tot), respb(n_tot), Sb(n_tot), Fb(n_tot);
+              std::vector<f32> Hp(nk * nb), hb(nb, 0.0);
+              const f32 T_r = std::max(K.T, static_cast<f32>(1.0e-12));
+              {
+                  py::gil_scoped_release release;
+                  cpp_hf::rtr_internal::joint_hvp(
+                      K, X.data(), dp.data(), Q.data(), p.data(), Ft.data(), T_r,
+                      K.w2d, nk, nb, HX.data(), Hp.data(), dPb.data(), respb.data(),
+                      Sb.data(), Fb.data(), hb.data());
+              }
+              std::vector<py::ssize_t> xs{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
+                                          (py::ssize_t)nb, (py::ssize_t)nb};
+              std::vector<py::ssize_t> ps{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
+                                          (py::ssize_t)nb};
+              return py::make_tuple(move_array(std::move(HX), xs),
+                                    move_array(std::move(Hp), ps));
           });
 
     // --- Superlattice Fock (ΔG-streamed) ---
