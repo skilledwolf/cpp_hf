@@ -3,6 +3,7 @@
 
 #include "cpp_hf/kernel.hpp"
 #include "cpp_hf/linalg.hpp"
+#include "cpp_hf/parallel.hpp"
 #include "cpp_hf/selfenergy.hpp"
 #include "cpp_hf/superlattice.hpp"
 #include "cpp_hf/types.hpp"
@@ -51,7 +52,11 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
 
     if (need_rho_diff_in_sigma) {
         if (K.has_refP) {
-            for (std::size_t i = 0; i < n_tot; ++i) Sigma[i] = P[i] - K.refP[i];
+            parallel_for(nk, [&](std::size_t k) {
+                const std::size_t off = k * nb2;
+                for (std::size_t i = 0; i < nb2; ++i)
+                    Sigma[off + i] = P[off + i] - K.refP[off + i];
+            });
         } else {
             std::memcpy(Sigma, P, n_tot * sizeof(c64));
         }
@@ -207,11 +212,11 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
     // ``hf_energy_with_hartree_diag`` / SCF / DM machinery (which expects
     // Hartree only through ``hartree_diag``) keeps working unchanged.
     if (sl_hartree_populated) {
-        for (std::size_t k = 0; k < nk; ++k) {
+        parallel_for(nk, [&](std::size_t k) {
             c64* sk = Sigma + k * nb2;
             for (std::size_t i = 0; i < nb2; ++i)
                 sk[i] += sl_hartree_full[i];
-        }
+        });
     }
 
     std::fill(hartree_diag, hartree_diag + nb, 0.0);
@@ -267,14 +272,14 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
             SC += herm + fk;
         }
         // Add sigma_contact to every k of Sigma
-        for (std::size_t k = 0; k < nk; ++k) {
+        parallel_for(nk, [&](std::size_t k) {
             c64* sk = Sigma + k * nb2;
             for (std::size_t i = 0; i < nb2; ++i) sk[i] += sigma_contact[i];
-        }
+        });
     }
 
     // F = hermitize(h + Sigma + H)
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         const c64* hk = K.h + k * nb2;
         const c64* sk = Sigma + k * nb2;
         c64* fk = F + k * nb2;
@@ -284,7 +289,7 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
             for (std::size_t i = 0; i < nb; ++i)
                 fk[i * nb + i] += c64(hartree_diag[i], 0.0);
         }
-    }
+    });
     hermitize_inplace(F, nk, nb);
 
     if (project_fn && *project_fn) {

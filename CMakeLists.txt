@@ -7,6 +7,7 @@ project(cpp_hf LANGUAGES CXX)
 # -----------------------------
 option(HF_USE_OPENMP       "Enable OpenMP parallelization"   ON)
 option(HF_USE_FFTW_THREADS "Link FFTW threads and call init" ON)
+option(HF_USE_ACCELERATE   "Route Eigen dense products to Apple Accelerate (AMX) on macOS" ON)
 
 # -----------------------------
 # C++ standard
@@ -94,8 +95,25 @@ endif()
 set(HF_OPENMP_LIB "")
 if(HF_USE_OPENMP)
     find_package(OpenMP QUIET)
+    if(NOT OpenMP_CXX_FOUND AND APPLE)
+        # Apple clang ships without the OpenMP driver flag; wire homebrew
+        # libomp explicitly (-Xpreprocessor -fopenmp + libomp).
+        find_path(HF_LIBOMP_INCLUDE omp.h
+                  HINTS /opt/homebrew/opt/libomp/include /usr/local/opt/libomp/include)
+        find_library(HF_LIBOMP_LIB omp
+                     HINTS /opt/homebrew/opt/libomp/lib /usr/local/opt/libomp/lib)
+        if(HF_LIBOMP_INCLUDE AND HF_LIBOMP_LIB)
+            set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I${HF_LIBOMP_INCLUDE}")
+            set(OpenMP_CXX_LIB_NAMES "omp")
+            set(OpenMP_omp_LIBRARY "${HF_LIBOMP_LIB}")
+            find_package(OpenMP QUIET)
+        endif()
+    endif()
     if(OpenMP_CXX_FOUND)
         set(HF_OPENMP_LIB OpenMP::OpenMP_CXX)
+        message(STATUS "cpp_hf: OpenMP enabled (${OpenMP_CXX_FLAGS})")
+    else()
+        message(STATUS "cpp_hf: OpenMP NOT found — building serial kernels")
     endif()
 endif()
 
@@ -113,5 +131,17 @@ target_link_libraries(_native PRIVATE
     ${HF_OPENMP_LIB}
 )
 target_compile_options(_native PRIVATE -fvisibility=hidden -O3)
+
+# Apple Accelerate: EIGEN_USE_BLAS routes Eigen's dynamic-size complex matrix
+# products (the per-k Q·diag·Q†, Q†FQ, V†FV, retraction gemms that dominate
+# the DM solver's non-Fock time) to Accelerate's AMX-backed zgemm — measured
+# 3.3× over Eigen's own kernels at the (64, 152, 152) CDW workload.  The
+# Hermitian eigensolver stays Eigen (Accelerate zheevd measured ~1.1×, not
+# worth a LAPACK path).  Single-threaded Accelerate (VECLIB_MAXIMUM_THREADS)
+# still uses AMX, so this composes with process-level sweep parallelism.
+if(APPLE AND HF_USE_ACCELERATE)
+    target_compile_definitions(_native PRIVATE EIGEN_USE_BLAS)
+    target_link_libraries(_native PRIVATE "-framework Accelerate")
+endif()
 
 install(TARGETS _native DESTINATION cpp_hf)

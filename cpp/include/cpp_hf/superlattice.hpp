@@ -15,6 +15,7 @@
 // O(N_ext^2 · dim_orb^2), independent of n_delta.
 #pragma once
 
+#include "cpp_hf/parallel.hpp"
 #include "cpp_hf/selfenergy.hpp"
 #include "cpp_hf/types.hpp"
 
@@ -77,8 +78,6 @@ inline void selfenergy_superlattice_streamed(
     // and lets callers reuse the buffer between SCF iterations.
     std::memset(sigma_out, 0, nkx * nky * n_G * dim_orb * n_G * dim_orb * sizeof(c64));
 
-    std::vector<c64> rho_dg(channel_size);
-
     // --- Hermiticity ΔG <-> -ΔG halving. ---------------------------------
     // ρ is Hermitian and V(|q|) is real-even, so the Fock self-energy is
     // Hermitian: Σ[k, jβ, iα] = conj(Σ[k, iα, jβ]).  The channel for -ΔG holds
@@ -124,17 +123,24 @@ inline void selfenergy_superlattice_streamed(
         }
     }
 
-    for (std::size_t dg = 0; dg < n_delta; ++dg) {
+    // Channels are independent: each (i, j) pair belongs to exactly one ΔG,
+    // and the conjugate-partner fill writes the (j, i) blocks of a channel
+    // that is skipped — so per-channel gather regions are disjoint and the
+    // loop parallelizes with per-channel scratch.  FFT plans are executed
+    // via fftw_execute_dft (new-array execute), which FFTW guarantees
+    // thread-safe on a shared plan; the plan cache itself is mutex-guarded.
+    parallel_for_dynamic(n_delta, [&](std::size_t dg) {
+        std::vector<c64> rho_dg(channel_size);
         const int64_t pr = partner[dg];
         // A genuine (distinct) conjugate partner: compute the lower-indexed
         // member of the pair and fill its partner; skip the higher-indexed one
         // (already filled when its partner ran).  partner == self (ΔG = 0) or
         // partner == -1 (absent) ⟹ compute directly, no partner fill.
         const bool has_partner = (pr >= 0 && static_cast<std::size_t>(pr) != dg);
-        if (has_partner && static_cast<std::size_t>(pr) < dg) continue;
+        if (has_partner && static_cast<std::size_t>(pr) < dg) return;
         const std::size_t a = static_cast<std::size_t>(pair_start[dg]);
         const std::size_t b = static_cast<std::size_t>(pair_start[dg + 1]);
-        if (a == b) continue;
+        if (a == b) return;
 
         // --- 1) Zero the channel buffer. ---
         std::memset(rho_dg.data(), 0, channel_size * sizeof(c64));
@@ -179,7 +185,7 @@ inline void selfenergy_superlattice_streamed(
                 break;
             }
         }
-        if (!channel_nonzero) continue;
+        if (!channel_nonzero) return;
 
         // --- 3) FFT, multiply by VR_fft, iFFT, negate. ---
         // selfenergy_fft_full_inplace expects (nk1, nk2, nb, nb) with nb*nb
@@ -236,7 +242,7 @@ inline void selfenergy_superlattice_streamed(
                 }
             }
         }
-    }
+    });
 }
 
 }  // namespace cpp_hf

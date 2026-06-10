@@ -5,6 +5,7 @@
 #include "cpp_hf/fock.hpp"
 #include "cpp_hf/kernel.hpp"
 #include "cpp_hf/linalg.hpp"
+#include "cpp_hf/parallel.hpp"
 #include "cpp_hf/utils.hpp"
 
 #include <Eigen/Dense>
@@ -139,7 +140,7 @@ inline f32 density_from_fock(const c64* F, std::size_t nk1, std::size_t nk2,
     for (std::size_t i = 0; i < nk * nb; ++i)
         occ[i] = fermidirac_scalar(shifted[i] - mu, T);
 
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         ConstMapMatXcf Vk(V.data() + k * nb2, nb, nb);
         Eigen::Map<Eigen::Array<f32, Eigen::Dynamic, 1>> ok(occ.data() + k * nb, nb);
         MatXcf Vo = Vk;
@@ -148,7 +149,7 @@ inline f32 density_from_fock(const c64* F, std::size_t nk1, std::size_t nk2,
         // hermitize one slice
         MatXcf Ph = 0.5 * (P + P.adjoint());
         std::memcpy(P_new + k * nb2, Ph.data(), nb2 * sizeof(c64));
-    }
+    });
     return mu;
 }
 
@@ -220,15 +221,19 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
         f32 E_iter = 0.0, mu_iter = 0.0;
         build_and_occupy(density, P_new.data(), E_iter, mu_iter);
 
-        for (std::size_t i = 0; i < n_tot; ++i) delta[i] = P_new[i] - density[i];
+        parallel_for(nk, [&](std::size_t kk) {
+            const std::size_t off = kk * nb2;
+            for (std::size_t i = 0; i < nb2; ++i)
+                delta[off + i] = P_new[off + i] - density[off + i];
+        });
 
         // commutator F P − P F
-        for (std::size_t kk = 0; kk < nk; ++kk) {
+        parallel_for(nk, [&](std::size_t kk) {
             ConstMapMatXcf Fk(F.data() + kk * nb2, nb, nb);
             ConstMapMatXcf Pk(density.data() + kk * nb2, nb, nb);
             MatXcf C = Fk * Pk - Pk * Fk;
             std::memcpy(comm.data() + kk * nb2, C.data(), nb2 * sizeof(c64));
-        }
+        });
 
         const f32 d_res = weighted_matrix_norm(delta.data(), K.w2d,
                                                 nk, nb, K.weight_sum);

@@ -4,6 +4,7 @@
 #include "cpp_hf/fock.hpp"
 #include "cpp_hf/kernel.hpp"
 #include "cpp_hf/linalg.hpp"
+#include "cpp_hf/parallel.hpp"
 #include "cpp_hf/utils.hpp"
 
 #include <Eigen/Dense>
@@ -105,32 +106,32 @@ inline bool block_problem_invariant(const HFKernel& K, const ProjectFn* project_
 inline void density_from_Qp(const c64* Q, const f32* p, c64* P,
                             std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         ConstMapMatXcf Qk(Q + k * nb2, nb, nb);
         Eigen::Map<const Eigen::Array<f32, Eigen::Dynamic, 1>> pk(p + k * nb, nb);
         MatXcf Qp = Qk;
         for (std::size_t j = 0; j < nb; ++j) Qp.col(j) *= pk[j];
         MatXcf P_k = Qp * Qk.adjoint();
         std::memcpy(P + k * nb2, P_k.data(), nb2 * sizeof(c64));
-    }
+    });
 }
 
 inline void fock_in_orbital_basis(const c64* Q, const c64* F, c64* Ft,
                                    std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         ConstMapMatXcf Qk(Q + k * nb2, nb, nb);
         ConstMapMatXcf Fk(F + k * nb2, nb, nb);
         MatXcf Ftk = Qk.adjoint() * Fk * Qk;
         std::memcpy(Ft + k * nb2, Ftk.data(), nb2 * sizeof(c64));
-    }
+    });
 }
 
 // G_ij = 0.5 * (A_ij - conj(A_ji)),  A = (p_j - p_i) * Ft_ij,  with off-diagonal mask.
 inline void compute_orbital_gradient(const c64* Ft, const f32* p, c64* G,
                                      std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         const c64* Ftk = Ft + k * nb2;
         const f32* pk = p + k * nb;
         c64* Gk = G + k * nb2;
@@ -144,7 +145,7 @@ inline void compute_orbital_gradient(const c64* Ft, const f32* p, c64* G,
                 Gk[i * nb + j] = 0.5 * (a_ij - std::conj(a_ji));
             }
         }
-    }
+    });
 }
 
 // Weighted Frobenius inner product Σ_k w_k Σ_ij Re(conj(X)_ij * Y_ij)
@@ -194,8 +195,8 @@ inline f32 norm_matrix(const c64* X, const f32* w_norm,
 inline void cayley_spectral_setup(const c64* d, c64* V, f32* lam,
                                    std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
-    std::vector<c64> iA(nb2);
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
+        std::vector<c64> iA(nb2);
         const c64* dk = d + k * nb2;
         for (std::size_t i = 0; i < nb2; ++i) iA[i] = c64(0.0, 1.0) * dk[i];
         MapMatXcf iAm(iA.data(), nb, nb);
@@ -206,15 +207,15 @@ inline void cayley_spectral_setup(const c64* d, c64* V, f32* lam,
         for (std::size_t i = 0; i < nb; ++i) lam[k * nb + i] = w[i];
         MapMatXcf VOut(V + k * nb2, nb, nb);
         VOut = Vk;
-    }
+    });
 }
 
 inline void cayley_spectral_setup_block_sizes(const c64* d, c64* V, f32* lam,
                                                std::size_t nk, std::size_t nb,
                                                const std::vector<std::size_t>& sizes) {
     const std::size_t nb2 = nb * nb;
-    std::vector<c64> iA(nb2);
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
+        std::vector<c64> iA(nb2);
         const c64* dk = d + k * nb2;
         for (std::size_t i = 0; i < nb2; ++i) iA[i] = c64(0.0, 1.0) * dk[i];
         MapMatXcf iAm(iA.data(), nb, nb);
@@ -232,7 +233,7 @@ inline void cayley_spectral_setup_block_sizes(const c64* d, c64* V, f32* lam,
             VOut.block(start, start, s, s) = Vk;
             start += s;
         }
-    }
+    });
 }
 
 // c_t = (1 + i τλ/2) / (1 − i τλ/2),  |c_t| = 1 by construction.
@@ -247,8 +248,7 @@ inline void cayley_unitary_from_spectrum(const c64* V, const f32* lam, f32 tau,
                                           c64* U_out,
                                           std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
-    std::vector<c64> Vc(nb2);
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         ConstMapMatXcf Vk(V + k * nb2, nb, nb);
         MatXcf VcM = Vk;
         for (std::size_t j = 0; j < nb; ++j) {
@@ -257,7 +257,7 @@ inline void cayley_unitary_from_spectrum(const c64* V, const f32* lam, f32 tau,
         }
         MatXcf U = VcM * Vk.adjoint();
         std::memcpy(U_out + k * nb2, U.data(), nb2 * sizeof(c64));
-    }
+    });
 }
 
 // diag(U(τ)† Ft U(τ)) = real diag of  V · M(τ) · V†, where
@@ -267,9 +267,9 @@ inline void diag_UFU_from_spectrum(const c64* V, const c64* Ft_eig,
                                     const f32* lam, f32 tau, f32* diag_out,
                                     std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
-    std::vector<c64> c_vec(nb);
-    MatXcf M(nb, nb);
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
+        std::vector<c64> c_vec(nb);
+        MatXcf M(nb, nb);
         ConstMapMatXcf Vk(V + k * nb2, nb, nb);
         ConstMapMatXcf Fe(Ft_eig + k * nb2, nb, nb);
         for (std::size_t i = 0; i < nb; ++i) c_vec[i] = cayley_factor(lam[k * nb + i], tau);
@@ -288,37 +288,37 @@ inline void diag_UFU_from_spectrum(const c64* V, const c64* Ft_eig,
                 s += static_cast<double>((A(i, j) * std::conj(Vk(i, j))).real());
             diag_out[k * nb + i] = static_cast<f32>(s);
         }
-    }
+    });
 }
 
 inline void compute_Ft_eig(const c64* Ft, const c64* V_d, c64* Ft_eig,
                             std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         ConstMapMatXcf Vk(V_d + k * nb2, nb, nb);
         ConstMapMatXcf Ftk(Ft + k * nb2, nb, nb);
         MatXcf out = Vk.adjoint() * Ftk * Vk;
         std::memcpy(Ft_eig + k * nb2, out.data(), nb2 * sizeof(c64));
-    }
+    });
 }
 
 // Q_new = Q * U  (per k)
 inline void Q_times_U(const c64* Q, const c64* U, c64* Q_new,
                        std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         ConstMapMatXcf Qk(Q + k * nb2, nb, nb);
         ConstMapMatXcf Uk(U + k * nb2, nb, nb);
         MatXcf out = Qk * Uk;
         std::memcpy(Q_new + k * nb2, out.data(), nb2 * sizeof(c64));
-    }
+    });
 }
 
 inline void Q_times_cayley_spectrum_inplace(c64* Q, const c64* V,
                                              const f32* lam, f32 tau,
                                              std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         ConstMapMatXcf Qk(Q + k * nb2, nb, nb);
         ConstMapMatXcf Vk(V + k * nb2, nb, nb);
         MatXcf VcM = Vk;
@@ -329,7 +329,7 @@ inline void Q_times_cayley_spectrum_inplace(c64* Q, const c64* V,
         MatXcf U = VcM * Vk.adjoint();
         MatXcf out = Qk * U;
         std::memcpy(Q + k * nb2, out.data(), nb2 * sizeof(c64));
-    }
+    });
 }
 
 inline f32 frozen_free_energy_from_occ(const f32* eps, const f32* p,

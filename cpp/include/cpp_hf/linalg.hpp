@@ -1,6 +1,7 @@
 // Batched Hermitian eigendecomposition and small dense linalg helpers.
 #pragma once
 
+#include "cpp_hf/parallel.hpp"
 #include "cpp_hf/types.hpp"
 
 #include <Eigen/Dense>
@@ -18,7 +19,7 @@ using ConstMapMatXcf = Eigen::Map<const MatXcf>;
 // In-place hermitization on the last two axes for a (nk1, nk2, nb, nb) array.
 inline void hermitize_inplace(c64* M, std::size_t nk, std::size_t nb) {
     const std::size_t nb2 = nb * nb;
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         c64* mk = M + k * nb2;
         for (std::size_t i = 0; i < nb; ++i) {
             for (std::size_t j = i; j < nb; ++j) {
@@ -29,7 +30,7 @@ inline void hermitize_inplace(c64* M, std::size_t nk, std::size_t nb) {
                 mk[j * nb + i] = std::conj(h);
             }
         }
-    }
+    });
 }
 
 // Compute Hermitian eigendecomposition of one (nb, nb) matrix.  Eigenvalues
@@ -59,9 +60,9 @@ inline void eigh_batched(const c64* M, f32* w, c64* V,
                          std::size_t nk1, std::size_t nk2, std::size_t nb) {
     const std::size_t nk = nk1 * nk2;
     const std::size_t nb2 = nb * nb;
-    for (std::size_t k = 0; k < nk; ++k) {
+    parallel_for(nk, [&](std::size_t k) {
         eigh_one(M + k * nb2, nb, w + k * nb, V + k * nb2);
-    }
+    });
 }
 
 // Block-diagonal eigh: ignore off-block coupling.  Used by the optional
@@ -112,9 +113,10 @@ inline void eigh_block_sizes_batched(const c64* M, f32* w, c64* V,
                                      bool sort) {
     const std::size_t nk = nk1 * nk2;
     const std::size_t nb2 = nb * nb;
-    for (std::size_t k = 0; k < nk; ++k)
+    parallel_for(nk, [&](std::size_t k) {
         eigh_block_sizes_one(M + k * nb2, nb, sizes, sort,
                              w + k * nb, V + k * nb2);
+    });
 }
 
 // Maximum |M[i,j]| with (i,j) in the off-block region defined by `sizes`.
