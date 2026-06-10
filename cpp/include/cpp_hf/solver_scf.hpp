@@ -296,7 +296,9 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
                 {
                     Eigen::FullPivLU<decltype(B)> lu(B);
                     sol = lu.solve(rhs);
-                    diis_ok = lu.info() == Eigen::Success;
+                    // FullPivLU has no info(); isInvertible() is the right check
+                    // (reject DIIS when the residual matrix B is singular).
+                    diis_ok = lu.isInvertible();
                     for (std::size_t i = 0; i < m; ++i)
                         diis_ok = diis_ok && std::isfinite(static_cast<double>(sol[i]));
                 }
