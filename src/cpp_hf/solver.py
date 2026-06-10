@@ -47,6 +47,16 @@ class SolverConfig:
     optimizer: str = "cg"
     tr_delta0: float = 0.5      # Newton: initial trust radius
     tr_cg_max: int = 20         # Newton: max Steihaug inner CG iterations / outer step
+    # Deflation (optimizer="newton" only): add a repulsive Gaussian bias around
+    # each density in `deflation_targets` so the solve is pushed out of those
+    # basins and converges to a DISTINCT HF solution.  `deflation_targets` has
+    # shape (n_solutions, nk1, nk2, nb, nb) — or None/empty for no deflation;
+    # `deflation_sigma` is the bias height (0 = off) and `deflation_length` its
+    # width in weighted-Frobenius density distance.  Usually driven by
+    # `solve_deflated` rather than set by hand.
+    deflation_targets: Any = None
+    deflation_sigma: float = 0.0
+    deflation_length: float = 1.0
     block_sizes: tuple[int, ...] | None = None
     project_fn: Any = None
     return_Q: bool = True
@@ -160,6 +170,29 @@ def solve_direct_minimization(
 
     block_sizes = list(int(s) for s in (config.block_sizes or ()))
     optimizer_code = _optimizer_code(config.optimizer)
+
+    # Deflation targets -> (n_solutions, nk1, nk2, nb, nb) complex128 (empty array
+    # when no deflation).  The native binding infers n_deflation from shape[0].
+    nk1, nk2, nb = kernel.h.shape[0], kernel.h.shape[1], kernel.h.shape[-1]
+    if config.deflation_targets is None:
+        defl_arr = np.empty((0, nk1, nk2, nb, nb), dtype=np.complex128)
+    else:
+        defl_arr = np.ascontiguousarray(config.deflation_targets, dtype=np.complex128)
+        if defl_arr.ndim == 4:
+            defl_arr = defl_arr[None, ...]
+        if defl_arr.ndim != 5 or defl_arr.shape[1:] != (nk1, nk2, nb, nb):
+            raise ValueError(
+                "deflation_targets must have shape (n_solutions, nk1, nk2, nb, nb) "
+                f"matching the kernel; got {tuple(defl_arr.shape)}."
+            )
+    defl_arr = np.ascontiguousarray(defl_arr, dtype=np.complex128)
+    if defl_arr.shape[0] > 0 and float(config.deflation_sigma) > 0.0 \
+            and config.optimizer.lower() != "newton":
+        raise ValueError(
+            "deflation is only supported with optimizer='newton' "
+            f"(got optimizer={config.optimizer!r})."
+        )
+
     Q, p, density, fock, mu, energy, n_iter, converged, hE, hG = _native.solve_dm(
         _kernel_args_for_native(kernel),
         P0, float(n_electrons),
@@ -169,6 +202,7 @@ def solve_direct_minimization(
         int(config.plateau_window), int(config.mu_maxiter),
         int(optimizer_code),
         float(config.tr_delta0), int(config.tr_cg_max),
+        defl_arr, float(config.deflation_sigma), float(config.deflation_length),
         block_sizes,
         config.project_fn,
         bool(config.return_Q), bool(config.return_density), bool(config.return_fock),

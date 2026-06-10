@@ -56,7 +56,8 @@ inline void joint_hvp(const HFKernel& K, const c64* X, const f32* dp,
                       const c64* Q, const f32* p, const c64* Ft, f32 T_r,
                       const f32* w2d, std::size_t nk, std::size_t nb,
                       c64* HX, f32* Hp, c64* dP_buf, c64* resp_buf,
-                      c64* Sigma_buf, c64* F_buf, f32* hartree_buf) {
+                      c64* Sigma_buf, c64* F_buf, f32* hartree_buf,
+                      f32 pen_diag_coeff = 0.0) {
     const std::size_t nb2 = nb * nb;
     // 1. Build the combined density variation δP = Q ([X,diag p] + diag(dp)) Q†.
     for (std::size_t k = 0; k < nk; ++k) {
@@ -75,6 +76,14 @@ inline void joint_hvp(const HFKernel& K, const c64* X, const f32* dp,
     }
     // 2. One Fock build: the interaction response.
     fock_response(K, dP_buf, resp_buf, Sigma_buf, F_buf, hartree_buf, nk * nb2);
+    // 2b. Deflation penalty curvature (diagonal part): add pen_diag_coeff * δP to
+    // the self-energy response (Fock-free).  pen_diag_coeff = 2·Σ_i φ'(d_i²) < 0
+    // near a deflated basin, injecting the negative curvature that pushes the
+    // Newton step out of it.  Strict no-op when 0.
+    if (pen_diag_coeff != 0.0) {
+        const c64 c(static_cast<double>(pen_diag_coeff), 0.0);
+        for (std::size_t i = 0; i < nk * nb2; ++i) resp_buf[i] += c * dP_buf[i];
+    }
     // 3. Assemble HX and Hp per k.
     for (std::size_t k = 0; k < nk; ++k) {
         ConstMapMatXcf Xk(X + k * nb2, nb, nb);
@@ -102,11 +111,57 @@ inline void joint_hvp(const HFKernel& K, const c64* X, const f32* dp,
     project_occ(Hp, w2d, nk, nb);
 }
 
+// Deflation bias: a Gaussian repulsion hill around each already-found density.
+//   Φ        = σ · Σ_i exp(-d_i²/(2L²)),   d_i² = Σ_k w_k ‖P_k - P*_{i,k}‖_F²
+//   S_pen,k  = (∂Φ/∂P_k)/w_k = 2 Σ_i φ'(d_i²) (P_k - P*_{i,k})   (per-k, no w2d —
+//              mirrors the role of the physical Fock F so F_eff = F + S_pen folds
+//              the bias into the gradient with the energy's w2d applied outside)
+//   diag     = 2 Σ_i φ'(d_i²)  (the local Hessian-response scalar for joint_hvp)
+// with φ(x)=σe^{-x/(2L²)}, φ'(x)=-φ(x)/(2L²) (<0 ⇒ force points away from P*).
+// Returns Φ; writes S_pen (n_tot) and diag_coeff.  Strict no-op (Φ=0, S_pen=0,
+// diag_coeff=0) when n_defl==0 or σ==0.
+inline f32 deflation_bias(const c64* P, const c64* targets, std::size_t n_defl,
+                          const f32* w2d, std::size_t nk, std::size_t nb,
+                          f32 sigma, f32 length, c64* S_pen, f32& diag_coeff) {
+    const std::size_t nb2 = nb * nb;
+    const std::size_t n_tot = nk * nb2;
+    std::fill(S_pen, S_pen + n_tot, c64(0.0, 0.0));
+    diag_coeff = 0.0;
+    if (n_defl == 0 || sigma == 0.0 || targets == nullptr) return 0.0;
+    const double inv2L2 =
+        1.0 / (2.0 * static_cast<double>(length) * static_cast<double>(length));
+    double Phi = 0.0, diag = 0.0;
+    for (std::size_t i = 0; i < n_defl; ++i) {
+        const c64* Ti = targets + i * n_tot;
+        double d2 = 0.0;
+        for (std::size_t k = 0; k < nk; ++k) {
+            const c64* pk = P + k * nb2;
+            const c64* tk = Ti + k * nb2;
+            double per_k = 0.0;
+            for (std::size_t a = 0; a < nb2; ++a) per_k += std::norm(pk[a] - tk[a]);
+            d2 += static_cast<double>(w2d[k]) * per_k;
+        }
+        const double phi = static_cast<double>(sigma) * std::exp(-d2 * inv2L2);
+        const double phip = -phi * inv2L2;            // φ'(d²) < 0
+        Phi += phi;
+        diag += phip;
+        const c64 coeff(2.0 * phip, 0.0);             // 2 φ'(d²)
+        for (std::size_t k = 0; k < nk; ++k) {
+            const c64* pk = P + k * nb2;
+            const c64* tk = Ti + k * nb2;
+            c64* sk = S_pen + k * nb2;
+            for (std::size_t a = 0; a < nb2; ++a) sk[a] += coeff * (pk[a] - tk[a]);
+        }
+    }
+    diag_coeff = static_cast<f32>(2.0 * diag);         // 2 Σ_i φ'(d_i²)
+    return static_cast<f32>(Phi);
+}
+
 }  // namespace rtr_internal
 
 inline DMResult solve_rtr(const HFKernel& K, const c64* P0, f32 n_e,
                           const SolverConfig& cfg,
-                          const ProjectFn* /*project_fn*/ = nullptr) {
+                          const ProjectFn* project_fn = nullptr) {
     using namespace dm_internal;
     using namespace rtr_internal;
 
@@ -133,6 +188,20 @@ inline DMResult solve_rtr(const HFKernel& K, const c64* P0, f32 n_e,
     std::vector<f32> lamd(npb);
     std::vector<c64> Gsave(n_tot), Ftsave(n_tot);
     std::vector<f32> epssave(npb), eps_t(npb), p_trial(npb);
+
+    // Deflation (Newton path only): repulsive Gaussian bias around found densities.
+    const std::size_t n_defl = cfg.n_deflation;
+    const c64* defl_targets =
+        cfg.deflation_targets.empty() ? nullptr : cfg.deflation_targets.data();
+    const f32 defl_sigma = cfg.deflation_sigma;
+    const f32 defl_length = std::max(cfg.deflation_length, static_cast<f32>(1.0e-12));
+    const bool deflation_on =
+        (n_defl > 0 && defl_sigma > 0.0 && defl_targets != nullptr);
+    if (deflation_on && cfg.deflation_targets.size() < n_defl * n_tot)
+        throw std::invalid_argument(
+            "deflation_targets buffer smaller than n_deflation * nk * nb * nb.");
+    std::vector<c64> S_pen(deflation_on ? n_tot : 0);
+    f32 pen_diag_coeff = 0.0;  // 2·Σ_i φ'(d_i²) at the current density (frozen per outer)
 
     DMResult out;
     out.hist_E.assign(cfg.max_iter, 0.0);
@@ -170,6 +239,13 @@ inline DMResult solve_rtr(const HFKernel& K, const c64* P0, f32 n_e,
         return norm_matrix(g, w_norm.data(), nk, nb);
     };
 
+    // Symmetry / structure projector applied to the density (mirrors solve_dm:
+    // project P after it is reconstructed from (Q,p), before hermitisation and
+    // the Fock build; the bare Hamiltonian F is NOT projected, matching jax_hf).
+    auto project_in_place = [&](c64* M) {
+        if (project_fn && *project_fn) (*project_fn)(M, nk1, nk2, nb);
+    };
+
     // ---- initialise (Q, p) from F[P0] ----
     std::memcpy(P_cur.data(), P0, n_tot * sizeof(c64));
     hermitize_inplace(P_cur.data(), nk, nb);
@@ -185,10 +261,19 @@ inline DMResult solve_rtr(const HFKernel& K, const c64* P0, f32 n_e,
 
     auto eval_state = [&](const c64* Qs, const f32* ps, f32& E_out) {
         density_from_Qp(Qs, ps, P_cur.data(), nk, nb);
+        project_in_place(P_cur.data());
         hermitize_inplace(P_cur.data(), nk, nb);
         build_fock_compact(K, P_cur.data(), Sigma.data(), F.data(), hartree_diag.data(), nullptr);
         ++n_builds;
         E_out = hf_energy_with_hartree_diag(K, P_cur.data(), Sigma.data(), hartree_diag.data());
+        if (deflation_on) {
+            const f32 Phi = deflation_bias(P_cur.data(), defl_targets, n_defl,
+                                           K.w2d, nk, nb, defl_sigma, defl_length,
+                                           S_pen.data(), pen_diag_coeff);
+            E_out += Phi;                              // biased free energy Ω + Φ
+            for (std::size_t i = 0; i < n_tot; ++i)
+                F[i] += S_pen[i];                      // F_eff = F + S_pen
+        }
         fock_in_orbital_basis(Qs, F.data(), Ft.data(), nk, nb);
         for (std::size_t k = 0; k < nk; ++k)
             for (std::size_t b = 0; b < nb; ++b)
@@ -226,7 +311,7 @@ inline DMResult solve_rtr(const HFKernel& K, const c64* P0, f32 n_e,
         for (std::size_t cg = 0; cg < cfg.tr_cg_max; ++cg) {
             joint_hvp(K, dX.data(), dp.data(), Q.data(), p.data(), Ft.data(), T_r,
                       K.w2d, nk, nb, HDX.data(), HDp.data(), dPb.data(), respb.data(),
-                      Sb.data(), Fb.data(), hb.data());
+                      Sb.data(), Fb.data(), hb.data(), pen_diag_coeff);
             ++n_builds;
             const f32 dHd = jip(dX.data(), dp.data(), HDX.data(), HDp.data());
             const f32 dd = jip(dX.data(), dp.data(), dX.data(), dp.data());
@@ -305,6 +390,7 @@ inline DMResult solve_rtr(const HFKernel& K, const c64* P0, f32 n_e,
         std::memcpy(Gsave.data(), G.data(), n_tot * sizeof(c64));
         std::memcpy(Ftsave.data(), Ft.data(), n_tot * sizeof(c64));
         std::memcpy(epssave.data(), eps.data(), npb * sizeof(f32));
+        const f32 pen_diag_save = pen_diag_coeff;  // eval_state(trial) overwrites it
 
         // True energy + gradient at the trial point (the one Fock build per outer).
         f32 E_trial = 0.0;
@@ -343,12 +429,14 @@ inline DMResult solve_rtr(const HFKernel& K, const c64* P0, f32 n_e,
             std::memcpy(G.data(), Gsave.data(), n_tot * sizeof(c64));
             std::memcpy(Ft.data(), Ftsave.data(), n_tot * sizeof(c64));
             std::memcpy(eps.data(), epssave.data(), npb * sizeof(f32));
+            pen_diag_coeff = pen_diag_save;
         }
         ++k_outer;
     }
 
     // ---- finalize ----
     density_from_Qp(Q.data(), p.data(), P_cur.data(), nk, nb);
+    project_in_place(P_cur.data());
     hermitize_inplace(P_cur.data(), nk, nb);
     build_fock_compact(K, P_cur.data(), Sigma.data(), F.data(), hartree_diag.data(), nullptr);
     ++n_builds;

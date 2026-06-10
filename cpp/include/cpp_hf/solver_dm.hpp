@@ -45,6 +45,17 @@ struct SolverConfig {
     // orbital gradient norm (tol_grad, falling back to 1e-6).
     f32 tr_delta0 = 0.5;        // initial trust radius
     std::size_t tr_cg_max = 20; // max Steihaug inner CG iterations per outer step
+    // Deflation (optimizer == 1 only): add a repulsive Gaussian bias
+    //   Phi(P) = deflation_sigma * sum_i exp(-d_i^2 / (2*deflation_length^2)),
+    //   d_i^2 = sum_k w_k ||P_k - P*_{i,k}||_F^2  (weighted Frobenius),
+    // to the free energy, pushing the Newton solve out of already-found basins
+    // so it can discover distinct HF solutions.  deflation_targets is
+    // n_deflation stacked (nk,nb,nb) density matrices, flat row-major.  Inactive
+    // (a strict no-op) when n_deflation==0 or deflation_sigma==0.
+    std::vector<c64> deflation_targets;     // (n_deflation * nk * nb * nb)
+    std::size_t n_deflation = 0;
+    f32 deflation_sigma = 0.0;              // bias height (0 = deflation off)
+    f32 deflation_length = 1.0;             // bias width (weighted Frobenius)
     std::vector<std::size_t> block_sizes;  // empty = no block structure
     bool return_Q = true;
     bool return_density = true;

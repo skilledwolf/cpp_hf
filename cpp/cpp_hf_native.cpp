@@ -495,6 +495,8 @@ PYBIND11_MODULE(_native, m) {
              std::size_t plateau_window, int mu_maxiter,
              int optimizer,
              f32 tr_delta0, std::size_t tr_cg_max,
+             py::array_t<c64, py::array::c_style | py::array::forcecast> deflation_targets,
+             f32 deflation_sigma, f32 deflation_length,
              std::vector<std::size_t> block_sizes,
              py::object project_fn,
              bool return_Q, bool return_density, bool return_fock) {
@@ -528,6 +530,21 @@ PYBIND11_MODULE(_native, m) {
               cfg.optimizer = optimizer;
               cfg.tr_delta0 = tr_delta0;
               cfg.tr_cg_max = tr_cg_max;
+              {
+                  // deflation_targets: (n_defl, nk1, nk2, nb, nb) complex128, or
+                  // empty when no deflation.  Copy the flat buffer; solve_rtr
+                  // validates the size against n_deflation * nk * nb * nb.
+                  std::size_t n_defl = 0;
+                  if (deflation_targets.ndim() == 5 && deflation_targets.shape(0) > 0) {
+                      n_defl = static_cast<std::size_t>(deflation_targets.shape(0));
+                      const c64* dptr = deflation_targets.data();
+                      cfg.deflation_targets.assign(
+                          dptr, dptr + static_cast<std::size_t>(deflation_targets.size()));
+                  }
+                  cfg.n_deflation = n_defl;
+              }
+              cfg.deflation_sigma = deflation_sigma;
+              cfg.deflation_length = deflation_length;
               cfg.block_sizes = block_sizes;
               cfg.return_Q = return_Q;
               cfg.return_density = return_density;
@@ -674,6 +691,28 @@ PYBIND11_MODULE(_native, m) {
                                           (py::ssize_t)nb};
               return py::make_tuple(move_array(std::move(HX), xs),
                                     move_array(std::move(Hp), ps));
+          });
+
+    // --- Deflation bias (Phi, S_pen, diag_coeff) for finite-diff validation ---
+    m.def("_deflation_bias",
+          [](py::array_t<c64, py::array::c_style | py::array::forcecast> P,
+             py::array_t<c64, py::array::c_style | py::array::forcecast> targets,
+             py::array_t<f32, py::array::c_style | py::array::forcecast> w2d,
+             f32 sigma, f32 length) {
+              const std::size_t nk1 = static_cast<std::size_t>(P.shape(0));
+              const std::size_t nk2 = static_cast<std::size_t>(P.shape(1));
+              const std::size_t nb = static_cast<std::size_t>(P.shape(2));
+              const std::size_t nk = nk1 * nk2, n_tot = nk * nb * nb;
+              const std::size_t n_defl =
+                  (targets.ndim() == 5) ? static_cast<std::size_t>(targets.shape(0)) : 0;
+              std::vector<c64> S_pen(n_tot);
+              f32 diag = 0.0;
+              const f32 Phi = cpp_hf::rtr_internal::deflation_bias(
+                  P.data(), n_defl ? targets.data() : nullptr, n_defl,
+                  w2d.data(), nk, nb, sigma, length, S_pen.data(), diag);
+              std::vector<py::ssize_t> xs{(py::ssize_t)nk1, (py::ssize_t)nk2,
+                                          (py::ssize_t)nb, (py::ssize_t)nb};
+              return py::make_tuple(Phi, move_array(std::move(S_pen), xs), diag);
           });
 
     // --- Superlattice Fock (ΔG-streamed) ---

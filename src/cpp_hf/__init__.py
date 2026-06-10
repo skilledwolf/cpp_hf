@@ -50,6 +50,10 @@ from .continuation import (
     ContinuationResult,
     solve_continuation,
 )
+from .deflation import (
+    DeflatedResult,
+    solve_deflated,
+)
 from .superlattice import (
     ExtendedGridLayout,
     build_extended_layout,
@@ -72,6 +76,8 @@ __all__ = [
     "resample_kgrid",
     "ContinuationResult",
     "solve_continuation",
+    "DeflatedResult",
+    "solve_deflated",
     "ExtendedGridLayout",
     "build_extended_layout",
     "superlattice_fock",
