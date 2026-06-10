@@ -96,3 +96,9 @@ CMAKE_PREFIX_PATH = "/project/.cache/fftw-3.3.10-x86_64:/project/.cache/fftw-3.3
 LIBRARY_PATH      = "/project/.cache/fftw-3.3.10-x86_64/lib:/project/.cache/fftw-3.3.10-aarch64/lib:$LIBRARY_PATH"
 CPATH             = "/project/.cache/fftw-3.3.10-x86_64/include:/project/.cache/fftw-3.3.10-aarch64/include:$CPATH"
 BOOST_INCLUDEDIR  = "/project/.cache/boost-1.89.0/include"
+
+# Build the extension for macOS 14 so the wheel's platform tag matches the
+# bundled Homebrew libomp (minimum target 14.0 on the macos-14 runner) — keeps
+# delocate happy and the tag honest.
+[tool.cibuildwheel.macos.environment]
+MACOSX_DEPLOYMENT_TARGET = "14.0"

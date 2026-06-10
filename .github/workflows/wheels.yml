@@ -62,7 +62,10 @@ jobs:
 
   build-macos-arm:
     name: macOS arm64 wheel
-    runs-on: macos-26
+    # macos-14 (oldest arm64 runner): its Homebrew libomp targets macOS 14, so
+    # delocate can bundle it into a 14.0-target wheel.  On newer runners
+    # (macos-26) libomp targets that OS and delocate rejects it.
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
