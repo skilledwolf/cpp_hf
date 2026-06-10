@@ -55,3 +55,44 @@ CMAKE_OSX_DEPLOYMENT_TARGET = { env = "MACOSX_DEPLOYMENT_TARGET", default = "11.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# ---------------------------------------------------------------------------
+# cibuildwheel: cross-platform wheel provisioning.  Restored after fb81931
+# ("reorganize native extension package") dropped this block — manylinux ships
+# no FFTW, so before-all builds it from source into .cache/fftw-3.3.10-<arch>,
+# the environment block points CMake's pkg-config finder at it, and repair
+# bundles the shared lib into the wheel.  wheels.yml and ci/*.sh are unchanged
+# from the last good release (v1.0.3).
+# ---------------------------------------------------------------------------
+[tool.cibuildwheel]
+build = "cp311-* cp312-* cp313-*"
+skip = "pp* *-musllinux_*"
+# API-agnostic load test: confirms the native extension (FFTW/OpenMP linked)
+# imports from the repaired wheel.  (The old ci/smoke_test.py used a since-
+# renamed API.)
+test-command = 'python -c "import cpp_hf"'
+
+[tool.cibuildwheel.linux]
+before-all = "bash ci/linux_before_all.sh"
+manylinux-x86_64-image  = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+repair-wheel-command = """
+LD_LIBRARY_PATH=/project/.cache/fftw-3.3.10-$(uname -m)/lib:$LD_LIBRARY_PATH \
+  auditwheel repair -w {dest_dir} {wheel}
+"""
+
+[tool.cibuildwheel.macos]
+archs = ["native"]
+# One script handles both archs: arm64 builds FFTW from source, x86_64 uses brew.
+before-all = "bash ci/macos_arm_fftw.sh"
+repair-wheel-command = """
+delocate-wheel -L cpp_hf/.dylibs --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
+"""
+
+# Teach CMake/pkg-config where the cached FFTW (and vendored Boost headers) live.
+[tool.cibuildwheel.linux.environment]
+PKG_CONFIG_PATH   = "/project/.cache/fftw-3.3.10-x86_64/lib/pkgconfig:/project/.cache/fftw-3.3.10-aarch64/lib/pkgconfig:$PKG_CONFIG_PATH"
+CMAKE_PREFIX_PATH = "/project/.cache/fftw-3.3.10-x86_64:/project/.cache/fftw-3.3.10-aarch64:$CMAKE_PREFIX_PATH"
+LIBRARY_PATH      = "/project/.cache/fftw-3.3.10-x86_64/lib:/project/.cache/fftw-3.3.10-aarch64/lib:$LIBRARY_PATH"
+CPATH             = "/project/.cache/fftw-3.3.10-x86_64/include:/project/.cache/fftw-3.3.10-aarch64/include:$CPATH"
+BOOST_INCLUDEDIR  = "/project/.cache/boost-1.89.0/include"
