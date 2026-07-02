@@ -111,6 +111,61 @@ class TestMultiKPoint:
         assert bool(result.converged)
 
 
+class TestGradientStop:
+    """tol_grad > 0 is a sufficient stop for the CG path (mirrors newton).
+
+    Needs a kernel with band hybridization: without off-diagonal h the
+    orbital gradient is exactly zero from iteration 0 (all relaxation lives
+    in the occupation channel, which tol_grad intentionally excludes).
+    """
+
+    @staticmethod
+    def _hybridized_kernel(nk=2, T=0.1):
+        kernel_args = dict(
+            weights=np.ones((nk, nk), dtype=np.float32),
+            coulomb_q=np.full((nk, nk, 1, 1), 0.5, dtype=np.complex64),
+            T=T,
+        )
+        h = np.zeros((nk, nk, 2, 2), dtype=np.complex64)
+        h[..., 0, 0] = -0.5
+        h[..., 1, 1] = 0.5
+        h[..., 0, 1] = h[..., 1, 0] = 0.2
+        return HartreeFockKernel(hamiltonian=h, **kernel_args)
+
+    def _solve(self, config):
+        kernel = self._hybridized_kernel()
+        P0 = np.zeros_like(kernel.h)
+        # Seed off the h-eigenbasis so the orbital gradient starts nonzero.
+        P0[..., 0, 0] = 0.6
+        P0[..., 1, 1] = 0.15
+        P0[..., 0, 1] = P0[..., 1, 0] = 0.25
+        return solve(kernel, P0, 3.0, config=config)
+
+    def test_cg_stops_at_first_crossing_and_flags_converged(self):
+        tol = 1e-4
+        result = self._solve(SolverConfig(max_iter=300, tol_grad=tol))
+        assert bool(result.converged)
+        assert 1 < int(result.n_iter) < 300
+        hG = np.asarray(result.history["grad_norm"])
+        assert len(hG) == int(result.n_iter)
+        # Histories end with the qualifying point, and it is the first
+        # crossing — the run must not grind on after reaching tolerance.
+        assert hG[-1] <= tol
+        assert np.all(hG[:-1] > tol)
+
+    def test_cg_gradient_stop_matches_energy_stop_solution(self):
+        by_grad = self._solve(SolverConfig(max_iter=300, tol_grad=1e-7))
+        by_energy = self._solve(SolverConfig(max_iter=300, tol_E=1e-10))
+        assert bool(by_grad.converged) and bool(by_energy.converged)
+        np.testing.assert_allclose(
+            float(by_grad.energy), float(by_energy.energy), atol=1e-6)
+
+    def test_cg_unreachable_tolerance_flags_unconverged(self):
+        result = self._solve(SolverConfig(max_iter=3, tol_grad=1e-14))
+        assert not bool(result.converged)
+        assert int(result.n_iter) == 3
+
+
 class TestSolveResult:
     def test_result_is_named_tuple(self):
         kernel = _make_two_band_kernel()

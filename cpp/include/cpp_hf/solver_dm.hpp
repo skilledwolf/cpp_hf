@@ -22,6 +22,13 @@ namespace cpp_hf {
 struct SolverConfig {
     std::size_t max_iter = 200;
     f32 tol_E = 1.0e-7;
+    // Gradient stopping criterion.  When tol_grad > 0 it is the SOLE and
+    // SUFFICIENT stop for both optimizers: the run ends (converged = true) as
+    // soon as the w-normalised Frobenius norm of the orbital gradient — the
+    // exact quantity logged in hist_grad — drops to tol_grad, and the energy
+    // criterion below is inactive.  tol_grad == 0 (default) stops on the
+    // windowed-energy criterion instead (CG path only; the Newton path then
+    // falls back to an internal 1e-6 gradient tolerance).
     f32 tol_grad = 0.0;
     // Energy convergence is judged over a sliding window: stop when the energy
     // has improved by less than tol_E over the last plateau_window iterations.
@@ -71,6 +78,15 @@ struct DMResult {
     f32 energy = 0.0;
     std::size_t n_iter = 0;
     bool converged = false;
+    // Optimizer-internal per-iteration logs (one entry per outer iteration):
+    // hist_E is the HF total energy E[P] (w2d-weighted, refP-referenced, no
+    // -T*S entropy term) at each iteration's pre-step density; hist_grad is
+    // the w-normalised Frobenius norm of the orbital gradient at the same
+    // point — the exact quantity the tol_grad stop tests.  NOTE `energy` is
+    // recomputed after finalisation, which for the CG path takes one extra
+    // diagonalise-and-reoccupy step — so energy != hist_E.back() for a CG run
+    // that stopped away from stationarity (the Newton path finalises in place
+    // and satisfies energy == hist_E.back() exactly).
     std::vector<f32> hist_E;
     std::vector<f32> hist_grad;
 };
@@ -470,19 +486,25 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     f32 E = 0.0;
     f32 mu = out.mu;
     std::size_t k = 0;
+    bool converged = false;
 
     while (k < cfg.max_iter) {
-        bool energy_not_converged;
-        if (cfg.plateau_window > 0 && k > cfg.plateau_window) {
-            // Improvement over the last plateau_window recorded energies.
-            const f32 e_now = out.hist_E[k - 1];
-            const f32 e_past = out.hist_E[k - 1 - cfg.plateau_window];
-            energy_not_converged = (e_past - e_now) > cfg.tol_E;
-        } else {
-            energy_not_converged = (dE > cfg.tol_E);
+        // Energy-plateau stop — governs only when the gradient criterion is
+        // disabled (tol_grad == 0).  With tol_grad > 0 the gradient test
+        // below, taken at the freshly evaluated point BEFORE stepping, is the
+        // sole stopping criterion (mirrors solve_rtr).
+        if (cfg.tol_grad <= 0.0) {
+            bool energy_not_converged;
+            if (cfg.plateau_window > 0 && k > cfg.plateau_window) {
+                // Improvement over the last plateau_window recorded energies.
+                const f32 e_now = out.hist_E[k - 1];
+                const f32 e_past = out.hist_E[k - 1 - cfg.plateau_window];
+                energy_not_converged = (e_past - e_now) > cfg.tol_E;
+            } else {
+                energy_not_converged = (dE > cfg.tol_E);
+            }
+            if (!energy_not_converged) { converged = true; break; }
         }
-        bool grad_not_converged = (cfg.tol_grad > 0.0) && (grad_norm > cfg.tol_grad);
-        if (!(energy_not_converged || grad_not_converged)) break;
 
         // 1. Build Fock at projected hermitised density
         density_from_Qp(Q.data(), p.data(), P_cur.data(), nk, nb);
@@ -509,6 +531,17 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
             g_p[i] = eps[i] + T_r * logit - mu;
         }
         grad_norm = norm_matrix(G_Q.data(), w_norm.data(), nk, nb);
+
+        // Gradient stop (tol_grad > 0): sufficient criterion, tested at the
+        // point just evaluated so the returned state is the one that passed
+        // and the histories end with the qualifying (E, grad) pair.
+        if (cfg.tol_grad > 0.0 && grad_norm <= cfg.tol_grad) {
+            out.hist_E[k] = E;
+            out.hist_grad[k] = grad_norm;
+            ++k;
+            converged = true;
+            break;
+        }
 
         // 3. Precondition
         double eps_sq_sum = 0.0;
@@ -646,7 +679,7 @@ inline DMResult solve_dm(const HFKernel& K, const c64* P0, f32 n_e,
     out.mu = mu;
     out.energy = E_fin;
     out.n_iter = k;
-    out.converged = (k < cfg.max_iter);
+    out.converged = converged;
     out.hist_E.resize(k);
     out.hist_grad.resize(k);
     return out;

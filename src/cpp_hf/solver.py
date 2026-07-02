@@ -24,6 +24,14 @@ class SolverConfig:
     whose Fock matrices remain block diagonal in the original orbital basis.
     The solver falls back to the full dense path if a generated Fock matrix has
     off-block entries above numerical tolerance.
+
+    Stopping criteria: when ``tol_grad > 0`` it is the sole and *sufficient*
+    stop for both optimizers — the run ends (``converged=True``) as soon as
+    the w-normalised Frobenius norm of the orbital gradient (the quantity
+    logged in ``history["grad_norm"]``) drops to ``tol_grad``.  With
+    ``tol_grad == 0`` (default) the CG path stops on the windowed-energy
+    criterion (``tol_E`` / ``plateau_window``) and the Newton path falls back
+    to an internal 1e-6 gradient tolerance.
     """
 
     max_iter: int = 200
@@ -65,6 +73,21 @@ class SolverConfig:
 
 
 class SolveResult(NamedTuple):
+    """Result of :func:`solve_direct_minimization`.
+
+    ``history`` holds optimizer-internal per-iteration logs: ``"E"`` is the
+    HF total energy E[P] (w2d-weighted, refP-referenced, **without** the
+    -T*S entropy term of the free energy the optimizer minimises) at each
+    iteration's pre-step density, and ``"grad_norm"`` is the w-normalised
+    Frobenius norm of the orbital gradient at the same point — exactly the
+    quantity the ``tol_grad`` stop tests.  ``energy`` is recomputed after
+    finalisation: the CG path finalises with one extra diagonalise-and-
+    reoccupy step, so ``energy != history["E"][-1]`` for a CG run that
+    stopped away from stationarity; the Newton path finalises in place and
+    satisfies ``energy == history["E"][-1]`` exactly.  Do not compare
+    ``history["E"]`` tails across optimizers — compare ``energy``.
+    """
+
     Q: np.ndarray | None
     p: np.ndarray
     mu: np.ndarray
