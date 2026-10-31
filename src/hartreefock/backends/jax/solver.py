@@ -27,7 +27,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from ...config import SolverConfig, SolveResult, drop_unrequested
-from .fock import build_fock, hf_energy, free_energy
+from .fock import build_fock, fock_builder, hf_energy, free_energy
 from .utils import (
     _chemical_potential_bounds, device_args, validate_electron_count, validate_temperature,
 )
@@ -1578,7 +1578,6 @@ def solve(
     n_electrons: float,
     *,
     config: SolverConfig | None = None,
-    fock_build_fn=None,
 ) -> SolveResult:
     """Direct-minimization Hartree-Fock solver.
 
@@ -1648,6 +1647,9 @@ def solve(
             f"block_sizes must sum to {kernel.h.shape[-1]}, got {sum(config.block_sizes)}."
         )
 
+    builder = fock_builder(kernel)
+    custom_fock = None if builder is build_fock else builder
+
     optimizer = str(config.optimizer).lower()
     if optimizer not in ("cg", "newton"):
         raise ValueError(
@@ -1716,7 +1718,7 @@ def solve(
             mu_maxiter=int(config.mu_maxiter),
             block_sizes=config.block_sizes,
             project_fn=config.project_fn,
-            fock_build_fn=fock_build_fn,
+            fock_build_fn=custom_fock,
         ), config)
 
     return drop_unrequested(_solve_jitted(
@@ -1735,6 +1737,6 @@ def solve(
         plateau_window=int(config.plateau_window),
         block_sizes=config.block_sizes,
         project_fn=config.project_fn,
-        fock_build_fn=fock_build_fn,
+        fock_build_fn=custom_fock,
     ), config)
 

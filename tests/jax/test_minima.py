@@ -45,18 +45,6 @@ def test_nonstationary_iterate_is_not_reported_as_a_minimum():
     assert result.escapes == 0 and result.total_iterations == 1
 
 
-def test_custom_fock_is_used_in_every_recovery_stage():
-    # Standard kernel is noninteracting/stable; the custom interaction is
-    # exchange-dominated and must cause the exact same escape as saddle_kernel.
-    kernel = HartreeFockKernel(np.ones((1, 1)), np.zeros((1, 1, 2, 2), complex),
-                              np.zeros((1, 1, 1, 1)), T=.1)
-    def custom(P, *, h, refP, **kwargs):
-        sigma = -(P-refP)
-        return sigma, jnp.zeros_like(P), h+sigma
-    result = solve_minimum(kernel, np.eye(2)[None, None]/2, 1., fock_build_fn=custom)
-    assert result.converged and result.stability.stable and result.escapes >= 1
-
-
 def test_near_saddle_local_stall_can_propose_a_validated_escape(monkeypatch):
     from dataclasses import replace
     import hartreefock.backends.jax.minima as module
@@ -111,10 +99,11 @@ def test_float32_escape_requires_descent_above_kernel_precision(monkeypatch):
     assert "no finite feasible descent" in result.message
 
 
-def test_fermi_escape_preserves_saturated_coupled_tangent_and_energy_curvature():
+def test_fermi_escape_preserves_saturated_coupled_tangent_and_energy_curvature(monkeypatch):
     from scipy.special import expit, xlogy
     from hartreefock.backends.jax import stability_analysis
     from hartreefock.backends.jax.minima import _fermi_escape_density
+    from hartreefock.backends.jax import stability as stability_module
     from hartreefock.backends.jax.stability import (
         _evaluate_fock, _fock_kwargs, _host_fermi_density, _response_fock,
     )
@@ -140,15 +129,17 @@ def test_fermi_escape_preserves_saturated_coupled_tangent_and_energy_curvature()
             sigma = -strength*jnp.asarray(observable)*value
             return sigma, jnp.zeros_like(P), h+sigma
         return custom
-    unit = stability_analysis(kernel, P, number, fock_build_fn=interaction(1.))
+    monkeypatch.setattr(stability_module, "fock_builder", lambda _: interaction(1.))
+    unit = stability_analysis(kernel, P, number)
     fock_fn = interaction(1.05/(1-unit.lowest_eigenvalue))
-    stability = stability_analysis(kernel, P, number, fock_build_fn=fock_fn)
+    monkeypatch.setattr(stability_module, "fock_builder", lambda _: fock_fn)
+    stability = stability_analysis(kernel, P, number)
     np.testing.assert_allclose(stability.lowest_eigenvalue, -.05, atol=1e-12)
     assert stability.stationary and stability.stable is False
     direction = stability.direction
     norm = np.sqrt(np.sum(w*np.sum(abs(direction)**2, axis=(-2, -1)))/w.sum())
     direction = direction/norm
-    args = _fock_kwargs(kernel, fock_fn)
+    args = _fock_kwargs(kernel)
     response = np.asarray(_response_fock(jnp.asarray(P), jnp.asarray(direction), **args))
     response = response/(1-stability.lowest_eigenvalue)
     def trial(step):

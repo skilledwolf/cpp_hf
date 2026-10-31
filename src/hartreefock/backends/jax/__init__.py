@@ -11,12 +11,7 @@ from __future__ import annotations
 from .fock import build_fock, free_energy, hf_energy, occupation_entropy
 from .reference_scf import solve_scf
 from .solver import solve
-from .superlattice import (
-    ExtendedGridLayout,
-    build_extended_layout,
-    make_superlattice_build_fock_fn,
-    make_superlattice_fock_fn,
-)
+from .superlattice import make_superlattice_fock_fn, superlattice_build_fock
 from .utils import resample_kgrid
 
 
@@ -34,14 +29,11 @@ def __getattr__(name):
 
 
 __all__ = [
-    "ExtendedGridLayout",
     "MinimumResult",
     "StabilityResult",
-    "build_extended_layout",
     "build_fock",
     "free_energy",
     "hf_energy",
-    "make_superlattice_build_fock_fn",
     "make_superlattice_fock_fn",
     "occupation_entropy",
     "resample_kgrid",
@@ -49,4 +41,5 @@ __all__ = [
     "solve_minimum",
     "solve_scf",
     "stability_analysis",
+    "superlattice_build_fock",
 ]

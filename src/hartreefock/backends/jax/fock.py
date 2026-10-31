@@ -156,3 +156,14 @@ def free_energy(
     """Free energy Omega = E - T*S(p)."""
     T_val = jnp.maximum(jnp.asarray(T, dtype=p.dtype), jnp.asarray(1e-14, dtype=p.dtype))
     return E - T_val * occupation_entropy(p, w_norm)
+
+
+def fock_builder(kernel):
+    """The Fock builder for ``kernel``: :func:`build_fock`, or the superlattice one."""
+    from ...superlattice import SuperlatticeHartreeFockKernel
+
+    if isinstance(kernel, SuperlatticeHartreeFockKernel):
+        from .superlattice import superlattice_build_fock
+
+        return superlattice_build_fock(kernel)
+    return build_fock

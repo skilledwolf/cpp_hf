@@ -9,7 +9,6 @@ from scipy.linalg import expm
 
 from hartreefock import HartreeFockKernel, SolverConfig
 from hartreefock.backends.jax import solve
-from hartreefock.backends.jax.fock import build_fock
 from hartreefock.backends.jax.solver import (
     _deflation_bias, _deflation_response, _density_from_Qp,
     _fock_in_orbital_basis, _herm, _joint_hvp, _joint_inner_product,
@@ -140,25 +139,6 @@ def test_projected_solver_keeps_density_spectrum_and_stationarity_consistent(opt
     eps = jnp.real(jnp.diagonal(result.fock, axis1=-2, axis2=-1))
     expected_p = jax.nn.sigmoid((result.mu - eps) / K.T)
     np.testing.assert_allclose(jnp.real(jnp.diagonal(result.density, axis1=-2, axis2=-1)), expected_p, atol=2e-9)
-
-
-def test_custom_fock_with_captured_reference_has_exact_newton_response():
-    h = jnp.array([[[[-0.3, 0.1j], [-0.1j, 0.2]]]], dtype=jnp.complex128)
-    ref = jnp.array([[[[0.7, 0.05], [0.05, 0.3]]]], dtype=jnp.complex128)
-    K = HartreeFockKernel(weights=jnp.ones((1, 1)), hamiltonian=h,
-                         reference_density=ref, coulomb_q=jnp.full((1, 1, 1, 1), 0.4), T=0.3)
-
-    def captured_builder(P, **kwargs):
-        # Zeroing the arguments is insufficient to compute this response.
-        kwargs["h"], kwargs["refP"] = h, ref
-        return build_fock(P, **kwargs)
-
-    cfg = SolverConfig(optimizer="newton", max_iter=80, tol_grad=1e-9)
-    standard = solve(K, jnp.zeros_like(h), 0.8, config=cfg)
-    custom = solve(K, jnp.zeros_like(h), 0.8, config=cfg, fock_build_fn=captured_builder)
-    assert bool(standard.converged) and bool(custom.converged)
-    np.testing.assert_allclose(custom.density, standard.density, atol=1e-11)
-    np.testing.assert_allclose(custom.energy, standard.energy, atol=1e-12)
 
 
 @pytest.mark.parametrize("optimizer", ["cg", "newton"])

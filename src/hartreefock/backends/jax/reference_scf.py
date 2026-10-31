@@ -21,13 +21,12 @@ serves as a reference / fallback.  DIIS and ODA mirror cpp_hf's solver_scf.hpp.
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable
 
 import jax
 import jax.numpy as jnp
 
 from ...config import SCFConfig, SCFResult, drop_unrequested
-from .fock import build_fock, free_energy, hf_energy
+from .fock import fock_builder, free_energy, hf_energy
 from .utils import (
     device_args,
     find_chemical_potential,
@@ -98,7 +97,6 @@ def solve_scf(
     n_electrons: float,
     *,
     config: SCFConfig | None = None,
-    fock_build_fn: Callable | None = None,
 ) -> SCFResult:
     """Reference self-consistent field (SCF) solver.
 
@@ -121,12 +119,6 @@ def solve_scf(
         rdiis / anderson;
         ``diis_size``, ``diis_start``, ``diis_damping`` tune DIIS; ``trust_radius``
         clips the per-iteration density step.  Defaults to ``SCFConfig()``.
-    fock_build_fn
-        Optional Fock builder for non-standard exchange kernels (e.g. the
-        superlattice streaming Fock).  Signature must match
-        :func:`jax_hf.fock.build_fock`'s call site.  ``None`` uses the default
-        k-space FFT exchange.  Captured at trace time, so the JIT'd inner loop
-        stays fully XLA-native.
 
     Notes
     -----
@@ -207,7 +199,7 @@ def solve_scf(
             acceleration=str(config.acceleration),
             diis_size=int(config.diis_size),
             project_fn=config.project_fn,
-            fock_build_fn=fock_build_fn if fock_build_fn is not None else build_fock,
+            fock_build_fn=fock_builder(kernel),
             **extra_args,
         )
 

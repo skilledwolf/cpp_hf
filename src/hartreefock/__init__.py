@@ -1,6 +1,7 @@
 """Hartree-Fock solvers on 2D k-meshes with native (C++) and JAX backends.
 
-Build a :class:`HartreeFockKernel` once, then solve it with either backend::
+Build a :class:`HartreeFockKernel` (or, for a moiré plane-wave basis, a
+:class:`SuperlatticeHartreeFockKernel`) once, then solve it with either backend::
 
     kernel = hartreefock.HartreeFockKernel(weights, h, Vq, T=0.01)
     result = hartreefock.solve(kernel, P0, n_electrons, backend="native")
@@ -27,6 +28,7 @@ from .config import (
 from .continuation import solve_continuation
 from .deflation import solve_deflated
 from .kernel import HartreeFockKernel
+from .superlattice import SuperlatticeHartreeFockKernel
 
 try:  # pragma: no cover - metadata only
     __version__ = metadata.version("hartreefock")
@@ -52,6 +54,7 @@ __all__ = [
     "SCFResult",
     "SolveResult",
     "SolverConfig",
+    "SuperlatticeHartreeFockKernel",
     "available_backends",
     "get_backend",
     "solve",

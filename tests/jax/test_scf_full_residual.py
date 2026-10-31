@@ -2,7 +2,6 @@
 
 from dataclasses import replace
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -107,24 +106,6 @@ def test_entropy_descent_can_increase_internal_energy_and_shift_does_not_bias_so
     np.testing.assert_allclose(np.asarray(result.density)[0, 0], expected, atol=1e-11)
     assert result.energy > -1.0
     assert result.history["free_energy"][-1] < -1.0
-
-
-@pytest.mark.parametrize("method", ["rdiis", "anderson"])
-def test_custom_affine_fock_builder_is_used(method):
-    kernel, P = charge_kernel(5.0)
-
-    def custom(P, **kwargs):
-        kwargs["HH"] = 1.7 * kwargs["HH"]
-        return build_fock(P, **kwargs)
-
-    result = solve_scf(kernel, P, 1.5, config=SCFConfig(
-        acceleration=method, mixing=1.0, max_iter=120, density_tol=1e-8, comm_tol=1e-8),
-        fock_build_fn=custom)
-    assert result.converged, result.message
-    F, E, dr, cr = independent_state(kernel, result.density, 1.5, custom)
-    np.testing.assert_allclose(result.fock, F, atol=2e-13)
-    np.testing.assert_allclose(result.energy, E, atol=2e-13)
-    assert max(dr, cr) < 1e-8
 
 
 @pytest.mark.parametrize("n_electrons", [0.0, 3.0])

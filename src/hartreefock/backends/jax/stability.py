@@ -17,7 +17,7 @@ import numpy as np
 from scipy.special import expit
 from scipy.sparse.linalg import ArpackNoConvergence, LinearOperator, eigsh
 
-from .fock import build_fock, hf_energy
+from .fock import fock_builder, hf_energy
 from .utils import device_args
 
 
@@ -58,14 +58,14 @@ def _response_fock(P, direction, *, fock_build_fn, **kwargs):
     )[1]
 
 
-def _fock_kwargs(kernel, fock_build_fn=None):
+def _fock_kwargs(kernel):
     args = device_args(kernel)
     names = ("h", "VR", "refP", "HH", "include_exchange", "include_hartree",
              "exchange_hermitian_channel_packing", "contact_g", "contact_Oi",
              "contact_Oj")
     kwargs = {name: args[name] for name in names}
     kwargs.update(w2d=kernel.w2d,
-                  fock_build_fn=build_fock if fock_build_fn is None else fock_build_fn)
+                  fock_build_fn=fock_builder(kernel))
     return kwargs
 
 
@@ -93,8 +93,7 @@ def _host_fermi_density(fock, weights, number, temperature):
 
 
 def stability_analysis(kernel, density, n_electrons, *, stationarity_tol=1e-6,
-                       eigen_tol=1e-7, maxiter=200, seed=0,
-                       fock_build_fn=None) -> StabilityResult:
+                       eigen_tol=1e-7, maxiter=200, seed=0) -> StabilityResult:
     """Check an unconstrained finite-T density for negative local curvature.
 
     ``stable=True`` requires stationarity and a verified eigenvalue solve;
@@ -103,12 +102,9 @@ def stability_analysis(kernel, density, n_electrons, *, stationarity_tol=1e-6,
     conserves particle number in the quadrature metric. Imposed symmetry
     callbacks are intentionally unsupported: the test allows symmetry breaking.
 
-    ``fock_build_fn`` has the same signature as in :func:`solve_scf`. It must
-    be JAX-differentiable, affine in density, and variational for the quadratic
-    energy formed from its returned ``(Sigma, H, F)``. The response is computed
-    by JVP, including contact and custom superlattice interactions. Adjoint
-    consistency is checked before accepting an eigenvalue; arbitrary custom
-    nonlinear/nonvariational builders are outside the API contract.
+    The response is the JVP of the kernel's Fock builder (dense, contact or
+    superlattice); adjoint consistency is checked before an eigenvalue is
+    accepted.
 
     Enable ``jax_enable_x64`` before constructing the kernel for the default
     tolerances. Requests below ten times the kernel dtype epsilon are rejected
@@ -144,7 +140,7 @@ def stability_analysis(kernel, density, n_electrons, *, stationarity_tol=1e-6,
             or n_electrons > w.sum()*P.shape[-1]
             or abs(count-n_electrons) > max(1e-8, 10*precision)*w.sum()):
         raise ValueError("density must have the specified particle count")
-    kwargs = _fock_kwargs(kernel, fock_build_fn)
+    kwargs = _fock_kwargs(kernel)
     device_density = jnp.asarray(P)
     F = np.asarray(_evaluate_fock(device_density, **kwargs)[0], dtype=complex)
     if not np.all(np.isfinite(F)) or not np.allclose(

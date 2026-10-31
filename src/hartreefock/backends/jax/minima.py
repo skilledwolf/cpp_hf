@@ -53,8 +53,7 @@ def _fermi_escape_density(fock, response_field, weights, number, temperature, st
 
 
 def solve_minimum(kernel, P0, n_electrons, *, config=None, max_escapes=4,
-                  eigen_tol=1e-7, stability_maxiter=200,
-                  fock_build_fn=None) -> MinimumResult:
+                  eigen_tol=1e-7, stability_maxiter=200) -> MinimumResult:
     """Find a stationary density with no resolved negative curvature.
 
     Each local solve has ``config.max_iter`` iterations; at most
@@ -74,9 +73,8 @@ def solve_minimum(kernel, P0, n_electrons, *, config=None, max_escapes=4,
     free energy by more than the kernel precision threshold.
 
     Extra symmetry callbacks are not supported: recovery must be allowed to
-    break symmetry. ``fock_build_fn`` follows the affine, variational,
-    JAX-differentiable contract of :func:`stability_analysis`, and is used
-    consistently in SCF, curvature, and finite-step energy checks. The host
+    break symmetry. The kernel's Fock builder is used consistently in SCF,
+    curvature, and finite-step energy checks. The host
     driver uses NumPy/SciPy orchestration and is not itself JIT-compatible.
     Enable JAX double precision before constructing the kernel for the default
     tolerances. The returned SCF solution contains its density and Fock matrix.
@@ -99,7 +97,7 @@ def solve_minimum(kernel, P0, n_electrons, *, config=None, max_escapes=4,
     if config.project_fn is not None:
         raise ValueError('solve_minimum requires an unconstrained kernel; remove project_fn')
     cfg = config
-    args = _fock_kwargs(kernel, fock_build_fn)
+    args = _fock_kwargs(kernel)
     w = np.asarray(kernel.w2d)
     iterations = builds = escapes = 0
     energies = []
@@ -107,8 +105,7 @@ def solve_minimum(kernel, P0, n_electrons, *, config=None, max_escapes=4,
     stability = None
     message = 'Local solve did not converge'
     for cycle in range(max_escapes+1):
-        result = solve_scf(kernel,initial,n_electrons,config=cfg,
-                           fock_build_fn=fock_build_fn)
+        result = solve_scf(kernel,initial,n_electrons,config=cfg)
         iterations += result.n_iter
         # The new RDIIS/Anderson paths count every build. For legacy methods
         # without counters, -1 propagates "unavailable" rather than fabricating
@@ -136,7 +133,7 @@ def solve_minimum(kernel, P0, n_electrons, *, config=None, max_escapes=4,
             break
         stability = stability_analysis(kernel,result.density,n_electrons,
             stationarity_tol=recovery_tol,eigen_tol=eigen_tol,
-            maxiter=stability_maxiter, fock_build_fn=fock_build_fn)
+            maxiter=stability_maxiter)
         if builds >= 0:
             builds += 1 + stability.response_builds
         if stability.stable is True and not result.converged:

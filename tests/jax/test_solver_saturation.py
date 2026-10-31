@@ -333,7 +333,7 @@ class TestLineSearchAcceptsWhenSaturated:
         # what made the solver fall back to a plain Roothaan step every iteration.
         assert best_unmasked >= Omega, (best_unmasked, Omega)
 
-    def test_cg_costs_fewer_fock_builds_than_an_exhausted_line_search(self):
+    def test_cg_costs_fewer_fock_builds_than_an_exhausted_line_search(self, monkeypatch):
         """End to end: the line search must not burn its whole budget every step.
 
         The default fixture is essentially converged after one CG iteration;
@@ -353,7 +353,10 @@ class TestLineSearchAcceptsWhenSaturated:
             return build_fock(*args, **kwargs)
 
         cfg = SolverConfig(max_iter=200, tol_E=1e-9)
-        result = solve(kernel, P0, n_e, config=cfg, fock_build_fn=fock_fn)
+        from hartreefock.backends.jax import solver as solver_module
+
+        monkeypatch.setattr(solver_module, "fock_builder", lambda _: fock_fn)
+        result = solve(kernel, P0, n_e, config=cfg)
         jax.block_until_ready(result.energy)
         assert bool(result.converged)
         n = int(result.n_iter)

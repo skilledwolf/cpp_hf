@@ -59,7 +59,7 @@ def test_curvature_matches_actual_free_energy_second_difference():
     np.testing.assert_allclose(curvature, stability.lowest_eigenvalue, rtol=2e-6, atol=1e-7)
 
 
-def test_custom_fock_and_contact_response_match_the_same_physics():
+def test_contact_response_matches_its_explicit_tangent():
     h = np.zeros((1, 1, 2, 2), complex)
     # For a two-flavor system the identity contact has tangent response -g D;
     # its scalar Hartree part is removed by the fixed-trace constraint.
@@ -67,24 +67,7 @@ def test_custom_fock_and_contact_response_match_the_same_physics():
                               contact_terms=[(1., np.eye(2), np.eye(2))])
     P = np.eye(2)[None, None]/2
     contact = stability_analysis(kernel, P, 1.)
-    def custom(P, *, h, refP, w2d, **kwargs):
-        rho = jnp.einsum("ij,ijab->ab", w2d, P-refP)
-        sigma = (jnp.trace(rho)*jnp.eye(2)-rho)[None, None]
-        return sigma, jnp.zeros_like(P), h+sigma
-    replacement = stability_analysis(kernel, P, 1., fock_build_fn=custom)
     np.testing.assert_allclose(contact.lowest_eigenvalue, -1.5, atol=1e-10)
-    np.testing.assert_allclose(replacement.lowest_eigenvalue, contact.lowest_eigenvalue, atol=1e-10)
-
-
-def test_non_self_adjoint_custom_response_is_rejected():
-    kernel = HartreeFockKernel(np.ones((1, 1)), np.zeros((1, 1, 2, 2), complex),
-                              np.zeros((1, 1, 1, 1)), T=.1)
-    def custom(P, *, h, **kwargs):
-        # A Hermitian potential does not itself imply a variational response.
-        sigma = jnp.zeros_like(P).at[..., 0, 0].set(P[..., 0, 1].real)
-        return sigma, jnp.zeros_like(P), h+sigma
-    with pytest.raises(ValueError, match="self-adjoint"):
-        stability_analysis(kernel, np.eye(2)[None, None]/2, 1., fock_build_fn=custom)
 
 
 def test_precision_limited_kernel_is_not_given_a_tight_certificate():

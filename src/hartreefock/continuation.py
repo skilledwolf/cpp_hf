@@ -13,6 +13,7 @@ import numpy as np
 from .backends import get_backend
 from .config import ContinuationResult, SCFConfig, SolverConfig
 from .kernel import HartreeFockKernel
+from .superlattice import SuperlatticeHartreeFockKernel, upsample_density
 
 
 def _run_stage(backend, kernel, P0, n_electrons, config, stage):
@@ -72,7 +73,10 @@ def solve_continuation(
     density = coarse.density
     if density is None:
         raise ValueError("the coarse stage must return its density (return_density=True).")
-    P0_fine = engine.resample_kgrid(density, int(fine_kernel.h.shape[0]))
-    P0_fine = 0.5 * (P0_fine + P0_fine.conj().swapaxes(-1, -2))
+    if isinstance(fine_kernel, SuperlatticeHartreeFockKernel):
+        P0_fine = upsample_density(density, coarse_kernel, fine_kernel)
+    else:
+        P0_fine = np.asarray(engine.resample_kgrid(density, int(fine_kernel.h.shape[0])))
+        P0_fine = 0.5 * (P0_fine + P0_fine.conj().swapaxes(-1, -2))
     fine = _run_stage(engine, fine_kernel, P0_fine, n_electrons_fine, fine_config, "fine")
     return ContinuationResult(coarse=coarse, fine=fine, P0_fine=P0_fine if retain_P0_fine else None)
