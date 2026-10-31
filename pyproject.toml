@@ -67,10 +67,10 @@ testpaths = ["tests"]
 [tool.cibuildwheel]
 build = "cp311-* cp312-* cp313-*"
 skip = "pp* *-musllinux_*"
-# API-agnostic load test: confirms the native extension (FFTW/OpenMP linked)
-# imports from the repaired wheel.  (The old ci/smoke_test.py used a since-
-# renamed API.)
-test-command = 'python -c "import cpp_hf"'
+# Exercise an actual native solve from the repaired, installed wheel.  A plain
+# ``import cpp_hf`` is not sufficient because the package intentionally
+# remains importable when ``cpp_hf._native`` fails to load.
+test-command = "python {project}/ci/smoke_test.py"
 
 [tool.cibuildwheel.linux]
 before-all = "bash ci/linux_before_all.sh"

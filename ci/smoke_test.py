@@ -1,9 +1,32 @@
-import numpy as np, cpp_hf
-nk,d=4,2
-w=np.ones((nk,nk))*((2/nk)*(2/nk)/(2*np.pi)**2)
-H=np.zeros((nk,nk,d,d),np.complex128)
-K=np.linspace(-1,1,nk)
-V=(1.0/np.sqrt((K[:,None]**2+K[None,:]**2)+0.2)).astype(np.complex128)[...,None,None]
-P0=np.zeros_like(H); ne=0.5*d*w.sum()
-P,F,E,mu,n=cpp_hf.hartreefock_iteration_cpp(w,H,V,P0,ne,0.2,1,1e-2,2,1.0)
-print("wheel ok", int(n), float(mu))
+"""Installed-wheel smoke test used by cibuildwheel.
+
+This intentionally exercises the compiled extension; importing ``cpp_hf``
+alone is insufficient because the Python package degrades gracefully when the
+native module cannot be loaded.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+import cpp_hf
+from cpp_hf._compat import HAVE_NATIVE
+
+
+assert HAVE_NATIVE, "cpp_hf._native failed to load from the installed wheel"
+
+weights = np.ones((1, 1), dtype=np.float64)
+h = np.array([[[[-1.0, 0.0], [0.0, 1.0]]]], dtype=np.complex128)
+interaction = np.ones((1, 1, 1, 1), dtype=np.float64)
+kernel = cpp_hf.HartreeFockKernel(weights, h, interaction, T=0.2)
+result = cpp_hf.solve_scf(
+    kernel,
+    np.zeros_like(h),
+    1.0,
+    config=cpp_hf.SCFConfig(max_iter=4, mixing=1.0),
+)
+
+assert result.density_matrix is not None
+assert result.density_matrix.shape == h.shape
+assert np.isfinite(float(result.energy))
+print("wheel native smoke test passed")
