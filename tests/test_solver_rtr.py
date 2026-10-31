@@ -2,8 +2,9 @@
 
 The Newton step uses the joint (Q,p) Hessian with the EXACT linear interaction
 response Σ[δP] = F[δP]-h (one Fock build per Hessian-vector product), solved by
-a Steihaug truncated-CG within a trust region.  It needs far fewer Fock builds
-than CG on stiff problems (superlinear outer convergence).
+a Steihaug truncated-CG within a trust region. It can need far fewer outer
+iterations than CG on stiff problems, although each outer iteration performs
+multiple Hessian-vector Fock builds.
 
 Note: like CG and SCF, Newton converges to the self-consistent solution in the
 basin of its initial guess; on problems with multiple HF solutions it may find a
@@ -121,7 +122,12 @@ class TestRtrHvp:
         for e in (1e-5, 1e-6):
             Qe = Q @ np.stack([expm(e * X[i, j]) for i in range(nk1) for j in range(nk2)]).reshape(Q.shape)
             GQe, gpe, _ = grad(Qe, p + e * dp)
-            fdQ = (GQe - GQ) / e
+            transport = np.stack([
+                expm(0.5 * e * X[i, j])
+                for i in range(nk1) for j in range(nk2)
+            ]).reshape(Q.shape)
+            GQe_back = transport @ GQe @ np.conj(transport.swapaxes(-2, -1))
+            fdQ = offdiag((GQe_back - GQ) / e)
             fdp = (gpe - gp) / e
             fdp_pr = fdp - np.sum(w2[..., None] * fdp) / (np.sum(w2) * nb)
             errs_Q.append(np.max(np.abs(fdQ - HX)) / max(np.max(np.abs(HX)), 1e-30))
@@ -160,9 +166,11 @@ class TestRtrConvergence:
         np.testing.assert_allclose(
             np.asarray(r.density), np.conj(np.swapaxes(np.asarray(r.density), -1, -2)), atol=1e-6)
 
-    def test_superlinear_far_fewer_outer_iterations_than_cg(self):
-        # On a stiff multi-k problem Newton converges in very few outer steps,
-        # while CG needs many iterations (each is one Fock build).
+    def test_newton_reaches_full_stationarity_threshold_before_cg(self):
+        # On this stiff multi-k problem the stricter full Fermi-density
+        # residual converges slowly for both optimizers. Compare them at the
+        # same residual threshold; their final iteration counts correspond to
+        # different accuracies and are not a meaningful speed ratio.
         kernel = _multiband(6, 6, 0.015, 0.4, 21)
         P0 = np.zeros_like(kernel.h)
         ne = float(6 * 6 * 6 * 0.5)
@@ -170,10 +178,15 @@ class TestRtrConvergence:
             max_iter=2000, tol_E=0.0, tol_grad=1e-6, plateau_window=0))
         nw = solve(kernel, P0, ne, config=SolverConfig(
             max_iter=200, tol_grad=1e-6, optimizer="newton"))
-        assert bool(nw.converged)
-        assert int(nw.n_iter) < 40                      # superlinear: a handful of outer steps
-        assert int(nw.n_iter) * 4 < int(cg.n_iter)      # far fewer than CG's iteration count
-        # same stationary solution as CG on this (well-posed) problem
+        threshold = 1e-4
+        cg_crossing = np.flatnonzero(
+            np.asarray(cg.history["grad_norm"]) < threshold)
+        nw_crossing = np.flatnonzero(
+            np.asarray(nw.history["grad_norm"]) < threshold)
+        assert cg_crossing.size
+        assert nw_crossing.size
+        assert int(nw_crossing[0]) < int(cg_crossing[0])
+        # Same near-stationary solution as CG on this well-posed problem.
         np.testing.assert_allclose(float(nw.energy), float(cg.energy), atol=1e-4, rtol=1e-6)
 
 
@@ -185,3 +198,44 @@ class TestRtrConfig:
         # converges to a stationary point (energy finite, particles conserved)
         assert np.isfinite(float(r.energy))
         assert _comm_rms(np.asarray(r.fock), np.asarray(r.density), kernel.w2d) < 1e-4
+
+
+@pytest.mark.parametrize("optimizer", ["cg", "newton"])
+def test_degenerate_initial_chart_uses_projected_density_entropy(optimizer):
+    from scipy.special import xlogy
+    from cpp_hf.symmetry import make_project_fn
+    from cpp_hf.utils import density_matrix_from_fock
+
+    theta = 0.7
+    symmetry = np.array([[np.cos(theta), np.sin(theta)],
+                         [np.sin(theta), -np.cos(theta)]])
+    project = make_project_fn(unitary_group=np.array([np.eye(2), symmetry]))
+    h = np.zeros((1, 1, 2, 2), complex)
+    kernel = HartreeFockKernel(
+        np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=0.1,
+        include_exchange=False, include_hartree=True,
+        reference_density=np.zeros_like(h), hartree_matrix=np.diag([2.0, 0.0]),
+    )
+    # F[P0]=0 selects an arbitrary orbital gauge. The next Fock has a
+    # nontrivial symmetry axis, so projecting an occupation trial changes its
+    # spectrum. Entropy must use that new spectrum, including before stopping.
+    def run(iterations):
+        return solve(kernel, h, 1.0, config=SolverConfig(
+            optimizer=optimizer, project_fn=project, max_iter=iterations, tol_grad=1e-7,
+        ))
+
+    def actual_free_energy(result):
+        p = np.clip(np.linalg.eigvalsh(result.density), 0.0, 1.0)
+        return float(result.energy + kernel.T * np.sum(
+            xlogy(p, p) + xlogy(1.0 - p, 1.0 - p)))
+
+    first, second, converged = run(1), run(2), run(200)
+    np.testing.assert_allclose(second.history["free_energy"][1],
+                               actual_free_energy(first), atol=1e-12, rtol=0.0)
+    assert actual_free_energy(second) <= actual_free_energy(first) + 1e-12
+    for result in (first, second, converged):
+        reconstructed = (result.Q * result.p[..., None, :]) @ result.Q.conj().swapaxes(-2, -1)
+        np.testing.assert_allclose(result.density, reconstructed, atol=1e-12)
+    assert converged.converged
+    fixed_point, _ = density_matrix_from_fock(converged.fock, kernel.w2d, 1.0, kernel.T)
+    np.testing.assert_allclose(converged.density, project(fixed_point), atol=1e-7)

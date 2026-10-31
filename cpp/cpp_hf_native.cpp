@@ -13,13 +13,20 @@
 #include "cpp_hf/solver_dm.hpp"
 #include "cpp_hf/solver_rtr.hpp"
 #include "cpp_hf/solver_scf.hpp"
+#include "cpp_hf/solver_anderson.hpp"
+#include "cpp_hf/solver_auto.hpp"
 #include "cpp_hf/superlattice.hpp"
 #include "cpp_hf/types.hpp"
 #include "cpp_hf/utils.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace py = pybind11;
@@ -37,8 +44,116 @@ py::array_t<T> move_array(std::vector<T>&& v, std::vector<py::ssize_t> shape) {
     return py::array_t<T>(shape, data, cap);
 }
 
-// Build a HFKernel from raw numpy arrays.  All inputs are validated at the
-// Python level before being passed in here.
+std::string shape_string(const py::array& array) {
+    std::ostringstream out;
+    out << '(';
+    for (py::ssize_t axis = 0; axis < array.ndim(); ++axis) {
+        if (axis) out << ", ";
+        out << array.shape(axis);
+    }
+    if (array.ndim() == 1) out << ',';
+    out << ')';
+    return out.str();
+}
+
+void require_shape(
+    const py::array& array,
+    const std::vector<py::ssize_t>& expected,
+    const char* name) {
+    bool matches = array.ndim() == static_cast<py::ssize_t>(expected.size());
+    if (matches) {
+        for (py::ssize_t axis = 0; axis < array.ndim(); ++axis) {
+            if (array.shape(axis) != expected[static_cast<std::size_t>(axis)]) {
+                matches = false;
+                break;
+            }
+        }
+    }
+    if (!matches) {
+        std::ostringstream message;
+        message << name << " must have shape (";
+        for (std::size_t axis = 0; axis < expected.size(); ++axis) {
+            if (axis) message << ", ";
+            message << expected[axis];
+        }
+        if (expected.size() == 1) message << ',';
+        message << "); got " << shape_string(array);
+        throw std::invalid_argument(message.str());
+    }
+}
+
+void require_dense_shape(
+    const py::array& array,
+    std::size_t nk1,
+    std::size_t nk2,
+    std::size_t nb,
+    const char* name) {
+    require_shape(
+        array,
+        {
+            static_cast<py::ssize_t>(nk1),
+            static_cast<py::ssize_t>(nk2),
+            static_cast<py::ssize_t>(nb),
+            static_cast<py::ssize_t>(nb),
+        },
+        name);
+}
+
+void require_particle_count(const HFKernel& kernel, f32 n_e) {
+    if (!std::isfinite(n_e))
+        throw std::invalid_argument("n_e must be finite");
+    const f32 capacity =
+        kernel.weight_sum * static_cast<f32>(kernel.nb);
+    const f32 tolerance =
+        std::max<f32>(1.0e-8, 1.0e-6 * std::max<f32>(1.0, std::abs(capacity)));
+    if (n_e < -tolerance || n_e > capacity + tolerance)
+        throw std::invalid_argument(
+            "n_e is outside the physically reachable range");
+}
+
+void require_block_sizes(
+    const std::vector<std::size_t>& sizes,
+    std::size_t nb) {
+    if (sizes.empty()) return;
+    std::size_t total = 0;
+    for (const std::size_t size : sizes) {
+        if (size == 0)
+            throw std::invalid_argument(
+                "block_sizes entries must be positive");
+        if (size > nb - std::min(total, nb))
+            throw std::invalid_argument(
+                "block_sizes must sum to nb");
+        total += size;
+    }
+    if (total != nb)
+        throw std::invalid_argument("block_sizes must sum to nb");
+}
+
+// Leading-axis layout shared by the per-band test hooks: ``bands`` is
+// (..., nb) and ``weights`` carries its leading axes.  Returns (nk, nb).
+std::pair<std::size_t, std::size_t> band_layout(
+    const py::array& bands, const py::array& weights,
+    const char* bands_name, const char* weights_name) {
+    if (bands.ndim() < 1 || bands.shape(bands.ndim() - 1) <= 0)
+        throw std::invalid_argument(
+            std::string(bands_name) +
+            " must have at least one dimension and a non-empty band axis");
+    bool matches = weights.ndim() == bands.ndim() - 1;
+    for (py::ssize_t axis = 0; matches && axis < weights.ndim(); ++axis)
+        matches = weights.shape(axis) == bands.shape(axis);
+    if (!matches)
+        throw std::invalid_argument(
+            std::string(weights_name) + " shape must match " + bands_name +
+            " without the final band axis");
+    std::size_t nk = 1;
+    for (py::ssize_t axis = 0; axis < bands.ndim() - 1; ++axis)
+        nk *= static_cast<std::size_t>(bands.shape(axis));
+    return {nk, static_cast<std::size_t>(bands.shape(bands.ndim() - 1))};
+}
+
+// Build a HFKernel from raw NumPy arrays.  Validate again at the native
+// boundary: the binding is public, and the solvers use fixed-size pointer
+// arithmetic that must not rely on a particular Python wrapper having run.
 HFKernel make_kernel(
     py::array_t<f32, py::array::c_style> w2d,
     py::array_t<c64, py::array::c_style> h,
@@ -56,18 +171,61 @@ HFKernel make_kernel(
     bool exchange_hcp) {
 
     if (h.ndim() != 4) throw std::invalid_argument("h must be (nk1,nk2,nb,nb)");
+    if (h.shape(0) <= 0 || h.shape(1) <= 0 || h.shape(2) <= 0)
+        throw std::invalid_argument("h dimensions must be positive");
     HFKernel K;
     K.nk1 = static_cast<std::size_t>(h.shape(0));
     K.nk2 = static_cast<std::size_t>(h.shape(1));
     K.nb = static_cast<std::size_t>(h.shape(2));
     if (static_cast<std::size_t>(h.shape(3)) != K.nb)
         throw std::invalid_argument("h last two axes must be square (nb,nb)");
-    if (VR_shifted.ndim() != 4)
-        throw std::invalid_argument("VR must be (nk1,nk2,dv1,dv2)");
+    require_shape(
+        w2d,
+        {
+            static_cast<py::ssize_t>(K.nk1),
+            static_cast<py::ssize_t>(K.nk2),
+        },
+        "w2d");
+    f32 computed_weight_sum = 0.0;
+    for (std::size_t k = 0; k < K.nk(); ++k) {
+        if (!std::isfinite(w2d.data()[k]))
+            throw std::invalid_argument("w2d must be finite");
+        if (w2d.data()[k] < 0.0)
+            throw std::invalid_argument("w2d must be non-negative");
+        computed_weight_sum += w2d.data()[k];
+    }
+    if (!std::isfinite(computed_weight_sum) || computed_weight_sum <= 0.0)
+        throw std::invalid_argument(
+            "w2d must have a finite positive sum");
+    const f32 weight_sum_tolerance =
+        1.0e-8 * std::max<f32>(1.0, std::abs(computed_weight_sum));
+    if (std::abs(weight_sum - computed_weight_sum) > weight_sum_tolerance)
+        throw std::invalid_argument(
+            "weight_sum must equal sum(w2d)");
+    if (VR_shifted.ndim() != 4 ||
+        static_cast<std::size_t>(VR_shifted.shape(0)) != K.nk1 ||
+        static_cast<std::size_t>(VR_shifted.shape(1)) != K.nk2) {
+        throw std::invalid_argument(
+            "VR must have shape (nk1,nk2,1,1) or (nk1,nk2,nb,nb)");
+    }
     K.dv1 = static_cast<std::size_t>(VR_shifted.shape(2));
     K.dv2 = static_cast<std::size_t>(VR_shifted.shape(3));
     if (!((K.dv1 == 1 && K.dv2 == 1) || (K.dv1 == K.nb && K.dv2 == K.nb)))
         throw std::invalid_argument("VR last two dims must be (1,1) or (nb,nb)");
+    if (exchange_hcp && (K.dv1 != 1 || K.dv2 != 1))
+        throw std::invalid_argument(
+            "exchange_hcp requires VR with shape (nk1,nk2,1,1)");
+    require_shape(
+        HH,
+        {
+            static_cast<py::ssize_t>(K.nb),
+            static_cast<py::ssize_t>(K.nb),
+        },
+        "HH");
+    if (!std::isfinite(weight_sum) || weight_sum <= 0.0)
+        throw std::invalid_argument("weight_sum must be finite and positive");
+    if (!std::isfinite(T) || T < 0.0)
+        throw std::invalid_argument("T must be finite and non-negative");
 
     K.include_hartree = include_hartree;
     K.include_exchange = include_exchange;
@@ -84,6 +242,9 @@ HFKernel make_kernel(
             static_cast<std::size_t>(refP.shape(3)) != K.nb) {
             throw std::invalid_argument("refP must match h shape when has_refP is true");
         }
+    } else if (refP.size() != 0) {
+        throw std::invalid_argument(
+            "refP must be empty when has_refP is false");
     }
 
     K.h = h.data();
@@ -94,6 +255,22 @@ HFKernel make_kernel(
 
     if (contact_g.ndim() != 1) throw std::invalid_argument("contact_g must be 1-D");
     K.n_contact = static_cast<std::size_t>(contact_g.shape(0));
+    require_shape(
+        contact_Oi,
+        {
+            static_cast<py::ssize_t>(K.n_contact),
+            static_cast<py::ssize_t>(K.nb),
+            static_cast<py::ssize_t>(K.nb),
+        },
+        "contact_Oi");
+    require_shape(
+        contact_Oj,
+        {
+            static_cast<py::ssize_t>(K.n_contact),
+            static_cast<py::ssize_t>(K.nb),
+            static_cast<py::ssize_t>(K.nb),
+        },
+        "contact_Oj");
     K.contact_g = contact_g.data();
     K.contact_Oi = contact_Oi.data();
     K.contact_Oj = contact_Oj.data();
@@ -127,9 +304,26 @@ void inject_superlattice_into_kernel(HFKernel& K, py::object kernel_args) {
     K.N_ext_x = py::cast<std::size_t>(kernel_args["N_ext_x"]);
     K.N_ext_y = py::cast<std::size_t>(kernel_args["N_ext_y"]);
 
-    if (K.n_G * K.dim_orb != K.nb) {
+    if (K.n_G == 0 || K.dim_orb == 0 || K.n_delta == 0 ||
+        K.N_ext_x == 0 || K.N_ext_y == 0) {
+        throw std::invalid_argument(
+            "superlattice dimensions must be positive");
+    }
+    if (K.n_G > K.nb / K.dim_orb ||
+        K.n_G * K.dim_orb != K.nb) {
         throw std::invalid_argument(
             "superlattice mode requires n_G × dim_orb == nb");
+    }
+    if (fock_active) {
+        const f32 first_weight = K.w2d[0];
+        const f32 tolerance =
+            1.0e-12 * std::max<f32>(1.0, std::abs(first_weight));
+        for (std::size_t k = 1; k < K.nk(); ++k) {
+            if (std::abs(K.w2d[k] - first_weight) > tolerance) {
+                throw std::invalid_argument(
+                    "superlattice Fock currently requires uniform k-point weights");
+            }
+        }
     }
 
     auto V_lag_fft = py::cast<py::array_t<c64, py::array::c_style>>(
@@ -145,24 +339,76 @@ void inject_superlattice_into_kernel(HFKernel& K, py::object kernel_args) {
     auto pair_to_delta = py::cast<py::array_t<std::int64_t, py::array::c_style>>(
         kernel_args["pair_to_delta"]);
 
-    if (static_cast<std::size_t>(V_lag_fft.shape(0)) != K.N_ext_x ||
+    if (V_lag_fft.ndim() != 2 ||
+        static_cast<std::size_t>(V_lag_fft.shape(0)) != K.N_ext_x ||
         static_cast<std::size_t>(V_lag_fft.shape(1)) != K.N_ext_y) {
         throw std::invalid_argument(
             "V_lag_fft must have shape (N_ext_x, N_ext_y)");
     }
-    if (static_cast<std::size_t>(g_a_off.shape(0)) != K.n_G ||
+    if (g_a_off.ndim() != 2 ||
+        static_cast<std::size_t>(g_a_off.shape(0)) != K.n_G ||
         g_a_off.shape(1) != 2) {
         throw std::invalid_argument("g_a_off must be (n_G, 2)");
     }
-    if (static_cast<std::size_t>(pair_start.shape(0)) != K.n_delta + 1) {
+    if (pair_i.ndim() != 1 || pair_j.ndim() != 1)
+        throw std::invalid_argument("pair_i and pair_j must be 1-D");
+    if (pair_start.ndim() != 1 ||
+        static_cast<std::size_t>(pair_start.shape(0)) != K.n_delta + 1) {
         throw std::invalid_argument("pair_start must have length n_delta + 1");
     }
     if (pair_i.shape(0) != pair_j.shape(0)) {
         throw std::invalid_argument("pair_i and pair_j must have the same length");
     }
-    if (static_cast<std::size_t>(pair_to_delta.shape(0)) != K.n_G ||
+    if (pair_to_delta.ndim() != 2 ||
+        static_cast<std::size_t>(pair_to_delta.shape(0)) != K.n_G ||
         static_cast<std::size_t>(pair_to_delta.shape(1)) != K.n_G) {
         throw std::invalid_argument("pair_to_delta must be (n_G, n_G)");
+    }
+    const auto n_pairs = static_cast<std::size_t>(pair_i.shape(0));
+    if (pair_start.data()[0] != 0 ||
+        pair_start.data()[K.n_delta] != static_cast<std::int64_t>(n_pairs)) {
+        throw std::invalid_argument(
+            "pair_start must begin at 0 and end at len(pair_i)");
+    }
+    for (std::size_t d = 0; d < K.n_delta; ++d) {
+        if (pair_start.data()[d] < 0 ||
+            pair_start.data()[d] > pair_start.data()[d + 1]) {
+            throw std::invalid_argument(
+                "pair_start must be non-negative and non-decreasing");
+        }
+    }
+    for (std::size_t p = 0; p < n_pairs; ++p) {
+        if (pair_i.data()[p] < 0 ||
+            pair_i.data()[p] >= static_cast<std::int64_t>(K.n_G) ||
+            pair_j.data()[p] < 0 ||
+            pair_j.data()[p] >= static_cast<std::int64_t>(K.n_G)) {
+            throw std::invalid_argument(
+                "pair_i and pair_j entries must index [0, n_G)");
+        }
+    }
+    for (std::size_t i = 0; i < K.n_G; ++i) {
+        const std::int64_t ox = g_a_off.data()[2 * i];
+        const std::int64_t oy = g_a_off.data()[2 * i + 1];
+        const bool x_outside =
+            ox < 0 || K.N_ext_x < K.nk1 ||
+            static_cast<std::size_t>(ox) >
+                (K.N_ext_x - K.nk1) / K.nk1;
+        const bool y_outside =
+            oy < 0 || K.N_ext_y < K.nk2 ||
+            static_cast<std::size_t>(oy) >
+                (K.N_ext_y - K.nk2) / K.nk2;
+        if (x_outside || y_outside) {
+            throw std::invalid_argument(
+                "g_a_off entries place a k tile outside the extended grid");
+        }
+    }
+    for (std::size_t p = 0; p < K.n_G * K.n_G; ++p) {
+        if (pair_to_delta.data()[p] < 0 ||
+            pair_to_delta.data()[p] >=
+                static_cast<std::int64_t>(K.n_delta)) {
+            throw std::invalid_argument(
+                "pair_to_delta entries must index [0, n_delta)");
+        }
     }
 
     K.V_lag_fft = V_lag_fft.data();
@@ -190,7 +436,8 @@ void inject_superlattice_into_kernel(HFKernel& K, py::object kernel_args) {
     if (hartree_active) {
         auto HH_GG = py::cast<py::array_t<f32, py::array::c_style>>(
             kernel_args["HH_GG"]);
-        if (static_cast<std::size_t>(HH_GG.shape(0)) != K.n_G ||
+        if (HH_GG.ndim() != 2 ||
+            static_cast<std::size_t>(HH_GG.shape(0)) != K.n_G ||
             static_cast<std::size_t>(HH_GG.shape(1)) != K.n_G) {
             throw std::invalid_argument("HH_GG must be (n_G, n_G)");
         }
@@ -249,11 +496,23 @@ PYBIND11_MODULE(_native, m) {
              bool apply_ifftshift, bool hcp) {
               if (P.ndim() != 4) throw std::invalid_argument("P must be (nk1,nk2,nb,nb)");
               if (VR.ndim() != 4) throw std::invalid_argument("VR must be (nk1,nk2,dv1,dv2)");
+              if (P.shape(0) <= 0 || P.shape(1) <= 0 || P.shape(2) <= 0)
+                  throw std::invalid_argument("P dimensions must be positive");
+              if (P.shape(3) != P.shape(2))
+                  throw std::invalid_argument("P last two dimensions must be square");
               const std::size_t nk1 = P.shape(0);
               const std::size_t nk2 = P.shape(1);
               const std::size_t nb = P.shape(2);
+              if (VR.shape(0) != P.shape(0) || VR.shape(1) != P.shape(1))
+                  throw std::invalid_argument(
+                      "VR leading dimensions must match P");
               const std::size_t dv1 = VR.shape(2);
               const std::size_t dv2 = VR.shape(3);
+              if (!((dv1 == 1 && dv2 == 1) ||
+                    (dv1 == nb && dv2 == nb))) {
+                  throw std::invalid_argument(
+                      "VR last two dimensions must be (1,1) or match P");
+              }
               std::vector<c64> sigma(nk1 * nk2 * nb * nb);
               {
                   py::gil_scoped_release release;
@@ -362,9 +621,42 @@ PYBIND11_MODULE(_native, m) {
           [](py::array_t<f32, py::array::c_style | py::array::forcecast> bands,
              py::array_t<f32, py::array::c_style | py::array::forcecast> weights,
              f32 n_e, f32 T, int maxiter) {
+              if (bands.ndim() < 1 || bands.shape(bands.ndim() - 1) <= 0)
+                  throw std::invalid_argument(
+                      "bands must have at least one dimension and a non-empty band axis");
+              if (weights.ndim() != bands.ndim() - 1)
+                  throw std::invalid_argument(
+                      "weights shape must match bands without the final band axis");
+              for (py::ssize_t axis = 0; axis < weights.ndim(); ++axis) {
+                  if (weights.shape(axis) != bands.shape(axis))
+                      throw std::invalid_argument(
+                          "weights shape must match bands without the final band axis");
+              }
+              if (!std::isfinite(T) || T < 0.0)
+                  throw std::invalid_argument("T must be finite and non-negative");
+              if (!std::isfinite(n_e))
+                  throw std::invalid_argument("n_e must be finite");
+              if (maxiter < 0)
+                  throw std::invalid_argument("maxiter must be non-negative");
               std::size_t nk = 1;
               for (int i = 0; i < bands.ndim() - 1; ++i) nk *= bands.shape(i);
               std::size_t nb = bands.shape(bands.ndim() - 1);
+              f32 weight_sum = 0.0;
+              for (std::size_t k = 0; k < nk; ++k) {
+                  const f32 weight = weights.data()[k];
+                  if (!std::isfinite(weight))
+                      throw std::invalid_argument("weights must be finite");
+                  weight_sum += weight;
+              }
+              const f32 capacity = weight_sum * static_cast<f32>(nb);
+              const f32 count_tol =
+                  std::max<f32>(1.0e-8, 1.0e-6 * std::max<f32>(1.0, std::abs(capacity)));
+              if (!std::isfinite(weight_sum) || weight_sum <= 0.0)
+                  throw std::invalid_argument(
+                      "weights must have a finite positive sum");
+              if (n_e < -count_tol || n_e > capacity + count_tol)
+                  throw std::invalid_argument(
+                      "n_e is outside the physically reachable range");
               f32 mu = 0.0;
               {
                   py::gil_scoped_release release;
@@ -396,6 +688,7 @@ PYBIND11_MODULE(_native, m) {
                   py::cast<bool>(kernel_args["include_exchange"]),
                   py::cast<bool>(kernel_args["exchange_hcp"]));
               inject_superlattice_into_kernel(K, kernel_args);
+              require_dense_shape(P, K.nk1, K.nk2, K.nb, "P");
               const std::size_t n_tot = K.n_dense();
               std::vector<c64> Sigma(n_tot), Hh(n_tot), F(n_tot);
               ProjectFn pf = wrap_project_fn(project_fn);
@@ -444,6 +737,32 @@ PYBIND11_MODULE(_native, m) {
                   py::cast<bool>(kernel_args["include_exchange"]),
                   py::cast<bool>(kernel_args["exchange_hcp"]));
               inject_superlattice_into_kernel(K, kernel_args);
+              require_dense_shape(P0, K.nk1, K.nk2, K.nb, "P0");
+              require_particle_count(K, n_e);
+              require_block_sizes(block_sizes, K.nb);
+              if (max_iter == 0)
+                  throw std::invalid_argument("max_iter must be positive");
+              if (!std::isfinite(density_tol) || density_tol < 0.0 ||
+                  !std::isfinite(comm_tol) || comm_tol < 0.0)
+                  throw std::invalid_argument(
+                      "SCF tolerances must be finite and non-negative");
+              if (!std::isfinite(mixing) || mixing < 0.0 || mixing > 1.0)
+                  throw std::invalid_argument("mixing must be between 0 and 1");
+              if (!std::isfinite(level_shift))
+                  throw std::invalid_argument("level_shift must be finite");
+              if (acceleration != "linear" && acceleration != "diis" &&
+                  acceleration != "oda" && acceleration != "anderson" && acceleration != "rdiis")
+                  throw std::invalid_argument(
+                      "acceleration must be linear, diis, oda, or anderson");
+              if (diis_size == 0)
+                  throw std::invalid_argument("diis_size must be positive");
+              if (!std::isfinite(diis_damping) ||
+                  diis_damping < 0.0 || diis_damping > 1.0)
+                  throw std::invalid_argument(
+                      "diis_damping must be between 0 and 1");
+              if (!std::isfinite(trust_radius) || trust_radius < 0.0)
+                  throw std::invalid_argument(
+                      "trust_radius must be finite and non-negative");
               SCFConfig cfg;
               cfg.max_iter = max_iter;
               cfg.density_tol = density_tol;
@@ -452,6 +771,14 @@ PYBIND11_MODULE(_native, m) {
               cfg.level_shift = level_shift;
               cfg.block_sizes = block_sizes;
               cfg.acceleration = acceleration;
+              if (kernel_args.contains("preconditioner"))
+                  cfg.preconditioner = py::cast<std::string>(kernel_args["preconditioner"]);
+              if (kernel_args.contains("safeguard"))
+                  cfg.safeguard = py::cast<bool>(kernel_args["safeguard"]);
+              if (cfg.preconditioner != "none" && cfg.preconditioner != "hartree")
+                  throw std::invalid_argument("preconditioner must be none or hartree");
+              if ((acceleration == "anderson" || acceleration == "rdiis") && level_shift != 0.0)
+                  throw std::invalid_argument("Anderson requires level_shift=0");
               cfg.diis_size = diis_size;
               cfg.diis_start = diis_start;
               cfg.diis_damping = diis_damping;
@@ -461,14 +788,23 @@ PYBIND11_MODULE(_native, m) {
               ProjectFn pf = wrap_project_fn(project_fn);
               const ProjectFn* pfp = pf ? &pf : nullptr;
               SCFResult res;
+              std::size_t n_fock_builds = 0;
+              K.fock_builds = &n_fock_builds;
+              K.exchange_blocks = &cfg.block_sizes;
               {
                   py::gil_scoped_release release;
-                  res = solve_scf(K, P0.data(), n_e, cfg, pfp);
+                  res = (acceleration == "anderson" || acceleration == "rdiis")
+                      ? solve_anderson(K, P0.data(), n_e, cfg, pfp)
+                      : solve_scf(K, P0.data(), n_e, cfg, pfp);
               }
+
+              if (kernel_args.contains("diagnostics"))
+                  kernel_args["diagnostics"]["fock_builds"] = py::int_(n_fock_builds);
 
               std::vector<py::ssize_t> dense_shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
                                                     (py::ssize_t)K.nb, (py::ssize_t)K.nb};
               std::vector<py::ssize_t> hE_shape{(py::ssize_t)res.hist_E.size()};
+              std::vector<py::ssize_t> hF_shape{(py::ssize_t)res.hist_free.size()};
               std::vector<py::ssize_t> hD_shape{(py::ssize_t)res.hist_density.size()};
               std::vector<py::ssize_t> hC_shape{(py::ssize_t)res.hist_comm.size()};
               py::object density_obj = py::none();
@@ -480,6 +816,7 @@ PYBIND11_MODULE(_native, m) {
                   fock_obj,
                   res.energy, res.mu, res.iterations, res.converged,
                   move_array(std::move(res.hist_E), hE_shape),
+                  move_array(std::move(res.hist_free), hF_shape),
                   move_array(std::move(res.hist_density), hD_shape),
                   move_array(std::move(res.hist_comm), hC_shape));
           });
@@ -516,6 +853,39 @@ PYBIND11_MODULE(_native, m) {
                   py::cast<bool>(kernel_args["include_exchange"]),
                   py::cast<bool>(kernel_args["exchange_hcp"]));
               inject_superlattice_into_kernel(K, kernel_args);
+              require_dense_shape(P0, K.nk1, K.nk2, K.nb, "P0");
+              require_particle_count(K, n_e);
+              require_block_sizes(block_sizes, K.nb);
+              if (max_iter == 0)
+                  throw std::invalid_argument("max_iter must be positive");
+              if (!std::isfinite(tol_E) || tol_E < 0.0 ||
+                  !std::isfinite(tol_grad) || tol_grad < 0.0)
+                  throw std::invalid_argument(
+                      "solver tolerances must be finite and non-negative");
+              if (!std::isfinite(max_step) || max_step <= 0.0)
+                  throw std::invalid_argument(
+                      "max_step must be finite and positive");
+              if (!std::isfinite(bt_shrink) ||
+                  bt_shrink <= 0.0 || bt_shrink >= 1.0)
+                  throw std::invalid_argument(
+                      "bt_shrink must be strictly between 0 and 1");
+              if (!std::isfinite(denom_scale) || denom_scale < 0.0)
+                  throw std::invalid_argument(
+                      "denom_scale must be finite and non-negative");
+              if (bt_max == 0 || cg_restart == 0 || mu_maxiter <= 0)
+                  throw std::invalid_argument(
+                      "bt_max, cg_restart, and mu_maxiter must be positive");
+              if (optimizer != 0 && optimizer != 1 && optimizer != 2)
+                  throw std::invalid_argument(
+                      "optimizer must select CG (0), Newton (1), or auto (2)");
+              if (!std::isfinite(tr_delta0) || tr_delta0 <= 0.0 ||
+                  tr_cg_max == 0)
+                  throw std::invalid_argument(
+                      "Newton trust-region controls must be positive");
+              if (!std::isfinite(deflation_sigma) || deflation_sigma < 0.0 ||
+                  !std::isfinite(deflation_length) || deflation_length <= 0.0)
+                  throw std::invalid_argument(
+                      "deflation controls are outside their valid domain");
               SolverConfig cfg;
               cfg.max_iter = max_iter;
               cfg.tol_E = tol_E;
@@ -535,7 +905,20 @@ PYBIND11_MODULE(_native, m) {
                   // empty when no deflation.  Copy the flat buffer; solve_rtr
                   // validates the size against n_deflation * nk * nb * nb.
                   std::size_t n_defl = 0;
-                  if (deflation_targets.ndim() == 5 && deflation_targets.shape(0) > 0) {
+                  if (deflation_targets.size() != 0) {
+                      if (deflation_targets.ndim() != 5 ||
+                          deflation_targets.shape(1) !=
+                              static_cast<py::ssize_t>(K.nk1) ||
+                          deflation_targets.shape(2) !=
+                              static_cast<py::ssize_t>(K.nk2) ||
+                          deflation_targets.shape(3) !=
+                              static_cast<py::ssize_t>(K.nb) ||
+                          deflation_targets.shape(4) !=
+                              static_cast<py::ssize_t>(K.nb)) {
+                          throw std::invalid_argument(
+                              "deflation_targets must be "
+                              "(n_solutions,nk1,nk2,nb,nb)");
+                      }
                       n_defl = static_cast<std::size_t>(deflation_targets.shape(0));
                       const c64* dptr = deflation_targets.data();
                       cfg.deflation_targets.assign(
@@ -552,18 +935,25 @@ PYBIND11_MODULE(_native, m) {
               ProjectFn pf = wrap_project_fn(project_fn);
               const ProjectFn* pfp = pf ? &pf : nullptr;
               DMResult res;
+              std::size_t n_fock_builds = 0;
+              K.fock_builds = &n_fock_builds;
+              K.exchange_blocks = cfg.optimizer == 0 ? nullptr : &cfg.block_sizes;
               {
                   py::gil_scoped_release release;
-                  res = (optimizer == 1)
-                            ? solve_rtr(K, P0.data(), n_e, cfg, pfp)
-                            : solve_dm(K, P0.data(), n_e, cfg, pfp);
+                  if (optimizer == 2) res = solve_auto(K, P0.data(), n_e, cfg, pfp);
+                  else if (optimizer == 1) res = solve_rtr(K, P0.data(), n_e, cfg, pfp);
+                  else res = solve_dm(K, P0.data(), n_e, cfg, pfp);
               }
+
+              if (kernel_args.contains("diagnostics"))
+                  kernel_args["diagnostics"]["fock_builds"] = py::int_(n_fock_builds);
 
               std::vector<py::ssize_t> dense_shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
                                                     (py::ssize_t)K.nb, (py::ssize_t)K.nb};
               std::vector<py::ssize_t> p_shape{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
                                                 (py::ssize_t)K.nb};
               std::vector<py::ssize_t> hE_shape{(py::ssize_t)res.hist_E.size()};
+              std::vector<py::ssize_t> hF_shape{(py::ssize_t)res.hist_free.size()};
               std::vector<py::ssize_t> hG_shape{(py::ssize_t)res.hist_grad.size()};
               py::object Q_obj = py::none();
               py::object density_obj = py::none();
@@ -578,6 +968,7 @@ PYBIND11_MODULE(_native, m) {
                   fock_obj,
                   res.mu, res.energy, res.n_iter, res.converged,
                   move_array(std::move(res.hist_E), hE_shape),
+                  move_array(std::move(res.hist_free), hF_shape),
                   move_array(std::move(res.hist_grad), hG_shape));
           });
 
@@ -677,13 +1068,38 @@ PYBIND11_MODULE(_native, m) {
               const std::size_t nk = K.nk(), nb = K.nb, n_tot = K.n_dense();
               std::vector<c64> HX(n_tot), dPb(n_tot), respb(n_tot), Sb(n_tot), Fb(n_tot);
               std::vector<f32> Hp(nk * nb), hb(nb, 0.0);
+              require_dense_shape(X,K.nk1,K.nk2,nb,"X");
+              require_dense_shape(Q,K.nk1,K.nk2,nb,"Q");
+              require_dense_shape(Ft,K.nk1,K.nk2,nb,"Ft");
+              const std::vector<py::ssize_t> band_shape{(py::ssize_t)K.nk1,(py::ssize_t)K.nk2,(py::ssize_t)nb};
+              require_shape(dp,band_shape,"dp"); require_shape(p,band_shape,"p");
               const f32 T_r = std::max(K.T, static_cast<f32>(1.0e-12));
+              py::array_t<c64, py::array::c_style | py::array::forcecast> targets;
+              std::size_t n_penalty = 0;
+              f32 sigma = 0.0, length = 1.0, diagonal = 0.0;
+              std::vector<c64> density(n_tot), penalty(n_tot);
+              if (py::cast<py::dict>(kernel_args).contains("test_deflation_targets")) {
+                  targets = py::cast<decltype(targets)>(kernel_args["test_deflation_targets"]);
+                  if (targets.ndim() != 5) throw std::invalid_argument("targets must have five axes");
+                  n_penalty = targets.shape(0);
+                  require_shape(targets,{(py::ssize_t)n_penalty,(py::ssize_t)K.nk1,
+                      (py::ssize_t)K.nk2,(py::ssize_t)nb,(py::ssize_t)nb},"targets");
+                  sigma = py::cast<f32>(kernel_args["test_deflation_sigma"]);
+                  length = py::cast<f32>(kernel_args["test_deflation_length"]);
+                  if (!std::isfinite(sigma) || !std::isfinite(length) || length <= 0)
+                      throw std::invalid_argument("invalid test deflation parameters");
+                  cpp_hf::dm_internal::density_from_Qp(Q.data(),p.data(),density.data(),nk,nb);
+                  cpp_hf::rtr_internal::deflation_bias(density.data(),targets.data(),n_penalty,
+                      K.w2d,nk,nb,sigma,length,penalty.data(),diagonal);
+              }
               {
                   py::gil_scoped_release release;
                   cpp_hf::rtr_internal::joint_hvp(
                       K, X.data(), dp.data(), Q.data(), p.data(), Ft.data(), T_r,
                       K.w2d, nk, nb, HX.data(), Hp.data(), dPb.data(), respb.data(),
-                      Sb.data(), Fb.data(), hb.data());
+                      Sb.data(), Fb.data(), hb.data(), diagonal,
+                      n_penalty ? density.data() : nullptr, n_penalty ? targets.data() : nullptr,
+                      n_penalty, sigma, length);
               }
               std::vector<py::ssize_t> xs{(py::ssize_t)K.nk1, (py::ssize_t)K.nk2,
                                           (py::ssize_t)nb, (py::ssize_t)nb};
@@ -692,6 +1108,100 @@ PYBIND11_MODULE(_native, m) {
               return py::make_tuple(move_array(std::move(HX), xs),
                                     move_array(std::move(Hp), ps));
           });
+
+    m.def("_fermi_response",
+          [](py::array_t<c64, py::array::c_style | py::array::forcecast> dF,
+             py::array_t<c64, py::array::c_style | py::array::forcecast> Q,
+             py::array_t<f32, py::array::c_style | py::array::forcecast> eps,
+             py::array_t<f32, py::array::c_style | py::array::forcecast> p,
+             py::array_t<f32, py::array::c_style | py::array::forcecast> w, f32 T) {
+              if (dF.ndim() != 4 || dF.shape(0) <= 0 || dF.shape(1) <= 0 || dF.shape(2) <= 0)
+                  throw std::invalid_argument("dF must be a nonempty (nk1,nk2,nb,nb) array");
+              const std::size_t nk1=dF.shape(0), nk2=dF.shape(1), nb=dF.shape(2);
+              require_dense_shape(dF,nk1,nk2,nb,"dF");
+              require_dense_shape(Q,nk1,nk2,nb,"Q");
+              require_shape(eps,{(py::ssize_t)nk1,(py::ssize_t)nk2,(py::ssize_t)nb},"eps");
+              require_shape(p,{(py::ssize_t)nk1,(py::ssize_t)nk2,(py::ssize_t)nb},"p");
+              require_shape(w,{(py::ssize_t)nk1,(py::ssize_t)nk2},"w");
+              if (!std::isfinite(T) || T <= 0.0)
+                  throw std::invalid_argument("T must be finite and positive");
+              std::vector<c64> out(nk1*nk2*nb*nb);
+              {
+                  py::gil_scoped_release release;
+                  fermi_response(dF.data(),Q.data(),eps.data(),p.data(),w.data(),T,nk1*nk2,nb,out.data());
+              }
+              return move_array(std::move(out),{(py::ssize_t)nk1,(py::ssize_t)nk2,(py::ssize_t)nb,(py::ssize_t)nb});
+          });
+
+    // --- Occupation-sector test hooks: saturation handling and the in-loop
+    //     chemical-potential solve (mirrors jax_hf.solver._solve_mu) ---
+    m.def("_solve_mu_inloop",
+          [](py::array_t<f32, py::array::c_style | py::array::forcecast> bands,
+             py::array_t<f32, py::array::c_style | py::array::forcecast> w_norm,
+             f32 n_target_norm, f32 mu0, f32 T, int maxiter) {
+              const auto layout = band_layout(bands, w_norm, "bands", "w_norm");
+              const std::size_t nk = layout.first, nb = layout.second;
+              if (!std::isfinite(T) || T < 0.0)
+                  throw std::invalid_argument("T must be finite and non-negative");
+              if (!std::isfinite(n_target_norm) || !std::isfinite(mu0))
+                  throw std::invalid_argument(
+                      "n_target_norm and mu0 must be finite");
+              if (maxiter <= 0)
+                  throw std::invalid_argument("maxiter must be positive");
+              f32 mu = 0.0;
+              {
+                  py::gil_scoped_release release;
+                  mu = solve_mu_inloop(bands.data(), nk * nb, w_norm.data(),
+                                       nk, nb, n_target_norm, mu0, T, maxiter);
+              }
+              return mu;
+          },
+          py::arg("bands"), py::arg("w_norm"), py::arg("n_target_norm"),
+          py::arg("mu0"), py::arg("T"), py::arg("maxiter") = 25);
+
+    m.def("_occupation_gradient",
+          [](py::array_t<f32, py::array::c_style | py::array::forcecast> eps,
+             py::array_t<f32, py::array::c_style | py::array::forcecast> p,
+             f32 T,
+             py::array_t<f32, py::array::c_style | py::array::forcecast> weights) {
+              const auto layout = band_layout(eps, weights, "eps", "weights");
+              const std::size_t nk = layout.first, nb = layout.second;
+              std::vector<py::ssize_t> shape(eps.shape(), eps.shape() + eps.ndim());
+              require_shape(p, shape, "p");
+              if (!std::isfinite(T) || T < 0.0)
+                  throw std::invalid_argument("T must be finite and non-negative");
+              const f32 T_r = std::max(T, static_cast<f32>(1.0e-12));
+              const std::size_t n = nk * nb;
+              std::vector<f32> g(n), h(n), curv(n);
+              std::vector<unsigned char> active(n);
+              {
+                  py::gil_scoped_release release;
+                  cpp_hf::dm_internal::occupation_gradient(
+                      eps.data(), p.data(), T_r, weights.data(), nk, nb,
+                      g.data(), h.data(), curv.data(), active.data());
+              }
+              py::array_t<bool> active_arr(shape);
+              bool* act = active_arr.mutable_data();
+              for (std::size_t i = 0; i < n; ++i) act[i] = active[i] != 0;
+              return py::make_tuple(move_array(std::move(g), shape),
+                                    move_array(std::move(h), shape),
+                                    move_array(std::move(curv), shape),
+                                    active_arr);
+          },
+          py::arg("eps"), py::arg("p"), py::arg("T"), py::arg("weights"));
+
+    m.def("_project_occupation_tangent",
+          [](py::array_t<f32, py::array::c_style | py::array::forcecast> x,
+             py::array_t<f32, py::array::c_style | py::array::forcecast> weights) {
+              const auto layout = band_layout(x, weights, "x", "weights");
+              const std::size_t nk = layout.first, nb = layout.second;
+              std::vector<py::ssize_t> shape(x.shape(), x.shape() + x.ndim());
+              std::vector<f32> out(x.data(), x.data() + nk * nb);
+              cpp_hf::dm_internal::project_occupation_tangent(
+                  out.data(), weights.data(), nk, nb);
+              return move_array(std::move(out), shape);
+          },
+          py::arg("x"), py::arg("weights"));
 
     // --- Deflation bias (Phi, S_pen, diag_coeff) for finite-diff validation ---
     m.def("_deflation_bias",

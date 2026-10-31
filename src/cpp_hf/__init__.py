@@ -3,16 +3,18 @@
 Two solvers are available, sharing a single :class:`HartreeFockKernel`:
 
 * :func:`solve` (alias :func:`solve_direct_minimization`) — preconditioned
-  Riemannian CG on Stiefel × capped simplex.  One Fock build per iteration,
-  eigen-free inner loop, Cayley retraction.  **Default and recommended.**
-* :func:`solve_scf` — reference self-consistent field iteration with linear
-  mixing.  Useful as a baseline or fallback.
+  Riemannian CG (legacy default), coupled trust-region Newton, or an automatic
+  full-residual DIIS / Newton hybrid.
+* :func:`solve_scf` — self-consistent field iteration, including safeguarded
+  full-density-residual DIIS (``acceleration="rdiis"``), Anderson, and the
+  legacy linear, commutator-DIIS and optimal-damping methods.
 
-The package mirrors the public API of ``jax_hf`` exactly so that the same
-tests and regression examples apply.  The hot kernels (FFT-based exchange,
-Hermitian eigendecomposition) are routed through compiled libraries
-(``numpy`` / ``scipy`` LAPACK + pocketfft, plus an optional FFTW + Eigen
-extension named ``cpp_hf._native``); JAX is not used or required.
+The common kernel/config/solve/result API closely follows ``jax_hf`` so that
+ordinary built-in-kernel workflows are source-compatible. JAX-specific
+tracing, differentiation, and the ``fock_build_fn=`` callback are intentionally
+outside this backend's contract. The hot kernels (FFT-based exchange and
+Hermitian eigendecomposition) run in the required FFTW + Eigen extension
+``cpp_hf._native``; JAX is not used or required.
 """
 
 from __future__ import annotations
@@ -81,4 +83,18 @@ __all__ = [
     "ExtendedGridLayout",
     "build_extended_layout",
     "superlattice_fock",
+    "stability_analysis",
+    "StabilityResult",
+    "solve_minimum",
+    "MinimumResult",
 ]
+
+
+def __getattr__(name):
+    if name in ("solve_minimum", "MinimumResult"):
+        from .minima import solve_minimum, MinimumResult
+        return {"solve_minimum": solve_minimum, "MinimumResult": MinimumResult}[name]
+    if name in ("stability_analysis", "StabilityResult"):
+        from .stability import stability_analysis, StabilityResult
+        return {"stability_analysis": stability_analysis, "StabilityResult": StabilityResult}[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

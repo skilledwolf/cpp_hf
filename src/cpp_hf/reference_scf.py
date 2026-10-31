@@ -7,12 +7,15 @@ inputs, and unpacks the C++ tuple back into a :class:`SCFResult`.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
+from numbers import Integral
 from typing import Any, Callable
 
 import numpy as np
 
 from ._compat import _native, native_required
+from .utils import validate_electron_count, validate_temperature
 
 
 @dataclass(frozen=True)
@@ -22,11 +25,9 @@ class SCFConfig:
     comm_tol: float = 1e-6
     mixing: float = 0.5
     level_shift: float = 0.0
-    project_fn: Callable[[Any], Any] | None = None
-    # Block-diagonal acceleration for the Fock eigh (4× speedup when usable).
-    block_sizes: tuple[int, ...] | None = None
     # Acceleration scheme: "linear" (α-mixing), "diis" (Pulay commutator-DIIS
-    # extrapolation of Fock), or "oda" (analytic optimal damping).
+    # extrapolation of Fock), "oda" (optimal damping), "anderson" (density
+    # updates), or "rdiis" (Fock extrapolation fitted to the full FD residual).
     acceleration: str = "linear"
     diis_size: int = 6
     diis_start: int = 2
@@ -37,12 +38,65 @@ class SCFConfig:
     # 0.0 = disabled.  Useful for ill-conditioned cases where DIIS extrapolates
     # to unphysical states (ungated 1/q + high doping).
     trust_radius: float = 0.0
+    project_fn: Callable[[Any], Any] | None = None
+    # Block-diagonal acceleration for the Fock eigh (4× speedup when usable).
+    block_sizes: tuple[int, ...] | None = None
     return_density: bool = True
     return_fock: bool = True
+    # New full-residual methods only. Hartree response is optional; it is
+    # not consistently faster than unpreconditioned acceleration.
+    preconditioner: str = "none"
+    # Backtrack density segments against the actual finite-T free energy.
+    safeguard: bool = True
 
     def __post_init__(self) -> None:
+        for name in (
+            "density_tol", "comm_tol", "mixing", "level_shift",
+            "diis_damping", "trust_radius",
+        ):
+            if not math.isfinite(float(getattr(self, name))):
+                raise ValueError(f"{name} must be finite")
+        for name in ("max_iter", "diis_size", "diis_start"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, Integral):
+                raise ValueError(f"{name} must be an integer")
         if self.max_iter <= 0:
             raise ValueError("max_iter must be positive")
+        if self.acceleration not in ("linear", "diis", "oda", "anderson", "rdiis"):
+            raise ValueError(
+                "SCFConfig.acceleration must be linear, diis, oda, anderson, or rdiis; "
+                f"got {self.acceleration!r}"
+            )
+        if self.preconditioner not in ("none", "hartree"):
+            raise ValueError("preconditioner must be 'none' or 'hartree'")
+        if self.acceleration not in ("anderson", "rdiis") and self.preconditioner != "none":
+            raise ValueError("preconditioner requires acceleration='anderson' or 'rdiis'")
+        if self.acceleration in ("anderson", "rdiis") and self.level_shift != 0.0:
+            raise ValueError("Full-residual acceleration requires level_shift=0")
+        if self.diis_size <= 0:
+            raise ValueError("diis_size must be positive")
+        if self.density_tol < 0.0:
+            raise ValueError("density_tol must be non-negative")
+        if self.comm_tol < 0.0:
+            raise ValueError("comm_tol must be non-negative")
+        if not 0.0 <= self.mixing <= 1.0:
+            raise ValueError("mixing must be between 0 and 1")
+        if self.diis_start < 0:
+            raise ValueError("diis_start must be non-negative")
+        if not 0.0 <= self.diis_damping <= 1.0:
+            raise ValueError("diis_damping must be between 0 and 1")
+        if self.trust_radius < 0.0:
+            raise ValueError("trust_radius must be non-negative")
+        if self.block_sizes is not None:
+            if any(
+                isinstance(size, bool)
+                or not isinstance(size, Integral)
+                or size <= 0
+                for size in self.block_sizes
+            ):
+                raise ValueError("block_sizes entries must be positive integers")
+        if self.project_fn is not None and not callable(self.project_fn):
+            raise ValueError("project_fn must be callable or None")
 
 
 @dataclass(frozen=True)
@@ -118,14 +172,43 @@ def solve_scf(
     *,
     config: SCFConfig | None = None,
 ) -> SCFResult:
-    """Reference SCF solver with linear mixing.  Mirrors jax_hf.solve_scf."""
-    native_required()
+    """Solve the finite-temperature HF fixed point at fixed particle count.
+
+    ``acceleration="rdiis"`` fits the full density residual using pivoted QR,
+    extrapolates Fock matrices, and safeguards steps using the actual free
+    energy. ``anderson`` instead extrapolates preconditioned density updates.
+    For rdiis, ``mixing`` is unused; ``diis_damping`` damps Fock extrapolation.
+    History includes the total ``fock_builds`` cost, including rejected trials.
+    Symmetry callbacks must be linear orthogonal projections that preserve
+    trace, Hermiticity and admissible densities, such as physical group averages.
+    Convergence certifies a fixed point; use stability_analysis to test whether
+    an unconstrained solution has a negative-curvature direction.
+    """
     if config is None:
         config = SCFConfig()
 
-    P0 = np.ascontiguousarray(P0, dtype=np.complex128)
-    density, fock, energy, mu, iterations, converged, hE, hD, hC = _native.solve_scf(
-        _kernel_args_for_native(kernel),
+    P0_arr = np.asarray(P0)
+    if P0_arr.shape != kernel.h.shape:
+        raise ValueError(
+            f"P0 must have shape {tuple(kernel.h.shape)}, "
+            f"got {tuple(P0_arr.shape)}."
+        )
+    validate_electron_count(
+        kernel.w2d,
+        kernel.h.shape[-1],
+        n_electrons,
+        context="n_electrons",
+    )
+    validate_temperature(kernel.T, context="kernel.T")
+    native_required()
+    P0 = np.ascontiguousarray(P0_arr, dtype=np.complex128)
+    diagnostics: dict[str, int] = {}
+    native_args = _kernel_args_for_native(kernel)
+    native_args["diagnostics"] = diagnostics
+    native_args["preconditioner"] = config.preconditioner
+    native_args["safeguard"] = bool(config.safeguard)
+    density, fock, energy, mu, iterations, converged, hE, hF, hD, hC = _native.solve_scf(
+        native_args,
         P0, float(n_electrons),
         int(config.max_iter),
         float(config.density_tol), float(config.comm_tol),
@@ -159,7 +242,9 @@ def solve_scf(
         message=message,
         history={
             "E": hE,
+            "free_energy": hF,
             "density_residual": hD,
             "commutator_residual": hC,
+            "fock_builds": diagnostics.get("fock_builds"),
         },
     )
