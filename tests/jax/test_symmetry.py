@@ -6,7 +6,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from hartreefock.backends.jax.symmetry import make_project_fn
+from hartreefock.symmetry import make_project_fn
 
 
 def test_make_project_fn_identity_when_no_args():
@@ -388,7 +388,7 @@ def test_gemm_group_average_matches_the_conjugation_loop(enable_x64):
     reproduce the per-element conjugation loop to rounding, and the loop must
     still be selected above the threshold."""
     with enable_x64():
-        from hartreefock.backends.jax import symmetry as sym
+        import hartreefock.symmetry as sym
 
         rng = np.random.default_rng(0)
         for nb in (6, sym._GEMM_MAX_NB + 2):
@@ -398,13 +398,13 @@ def test_gemm_group_average_matches_the_conjugation_loop(enable_x64):
             out = np.asarray(jax.jit(pf)(jnp.asarray(A)))
             ref = np.stack([[_loop_average(A[i, j], G) for j in range(2)] for i in range(3)])
             np.testing.assert_allclose(out, ref, atol=1e-13, rtol=0)
-        M = sym._conj_sum_matrix(jnp.asarray(G[:1]))
+        M = sym._conj_sum_matrix(G[:1])
         assert M.shape == (nb * nb, nb * nb)
 
 
 def test_gemm_combined_group_matches_loop_form(enable_x64):
     with enable_x64():
-        from hartreefock.backends.jax import symmetry as sym
+        import hartreefock.symmetry as sym
 
         rng = np.random.default_rng(1)
         nb = 4
@@ -413,17 +413,17 @@ def test_gemm_combined_group_matches_loop_form(enable_x64):
         A = rng.normal(size=(4, 4, nb, nb)) + 1j * rng.normal(size=(4, 4, nb, nb))
         Aj = jnp.asarray(A)
         fast = sym._avg_combined_group(
-            Aj, jnp.asarray(G), jnp.asarray(S), "mod", (0, 1),
-            M_same=sym._conj_sum_matrix(jnp.asarray(G)), M_flip=sym._conj_sum_matrix(jnp.asarray(S)),
+            jnp, Aj, G, S, "mod", (0, 1),
+            M_same=sym._conj_sum_matrix(G), M_flip=sym._conj_sum_matrix(S),
         )
-        slow = sym._avg_combined_group(Aj, jnp.asarray(G), jnp.asarray(S), "mod", (0, 1))
+        slow = sym._avg_combined_group(jnp, Aj, G, S, "mod", (0, 1))
         np.testing.assert_allclose(np.asarray(fast), np.asarray(slow), atol=1e-13, rtol=0)
 
 
 def test_projector_follows_the_density_dtype():
     """A complex128 group applied to a complex64 density must not promote it
     (with x64 enabled this used to raise a fori_loop carry-dtype error)."""
-    from hartreefock.backends.jax import symmetry as sym
+    import hartreefock.symmetry as sym
 
     rng = np.random.default_rng(2)
     nb = 4
@@ -452,7 +452,7 @@ def test_complex_symmetry_promotes_real_density_without_losing_operator(
     dtype, gemm_threshold, kind, monkeypatch, enable_x64,
 ):
     with enable_x64(dtype == jnp.float64):
-        import hartreefock.backends.jax.symmetry as module
+        import hartreefock.symmetry as module
         monkeypatch.setattr(module, "_GEMM_MAX_NB", gemm_threshold, raising=False)
         sigma_y = np.array([[0.0, -1j], [1j, 0.0]])
         unitary = (np.diag([1.0, -1.0]) + sigma_y) / np.sqrt(2.0)

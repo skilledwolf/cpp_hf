@@ -32,7 +32,7 @@ import hartreefock
 
 from hartreefock import SCFConfig
 from hartreefock.backends.jax import solve_scf
-from hartreefock.backends.jax.symmetry import make_project_fn
+from hartreefock.symmetry import make_project_fn
 
 # ---------------------------------------------------------------------------
 # Physical parameters (matching debug/repro_solver_ordering.py)

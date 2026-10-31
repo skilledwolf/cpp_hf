@@ -184,7 +184,7 @@ def build_bilayer(
     import contimod as cm
     from contimod.utils.spectrum_fermi import FermiParams
 
-    from hartreefock.backends.native.symmetry import make_project_fn
+    from hartreefock.symmetry import make_project_fn
 
     model = cm.graphene.Bernal(2, valleyful=True, spinful=True, U=float(U_meV))
     h_template = model.discretize(nk=int(nk), kmax=float(kmax))
@@ -290,7 +290,7 @@ def build_bilayer_layer_resolved(
     from contimod.meanfield.coulomb import layer_coulomb_kernel
     from contimod.utils.spectrum_fermi import FermiParams
 
-    from hartreefock.backends.native.symmetry import make_project_fn
+    from hartreefock.symmetry import make_project_fn
 
     model = cm.graphene.Bernal(2, valleyful=True, spinful=True, U=float(U_meV))
     h_template = model.discretize(nk=int(nk), kmax=float(kmax))
