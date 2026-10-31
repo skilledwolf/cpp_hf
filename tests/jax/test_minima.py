@@ -2,7 +2,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from hartreefock.backends.jax import HartreeFockKernel, SCFConfig, solve_minimum
+from hartreefock import HartreeFockKernel, SCFConfig
+from hartreefock.backends.jax import solve_minimum
 
 jax.config.update("jax_enable_x64", True)
 
@@ -15,10 +16,10 @@ def saddle_kernel():
 def test_recovery_escapes_exact_degenerate_paramagnetic_saddle():
     result = solve_minimum(saddle_kernel(), np.eye(2)[None, None]/2, 1.)
     assert result.converged and result.stability.stable
-    assert result.escapes >= 1 and result.total_iterations > result.solution.iterations
+    assert result.escapes >= 1 and result.total_iterations > result.solution.n_iter
     assert result.fock_builds > result.solution.history["fock_builds"]
     assert np.all(np.diff(result.free_energies) < 0)
-    p = np.linalg.eigvalsh(result.solution.density_matrix)
+    p = np.linalg.eigvalsh(result.solution.density)
     assert p.max() > .99 and p.min() < .01
     np.testing.assert_allclose(p.sum(), 1., atol=1e-13)
 

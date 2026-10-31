@@ -39,10 +39,13 @@ for p in (str(SRC_DIR), str(EXAMPLES_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-import hartreefock.backends.native as cpp_hf
-from hartreefock.backends.native import SolverConfig, solve_direct_minimization
-from hartreefock.backends.native.fock import build_fock
-from hartreefock.backends.native.utils import selfenergy_fft, find_chemical_potential
+import hartreefock
+
+from hartreefock import SolverConfig
+from hartreefock.backends.native import solve
+from hartreefock.backends.native import build_fock
+from hartreefock.backends.native import find_chemical_potential
+from hartreefock.kernel import exchange_self_energy
 import _common as qm
 
 
@@ -73,7 +76,7 @@ CELLS = [
 
 def run_scf(setup, refP, projector_key, seed_key, n_cm12):
     n_e, h_run = qm.n_electrons_for_density(setup, n_cm12, T)
-    kernel = cpp_hf.HartreeFockKernel(
+    kernel = hartreefock.HartreeFockKernel(
         weights=setup.weights, hamiltonian=np.asarray(h_run.hs),
         coulomb_q=setup.Vq, T=T,
         include_hartree=True, include_exchange=True,
@@ -85,22 +88,13 @@ def run_scf(setup, refP, projector_key, seed_key, n_cm12):
         block_sizes=(8, 8, 8, 8),
         project_fn=setup.project_fns[projector_key],
     )
-    res = solve_direct_minimization(kernel, seed, n_e, config=cfg)
+    res = solve(kernel, seed, n_e, config=cfg)
     return res, kernel, n_e
 
 
 def physical_fock_eigs(res, kernel, V_H_ref, Sigma_ref):
     P_arr = np.ascontiguousarray(np.asarray(res.density), dtype=np.complex128)
-    Sigma, H, _ = build_fock(
-        P_arr, h=kernel.h, VR=kernel._VR_shifted, refP=kernel.refP,
-        HH=kernel.HH, w2d=kernel.w2d,
-        include_exchange=kernel.include_exchange,
-        include_hartree=kernel.include_hartree,
-        exchange_hermitian_channel_packing=kernel.exchange_hermitian_channel_packing,
-        contact_g=kernel.contact_g,
-        contact_Oi=kernel.contact_Oi,
-        contact_Oj=kernel.contact_Oj,
-    )
+    Sigma, H, _, _ = build_fock(kernel, P_arr)
     fock_rel = np.asarray(kernel.h) + np.asarray(Sigma) + np.asarray(H)
     n_orb_total = fock_rel.shape[-1]
     fock = fock_rel + np.asarray(Sigma_ref)
@@ -166,7 +160,7 @@ def main(argv=None):
             refP = qm.pm_c3_cn_reference_density(
                 setup, T=T, max_iter=MAX_ITER_REF, tol_E=TOL_E,
             )
-            kernel0 = cpp_hf.HartreeFockKernel(
+            kernel0 = hartreefock.HartreeFockKernel(
                 weights=setup.weights,
                 hamiltonian=np.asarray(setup.h_template.hs),
                 coulomb_q=setup.Vq, T=T,
@@ -174,11 +168,7 @@ def main(argv=None):
                 reference_density=refP, hartree_matrix=setup.hartree_matrix,
             )
             w2d = np.asarray(setup.weights)
-            Sigma_ref = selfenergy_fft(
-                np.asarray(kernel0._VR_shifted), np.asarray(refP),
-                _apply_ifftshift=False,
-                hermitian_channel_packing=kernel0.exchange_hermitian_channel_packing,
-            )
+            Sigma_ref = exchange_self_energy(kernel0.VR_shifted, kernel0.weights_b * np.asarray(refP))
             diag_R_ref = np.einsum("ij,ijaa->a", w2d, np.asarray(refP)).real
             V_H_ref = setup.hartree_matrix @ diag_R_ref
             # Drop the orbital-uniform component of V_H_ref (the "divergent
@@ -204,8 +194,7 @@ def main(argv=None):
             res, kernel, n_e = run_scf(setup, refP, proj_key, seed_key, n_cm12)
             fock, eigs = physical_fock_eigs(res, kernel, V_H_ref, Sigma_ref)
             E_F = float(find_chemical_potential(
-                eigs, np.asarray(setup.weights), n_e, T, method="bisection"
-            ))
+                eigs, np.asarray(setup.weights), n_e, T))
             kxs, bands = k_y0_slice(eigs, ks)
             results_per_phase[proj_key] = dict(
                 ks=ks, bounds=bounds,

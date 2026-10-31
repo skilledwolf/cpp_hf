@@ -21,18 +21,15 @@ turns the occupation step into an ascent direction (see
 from __future__ import annotations
 
 import warnings
-import math
-from dataclasses import dataclass
-from numbers import Integral
-from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
 from jax import lax
 
+from ...config import SolverConfig, SolveResult, drop_unrequested
 from .fock import build_fock, hf_energy, free_energy
 from .utils import (
-    _chemical_potential_bounds, validate_electron_count, validate_temperature,
+    _chemical_potential_bounds, device_args, validate_electron_count, validate_temperature,
 )
 
 
@@ -523,131 +520,6 @@ def _project_capped_occupations(
 # Public API
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
-class SolverConfig:
-    """Solver controls. Intentionally minimal."""
-
-    max_iter: int = 200
-    tol_E: float = 1e-7         # energy criterion (governs only when tol_grad == 0)
-    # Stationarity stopping criterion.  When > 0 it is the sole stop for both
-    # optimizers: ``history["grad_norm"]`` includes the full weighted
-    # ``||P-P_FD(F)||`` residual so near-equal occupations cannot hide a
-    # non-self-consistent Fock matrix. ``tol_E`` is then inactive. 0 (default)
-    # uses windowed free-energy convergence plus stationarity (CG); Newton
-    # falls back to an internal 1e-6.
-    tol_grad: float = 0.0
-    denom_scale: float = 1e-3   # regularization for energy-gap preconditioner
-    max_step: float = 0.6       # max orbital rotation norm per step
-    cg_restart: int = 10        # restart CG every N steps
-    bt_shrink: float = 0.5      # backtracking shrink factor
-    bt_max: int = 8             # max backtracking steps
-    mu_maxiter: int = 50        # chemical potential solver iterations
-    # Windowed energy convergence (CG path): stop when the energy improved by
-    # < tol_E over the last `plateau_window` iters (robust to per-step CG noise
-    # that makes a single-iteration |dE| test stop early).  0 = per-iteration.
-    plateau_window: int = 5
-    # Orbital optimizer: "cg" (preconditioned Riemannian CG, default) or
-    # "newton" (trust-region Newton — a Steihaug truncated-CG on the joint
-    # (Q, p) response Hessian, one Fock build per Hessian-vector product).
-    # Newton often needs fewer outer iterations than CG on stiff problems. It
-    # converges on the stationarity norm, so it uses ``tol_grad`` (which
-    # defaults to 1e-6 internally when left at 0) instead of ``tol_E``, and
-    # ignores the CG-only knobs ``max_step``, ``cg_restart``, ``bt_shrink``,
-    # and ``bt_max``.
-    # Newton is a second-order method and needs float64 precision (enable x64);
-    # in float32 it warns and may not converge.  CG works in either precision.
-    optimizer: str = "cg"
-    tr_delta0: float = 0.5      # Newton: radius in the normalized weighted joint norm
-    tr_cg_max: int = 20         # Newton: max Steihaug inner CG iters per outer step
-    # Deflation (optimizer="newton" only): add a repulsive Gaussian bias around
-    # each density in ``deflation_targets`` so the solve is pushed out of those
-    # basins and converges to a DISTINCT HF solution.  ``deflation_targets`` has
-    # shape ``(n_solutions, nk1, nk2, nb, nb)`` — or None for no deflation;
-    # ``deflation_sigma`` is the bias height (0 = off) and ``deflation_length``
-    # its width in weighted-Frobenius density distance.  Usually driven by
-    # :func:`jax_hf.solve_deflated` rather than set by hand.
-    deflation_targets: Any = None
-    deflation_sigma: float = 0.0
-    deflation_length: float = 1.0
-    block_sizes: tuple[int, ...] | None = None
-    # Both optimizers require a linear orthogonal, trace-preserving symmetry
-    # projection onto a matrix algebra. Densities and Focks are projected,
-    # along with the Newton response.
-    project_fn: Any = None
-
-    def __post_init__(self) -> None:
-        finite_fields = (
-            "tol_E", "tol_grad", "denom_scale", "max_step", "bt_shrink",
-            "tr_delta0", "deflation_sigma", "deflation_length",
-        )
-        for name in finite_fields:
-            value = getattr(self, name)
-            if not math.isfinite(float(value)):
-                raise ValueError(f"{name} must be finite")
-        integer_fields = (
-            "max_iter", "cg_restart", "bt_max", "mu_maxiter",
-            "plateau_window", "tr_cg_max",
-        )
-        for name in integer_fields:
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, Integral):
-                raise ValueError(f"{name} must be an integer")
-        if self.max_iter <= 0:
-            raise ValueError("max_iter must be positive")
-        if self.tol_E < 0.0:
-            raise ValueError("tol_E must be non-negative")
-        if self.tol_grad < 0.0:
-            raise ValueError("tol_grad must be non-negative")
-        if self.denom_scale < 0.0:
-            raise ValueError("denom_scale must be non-negative")
-        if self.max_step <= 0.0:
-            raise ValueError("max_step must be positive")
-        if self.cg_restart <= 0:
-            raise ValueError("cg_restart must be positive")
-        if not 0.0 < self.bt_shrink < 1.0:
-            raise ValueError("bt_shrink must be strictly between 0 and 1")
-        if self.bt_max <= 0:
-            raise ValueError("bt_max must be positive")
-        if self.mu_maxiter <= 0:
-            raise ValueError("mu_maxiter must be positive")
-        if self.plateau_window < 0:
-            raise ValueError("plateau_window must be non-negative")
-        if str(self.optimizer).lower() not in ("cg", "newton"):
-            raise ValueError(
-                f"optimizer must be 'cg' or 'newton', got {self.optimizer!r}"
-            )
-        if self.tr_delta0 <= 0.0:
-            raise ValueError("tr_delta0 must be positive")
-        if self.tr_cg_max <= 0:
-            raise ValueError("tr_cg_max must be positive")
-        if self.deflation_sigma < 0.0:
-            raise ValueError("deflation_sigma must be non-negative")
-        if self.deflation_length <= 0.0:
-            raise ValueError("deflation_length must be positive")
-        if self.block_sizes is not None:
-            if any(
-                isinstance(size, bool)
-                or not isinstance(size, Integral)
-                or size <= 0
-                for size in self.block_sizes
-            ):
-                raise ValueError("block_sizes entries must be positive integers")
-        if self.project_fn is not None and not callable(self.project_fn):
-            raise ValueError("project_fn must be callable or None")
-
-
-class SolveResult(NamedTuple):
-    Q: jax.Array             # converged orbitals (nk1, nk2, nb, nb)
-    p: jax.Array             # converged occupations (nk1, nk2, nb)
-    mu: jax.Array            # chemical potential
-    density: jax.Array       # P = Q diag(p) Q†
-    fock: jax.Array          # F at convergence
-    energy: jax.Array        # HF energy (scalar)
-    n_iter: jax.Array        # iteration count
-    converged: jax.Array     # bool
-    history: dict[str, jax.Array]
-
-
 def _exchange_block_specs(block_sizes):
     if block_sizes is None:
         return None
@@ -691,7 +563,7 @@ def _solve_impl(
     and occupations (p on capped simplex). True-objective backtracking may
     require multiple Fock builds per outer iteration.
 
-    Implementation detail — users should call :func:`solve_direct_minimization`
+    Implementation detail — users should call :func:`solve`
     (or the :func:`solve` alias) instead.  JIT caching is handled by that wrapper.
 
     Only structurally-static arguments (``max_iter``, ``bt_max``,
@@ -1700,7 +1572,7 @@ _solve_newton_jitted = jax.jit(
 )
 
 
-def solve_direct_minimization(
+def solve(
     kernel,
     P0,
     n_electrons: float,
@@ -1828,13 +1700,13 @@ def solve_direct_minimization(
         else:
             defl_arr = jnp.zeros((0, nk1, nk2, nb, nb), dtype=h_dtype)
 
-        return _solve_newton_jitted(
+        return drop_unrequested(_solve_newton_jitted(
             P0_arr,
             float(n_electrons),
             tol_grad,
             float(config.tr_delta0),
             float(config.denom_scale),
-            **kernel.as_args(),
+            **device_args(kernel),
             deflation_targets=defl_arr,
             deflation_sigma=float(config.deflation_sigma),
             deflation_length=float(config.deflation_length),
@@ -1845,9 +1717,9 @@ def solve_direct_minimization(
             block_sizes=config.block_sizes,
             project_fn=config.project_fn,
             fock_build_fn=fock_build_fn,
-        )
+        ), config)
 
-    return _solve_jitted(
+    return drop_unrequested(_solve_jitted(
         P0_arr,
         float(n_electrons),
         float(config.tol_E),
@@ -1855,7 +1727,7 @@ def solve_direct_minimization(
         float(config.max_step),
         float(config.bt_shrink),
         float(config.denom_scale),
-        **kernel.as_args(),
+        **device_args(kernel),
         max_iter=int(config.max_iter),
         bt_max=int(config.bt_max),
         cg_restart=int(config.cg_restart),
@@ -1864,8 +1736,5 @@ def solve_direct_minimization(
         block_sizes=config.block_sizes,
         project_fn=config.project_fn,
         fock_build_fn=fock_build_fn,
-    )
+    ), config)
 
-
-# Public alias: direct minimization is the default solver.
-solve = solve_direct_minimization

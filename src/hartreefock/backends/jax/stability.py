@@ -18,6 +18,7 @@ from scipy.special import expit
 from scipy.sparse.linalg import ArpackNoConvergence, LinearOperator, eigsh
 
 from .fock import build_fock, hf_energy
+from .utils import device_args
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,7 @@ def _response_fock(P, direction, *, fock_build_fn, **kwargs):
 
 
 def _fock_kwargs(kernel, fock_build_fn=None):
-    args = kernel.as_args()
+    args = device_args(kernel)
     names = ("h", "VR", "refP", "HH", "include_exchange", "include_hartree",
              "exchange_hermitian_channel_packing", "contact_g", "contact_Oi",
              "contact_Oj")

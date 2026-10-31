@@ -15,8 +15,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))
 
+import hartreefock
+
 import hartreefock.backends.native as cpp_hf  # noqa: E402
-from hartreefock.backends.native import SCFConfig  # noqa: E402
+from hartreefock import SCFConfig
 
 
 def _default_case_path() -> Path:
@@ -35,7 +37,7 @@ def main() -> int:
 
     data = np.load(args.case)
 
-    kernel = cpp_hf.HartreeFockKernel(
+    kernel = hartreefock.HartreeFockKernel(
         weights=data["weights"],
         hamiltonian=data["hamiltonian"],
         coulomb_q=data["coulomb_q"],
@@ -57,11 +59,11 @@ def main() -> int:
             mixing=0.5,
         ),
     )
-    P_fin = result.density_matrix
-    F_fin = result.fock_matrix
+    P_fin = result.density
+    F_fin = result.fock
     E_fin = result.energy
-    mu_fin = result.chemical_potential
-    k_fin = result.iterations
+    mu_fin = result.mu
+    k_fin = result.n_iter
 
     P_expected = data["P_expected"]
     F_expected = data["F_expected"]

@@ -14,14 +14,9 @@ unique-minimum kernel (the contact case) or assert only stationarity.
 import numpy as np
 import pytest
 
-from hartreefock.backends.native import (
-    HartreeFockKernel,
-    SCFConfig,
-    SolverConfig,
-    solve,
-    solve_scf,
-)
-from hartreefock.backends.native.solver import _kernel_args_for_native
+from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig
+from hartreefock.backends.native import solve, solve_scf
+from hartreefock.backends.native._lower import kernel_args
 
 
 def _comm_rms(F, P, w2d):
@@ -89,7 +84,7 @@ class TestRtrHvp:
             return np.einsum('...in,...n,...jn->...ij', Q, p, np.conj(Q))
 
         K = _multiband(5, 5, 0.05, 0.4, 4)
-        args = _kernel_args_for_native(K)
+        args = kernel_args(K)
         hm = np.asarray(K.h); T = float(K.T); nk1, nk2, nb = K.h.shape[:3]
         def Fock(P):
             return np.asarray(_native.build_fock_apply(args, np.ascontiguousarray(P, np.complex128), None)[2])

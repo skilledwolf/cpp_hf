@@ -6,7 +6,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from hartreefock.backends.jax import HartreeFockKernel, SCFConfig, solve_scf
+from hartreefock import HartreeFockKernel, SCFConfig
+from hartreefock.backends.jax import solve_scf
 from hartreefock.backends.jax.fock import hf_energy
 from hartreefock.backends.jax.superlattice import (
     build_extended_layout, make_superlattice_build_fock_fn,
@@ -145,8 +146,8 @@ def test_custom_fock_adapter_keeps_orbital_exchange_hartree_and_scf():
         acceleration="rdiis", diis_size=8, max_iter=100,
         density_tol=1e-8, comm_tol=1e-8), fock_build_fn=builder)
     assert result.converged, result.message
-    np.testing.assert_allclose(result.fock_matrix, Fmap(result.density_matrix), atol=2e-13)
-    np.testing.assert_allclose(result.energy, E(result.density_matrix), atol=2e-13)
+    np.testing.assert_allclose(result.fock, Fmap(result.density), atol=2e-13)
+    np.testing.assert_allclose(result.energy, E(result.density), atol=2e-13)
 
 
 def test_orbital_kernel_shape_and_finiteness_validation():

@@ -24,7 +24,8 @@ jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
 
-from hartreefock.backends.jax import HartreeFockKernel, SolverConfig, solve, solve_deflated
+from hartreefock import HartreeFockKernel, SolverConfig, solve_deflated
+from hartreefock.backends.jax import solve
 
 
 def _comm_rms(F, P, w2d):
@@ -163,7 +164,7 @@ class TestDeflationFindsSolutions:
         ne = 1.0
         base = SolverConfig(optimizer="newton", tol_grad=1e-6, max_iter=300)
 
-        res = solve_deflated(K, P0, ne, base_config=base, n_solutions=2, seed=0)
+        res = solve_deflated(K, P0, ne, base_config=base, n_solutions=2, seed=0, backend="jax")
         assert res.n_found >= 2, f"only found {res.n_found} solution(s)"
 
         # both are genuine (unbiased) stationary points

@@ -50,10 +50,11 @@ def _run_d_row(args: tuple) -> list[dict]:
 
     import gc
     import _common as qm
-    import hartreefock.backends.native as cpp_hf
-    from hartreefock.backends.native import SolverConfig, solve_direct_minimization
-    from hartreefock.backends.native.fock import build_fock
-    from hartreefock.backends.native.utils import selfenergy_fft
+    import hartreefock
+    from hartreefock import SolverConfig
+    from hartreefock.backends.native import solve
+    from hartreefock.backends.native import build_fock
+    from hartreefock.kernel import exchange_self_energy
 
     setup = qm.build_setup(
         D_Vnm=D_Vnm, nk=nk, kmax=kmax, T=T,
@@ -83,7 +84,7 @@ def _run_d_row(args: tuple) -> list[dict]:
             for n in n_grid
         ]
 
-    kernel = cpp_hf.HartreeFockKernel(
+    kernel = hartreefock.HartreeFockKernel(
         weights=setup.weights, hamiltonian=np.asarray(setup.h_template.hs),
         coulomb_q=setup.Vq, T=T,
         include_hartree=True, include_exchange=True,
@@ -94,11 +95,7 @@ def _run_d_row(args: tuple) -> list[dict]:
     # Pre-compute Σ_x[refP] and HH @ diag(refP) so per-cell physical Fock
     # reconstruction is cheap (linear in P).
     w2d = np.asarray(setup.weights)
-    Sigma_ref = selfenergy_fft(
-        np.asarray(kernel._VR_shifted), np.asarray(refP),
-        _apply_ifftshift=False,
-        hermitian_channel_packing=kernel.exchange_hermitian_channel_packing,
-    )
+    Sigma_ref = exchange_self_energy(kernel.VR_shifted, kernel.weights_b * np.asarray(refP))
     diag_R_ref = np.einsum("ij,ijaa->a", w2d, np.asarray(refP)).real
     V_H_ref = setup.hartree_matrix @ diag_R_ref  # shape (n_orb,)
 
@@ -111,7 +108,7 @@ def _run_d_row(args: tuple) -> list[dict]:
     out_rows: list[dict] = []
     for n_cm12 in n_grid:
         n_e, h_run = qm.n_electrons_for_density(setup, float(n_cm12), T)
-        kernel = cpp_hf.HartreeFockKernel(
+        kernel = hartreefock.HartreeFockKernel(
             weights=setup.weights,
             hamiltonian=np.asarray(h_run.hs),
             coulomb_q=setup.Vq, T=T,
@@ -124,21 +121,12 @@ def _run_d_row(args: tuple) -> list[dict]:
             block_sizes=(8, 8, 8, 8), project_fn=project_fn,
         )
         t0 = time.perf_counter()
-        res = solve_direct_minimization(kernel, last_P, n_e, config=cfg)
+        res = solve(kernel, last_P, n_e, config=cfg)
         dt = time.perf_counter() - t0
 
         # Physical Fock = relative Fock + Σ_x[refP] + diag(HH @ diag(refP))
         P_arr = np.ascontiguousarray(np.asarray(res.density), dtype=np.complex128)
-        Sigma, H, _ = build_fock(
-            P_arr, h=kernel.h, VR=kernel._VR_shifted, refP=kernel.refP,
-            HH=kernel.HH, w2d=kernel.w2d,
-            include_exchange=kernel.include_exchange,
-            include_hartree=kernel.include_hartree,
-            exchange_hermitian_channel_packing=kernel.exchange_hermitian_channel_packing,
-            contact_g=kernel.contact_g,
-            contact_Oi=kernel.contact_Oi,
-            contact_Oj=kernel.contact_Oj,
-        )
+        Sigma, H, _, _ = build_fock(kernel, P_arr)
         fock_rel = np.asarray(kernel.h) + np.asarray(Sigma) + np.asarray(H)
         w = w2d
         n_orb_total = fock_rel.shape[-1]
@@ -151,9 +139,8 @@ def _run_d_row(args: tuple) -> list[dict]:
         eigs = np.linalg.eigvalsh(fock.reshape(-1, fock.shape[-2],
                                                  fock.shape[-1]))
         eigs = eigs.reshape(*fock.shape[:2], -1)
-        from hartreefock.backends.native.utils import find_chemical_potential
-        E_F = float(find_chemical_potential(eigs, w, n_e, T,
-                                              method="bisection"))
+        from hartreefock.backends.native import find_chemical_potential
+        E_F = float(find_chemical_potential(eigs, w, n_e, T))
         import bztetra.twod as twod
         s = 2.0 * kmax
         h_tri = s * np.sqrt(3.0) / 2.0

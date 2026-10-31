@@ -23,9 +23,11 @@ for p in (str(SRC_DIR), str(EXAMPLES_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-import hartreefock.backends.native as cpp_hf
-from hartreefock.backends.native import SolverConfig, solve_direct_minimization
-from hartreefock.backends.native.fock import build_fock
+import hartreefock
+
+from hartreefock import SolverConfig
+from hartreefock.backends.native import solve
+from hartreefock.backends.native import build_fock
 import _common as qm
 
 T = 0.3
@@ -52,7 +54,7 @@ def run_one(n_cm12, D_Vnm, nk):
         setup, T=T, max_iter=MAX_ITER_REF, tol_E=TOL_E,
     )
     n_e, h_run = qm.n_electrons_for_density(setup, n_cm12, T)
-    kernel = cpp_hf.HartreeFockKernel(
+    kernel = hartreefock.HartreeFockKernel(
         weights=setup.weights, hamiltonian=np.asarray(h_run.hs),
         coulomb_q=setup.Vq, T=T,
         include_hartree=True, include_exchange=True,
@@ -65,19 +67,11 @@ def run_one(n_cm12, D_Vnm, nk):
         project_fn=setup.project_fns["PM_C3"],
     )
     t0 = time.perf_counter()
-    res = solve_direct_minimization(kernel, seed, n_e, config=cfg)
+    res = solve(kernel, seed, n_e, config=cfg)
     dt = time.perf_counter() - t0
 
     P_arr = np.ascontiguousarray(np.asarray(res.density), dtype=np.complex128)
-    Sigma, H, _ = build_fock(
-        P_arr, h=kernel.h, VR=kernel._VR_shifted, refP=kernel.refP,
-        HH=kernel.HH, w2d=kernel.w2d,
-        include_exchange=kernel.include_exchange,
-        include_hartree=kernel.include_hartree,
-        exchange_hermitian_channel_packing=kernel.exchange_hermitian_channel_packing,
-        contact_g=kernel.contact_g, contact_Oi=kernel.contact_Oi,
-        contact_Oj=kernel.contact_Oj,
-    )
+    Sigma, H, _, _ = build_fock(kernel, P_arr)
     fock = np.asarray(kernel.h) + np.asarray(Sigma) + np.asarray(H)
     layer = np.asarray(setup.model.layer)
     delta_tb = qm.delta_tb_from_fock(fock, layer)

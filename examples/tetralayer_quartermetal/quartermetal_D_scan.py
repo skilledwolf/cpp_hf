@@ -18,8 +18,10 @@ for p in (str(SRC_DIR), str(EXAMPLES_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-import hartreefock.backends.native as cpp_hf
-from hartreefock.backends.native import SolverConfig, solve_direct_minimization
+import hartreefock
+
+from hartreefock import SolverConfig
+from hartreefock.backends.native import solve
 import _common as qm
 
 N_CM12 = 0.80
@@ -54,12 +56,12 @@ def run_one(D_Vnm):
     )
     n_e, h_run = qm.n_electrons_for_density(setup, N_CM12, T)
     layer = np.asarray(setup.model.layer)
-    kernel_HF = cpp_hf.HartreeFockKernel(
+    kernel_HF = hartreefock.HartreeFockKernel(
         weights=setup.weights, hamiltonian=np.asarray(h_run.hs),
         coulomb_q=setup.Vq, T=T, include_hartree=True, include_exchange=True,
         reference_density=refP, hartree_matrix=setup.hartree_matrix,
     )
-    kernel_X = cpp_hf.HartreeFockKernel(
+    kernel_X = hartreefock.HartreeFockKernel(
         weights=setup.weights, hamiltonian=np.asarray(h_run.hs),
         coulomb_q=setup.Vq, T=T, include_hartree=False, include_exchange=True,
         reference_density=refP, hartree_matrix=setup.hartree_matrix,
@@ -81,7 +83,7 @@ def run_one(D_Vnm):
                             block_sizes=(8, 8, 8, 8),
                             project_fn=setup.project_fns[projector_key])
         t0 = time.perf_counter()
-        res = solve_direct_minimization(kernel_use, seed, n_e, config=cfg)
+        res = solve(kernel_use, seed, n_e, config=cfg)
         E_hist = np.asarray(res.history["E"])
         G_hist = np.asarray(res.history["grad_norm"])
         imb = imbalance(res.density, refP, setup.weights)

@@ -15,8 +15,11 @@ cg_symmetry = pytest.importorskip("contimod_graphene.symmetry")
 
 import jax.numpy as jnp
 
+import hartreefock
+
 import hartreefock.backends.jax as jax_hf
-from hartreefock.backends.jax import SCFConfig, solve_scf
+from hartreefock import SCFConfig
+from hartreefock.backends.jax import solve_scf
 from hartreefock.backends.jax.symmetry import make_project_fn
 
 from contimod.meanfield.init_guess import init_to_density_matrix
@@ -24,7 +27,7 @@ from contimod.kdiscrete import kMeshgrid2D
 from contimod.utils.spectrum_fermi import FermiParams
 import contimod as cm
 
-DATA_PATH = Path(__file__).parent / "data" / "bilayer_reference.npz"
+DATA_PATH = Path(__file__).parents[1] / "data" / "bilayer_reference.npz"
 PER_CM = 0.246e-7
 
 
@@ -117,7 +120,7 @@ def _run_one_point(setup, branch, n_cm12):
         h_run, seeds[branch], density=None, T=temperature, init_kind="auto",
     )
 
-    kernel = jax_hf.HartreeFockKernel(
+    kernel = hartreefock.HartreeFockKernel(
         weights=weights, hamiltonian=np.asarray(h_template.hs),
         coulomb_q=Vq, T=temperature,
         include_hartree=False, include_exchange=True,
@@ -173,12 +176,12 @@ def _run_one_point_direct(setup, branch, n_cm12):
         h_run, seeds[branch], density=None, T=temperature, init_kind="auto",
     )
 
-    kernel = jax_hf.HartreeFockKernel(
+    kernel = hartreefock.HartreeFockKernel(
         weights=weights, hamiltonian=np.asarray(h_template.hs),
         coulomb_q=Vq, T=temperature,
         include_hartree=False, include_exchange=True,
     )
-    config = jax_hf.SolverConfig(
+    config = hartreefock.SolverConfig(
         max_iter=200, tol_E=1e-7,
         project_fn=project_fns[branch],
     )

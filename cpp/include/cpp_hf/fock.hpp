@@ -175,7 +175,7 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
         }
     }
 
-    // Σ = -FFT⁻¹[FFT(P − refP) · VR]  (no ifftshift; VR is phase-shifted)
+    // Σ = -FFT⁻¹[FFT(w·(P − refP)) · VR]  (no ifftshift; VR is phase-shifted)
     // Or, for superlattice mode, Σ = streaming Fock on (P − refP).
     if (K.include_exchange) {
         if (K.superlattice_fock_active) {
@@ -197,12 +197,19 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
                 K.n_G, K.dim_orb,
                 /*hermitian_rho=*/true);
             std::memcpy(Sigma, sigma_out.data(), n_tot * sizeof(c64));
-        } else if (K.exchange_hcp && K.dv1 == 1 && K.dv2 == 1) {
-            selfenergy_fft_full_hcp(Sigma, Sigma, K.VR,
-                                    K.nk1, K.nk2, nb);
         } else {
-            selfenergy_fft_full_inplace(Sigma, K.VR,
-                                        K.nk1, K.nk2, nb, K.dv1, K.dv2);
+            // The quadrature weight belongs to the density, not to V(k-q).
+            parallel_for(nk, [&](std::size_t k) {
+                const c64 wk(K.w2d[k], 0.0);
+                c64* sk = Sigma + k * nb2;
+                for (std::size_t i = 0; i < nb2; ++i) sk[i] *= wk;
+            });
+            if (K.exchange_hcp && K.dv1 == 1 && K.dv2 == 1) {
+                selfenergy_fft_full_hcp(Sigma, Sigma, K.VR, K.nk1, K.nk2, nb);
+            } else {
+                selfenergy_fft_full_inplace(Sigma, K.VR,
+                                            K.nk1, K.nk2, nb, K.dv1, K.dv2);
+            }
         }
     } else {
         std::memset(Sigma, 0, n_tot * sizeof(c64));

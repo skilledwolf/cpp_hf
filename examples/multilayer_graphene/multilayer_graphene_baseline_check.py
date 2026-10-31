@@ -35,6 +35,8 @@ EXAMPLES_DIR = Path(__file__).resolve().parent
 if str(EXAMPLES_DIR) not in sys.path:
     sys.path.insert(0, str(EXAMPLES_DIR))
 
+import hartreefock
+
 import hartreefock.backends.native as cpp_hf
 import _bilayer_common as common
 
@@ -115,8 +117,8 @@ def load_reference_targets(
     return targets
 
 
-def _kernel_for_setup(setup: common.BilayerSetup, temperature: float) -> cpp_hf.HartreeFockKernel:
-    return cpp_hf.HartreeFockKernel(
+def _kernel_for_setup(setup: common.BilayerSetup, temperature: float) -> hartreefock.HartreeFockKernel:
+    return hartreefock.HartreeFockKernel(
         weights=setup.weights,
         hamiltonian=np.asarray(setup.h_template.hs),
         coulomb_q=setup.Vq,
@@ -136,9 +138,9 @@ def _solve_single(
     max_iter: int,
     tol_e: float,
     max_step: float,
-) -> cpp_hf.SolveResult:
+) -> hartreefock.SolveResult:
     kernel = _kernel_for_setup(setup, temperature)
-    config = cpp_hf.SolverConfig(
+    config = hartreefock.SolverConfig(
         max_iter=int(max_iter),
         tol_E=float(tol_e),
         max_step=float(max_step),
@@ -152,7 +154,7 @@ def _solve_with_continuation(
     branch: str,
     n_cm12: float,
     target_nk: int,
-) -> tuple[cpp_hf.SolveResult, float]:
+) -> tuple[hartreefock.SolveResult, float]:
     """Run solve on a schedule (coarse nk values) then on target_nk.
 
     Returns (final_result, total_elapsed_seconds).
@@ -162,7 +164,7 @@ def _solve_with_continuation(
 
     t0 = time.perf_counter()
     seed_P: np.ndarray | None = None
-    result: cpp_hf.SolveResult | None = None
+    result: hartreefock.SolveResult | None = None
     for nk in schedule:
         setup = common.build_bilayer(
             nk=nk, kmax=args.kmax, U_meV=args.u_mev,
@@ -192,7 +194,7 @@ def _solve_cold(
     args: argparse.Namespace,
     branch: str,
     n_cm12: float,
-) -> tuple[cpp_hf.SolveResult, float]:
+) -> tuple[hartreefock.SolveResult, float]:
     t0 = time.perf_counter()
     setup = common.build_bilayer(
         nk=args.nk, kmax=args.kmax, U_meV=args.u_mev,
@@ -231,7 +233,7 @@ def run(args: argparse.Namespace) -> list[dict[str, Any]]:
         Path(args.reference_csv), branches=branches, density_points=density_points,
     )
 
-    def _run_one(branch: str, n_cm12: float) -> tuple[cpp_hf.SolveResult, float]:
+    def _run_one(branch: str, n_cm12: float) -> tuple[hartreefock.SolveResult, float]:
         if args.continuation:
             return _solve_with_continuation(args, branch, n_cm12, args.nk)
         return _solve_cold(args, branch, n_cm12)

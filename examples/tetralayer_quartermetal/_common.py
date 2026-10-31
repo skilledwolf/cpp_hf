@@ -703,21 +703,8 @@ def pm_c3_cn_reference_density(setup: QMSetup, *,
 
 def hf_energy_for_density(kernel, P: np.ndarray) -> float:
     """Evaluate the current referenced HF functional for ``P``."""
-    from hartreefock.backends.native.fock import build_fock, hf_energy
-    Sigma, H, _ = build_fock(
-        P, h=kernel.h, VR=kernel._VR_shifted, refP=kernel.refP,
-        HH=kernel.HH, w2d=kernel.w2d,
-        include_exchange=kernel.include_exchange,
-        include_hartree=kernel.include_hartree,
-        exchange_hermitian_channel_packing=kernel.exchange_hermitian_channel_packing,
-        contact_g=kernel.contact_g,
-        contact_Oi=kernel.contact_Oi,
-        contact_Oj=kernel.contact_Oj,
-    )
-    return float(hf_energy(
-        P, h=kernel.h, Sigma=Sigma, H=H, weights_b=kernel.weights_b,
-        refP=kernel.refP,
-    ))
+    from hartreefock.backends.native import build_fock
+    return float(build_fock(kernel, P)[3])
 
 
 def _bootstrap_cn_sc_reference(setup: QMSetup, *,
@@ -739,8 +726,9 @@ def _bootstrap_cn_sc_reference(setup: QMSetup, *,
     the bootstrap SCF, runs DM at the same external U as the production
     setup, returns the converged density.
     """
-    import hartreefock.backends.native as cpp_hf
-    from hartreefock.backends.native import SolverConfig, solve_direct_minimization
+    import hartreefock
+    from hartreefock import SolverConfig
+    from hartreefock.backends.native import solve
     if T is None:
         T = float(setup.h_template.fermi.T)
     if projector_key not in setup.project_fns:
@@ -750,7 +738,7 @@ def _bootstrap_cn_sc_reference(setup: QMSetup, *,
     refP_init = noninteracting_cn_reference(setup, T=T, ref_kind="u0")
 
     h_arr = np.asarray(setup.h_template.hs)
-    kernel = cpp_hf.HartreeFockKernel(
+    kernel = hartreefock.HartreeFockKernel(
         weights=setup.weights, hamiltonian=h_arr,
         coulomb_q=setup.Vq, T=float(T),
         include_hartree=True, include_exchange=True,
@@ -762,7 +750,7 @@ def _bootstrap_cn_sc_reference(setup: QMSetup, *,
         block_sizes=(8, 8, 8, 8),
         project_fn=setup.project_fns[projector_key],
     )
-    res = solve_direct_minimization(kernel, refP_init, float(setup.ne_cn),
+    res = solve(kernel, refP_init, float(setup.ne_cn),
                                      config=cfg)
     if not bool(res.converged):
         raise RuntimeError(

@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from hartreefock.backends.jax import HartreeFockKernel
+from hartreefock import HartreeFockKernel
 from hartreefock.backends.jax.stability import _evaluate_fock, _fock_kwargs
 
 jax.config.update("jax_enable_x64", True)

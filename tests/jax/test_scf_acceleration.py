@@ -13,7 +13,8 @@ import pytest
 
 import jax.numpy as jnp
 
-from hartreefock.backends.jax import HartreeFockKernel, SCFConfig, solve_scf
+from hartreefock import HartreeFockKernel, SCFConfig
+from hartreefock.backends.jax import solve_scf
 
 
 def _comm_rms(F, P, w2d):
@@ -62,9 +63,9 @@ class TestDIIS:
         diis = solve_scf(K, P0, _NE, config=SCFConfig(acceleration="diis", **cfg))
         assert bool(lin.converged) and bool(diis.converged)
         # Pulay DIIS should need far fewer Roothaan steps than plain mixing.
-        assert int(diis.iterations) < int(lin.iterations) // 3
+        assert int(diis.n_iter) < int(lin.n_iter) // 3
         np.testing.assert_allclose(float(diis.energy), float(lin.energy), atol=1e-4, rtol=1e-5)
-        assert _comm_rms(diis.fock_matrix, diis.density_matrix, K.w2d) < 1e-4
+        assert _comm_rms(diis.fock, diis.density, K.w2d) < 1e-4
 
     def test_trust_radius_converges(self):
         K = _dirac()
@@ -119,7 +120,7 @@ class TestODA:
         assert result.converged
         expected = np.diag([0.731059, 0.268941])
         np.testing.assert_allclose(
-            np.asarray(result.density_matrix[0, 0]), expected, atol=2e-5,
+            np.asarray(result.density[0, 0]), expected, atol=2e-5,
         )
 
 
@@ -169,7 +170,7 @@ class TestSCFConfigValidation:
         assert result.converged
         expected = np.eye(2) * (n_electrons / 2.0)
         np.testing.assert_array_equal(
-            np.asarray(result.density_matrix[0, 0]), expected,
+            np.asarray(result.density[0, 0]), expected,
         )
 
 

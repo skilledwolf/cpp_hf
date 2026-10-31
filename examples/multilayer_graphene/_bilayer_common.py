@@ -378,8 +378,9 @@ def bootstrap_cn_reference_density(
     matrix, which can then be used as the ``reference_density`` for the full
     scan.
     """
-    import hartreefock.backends.native as cpp_hf
-    from hartreefock.backends.native import SCFConfig, solve_scf
+    import hartreefock
+    from hartreefock import SCFConfig
+    from hartreefock.backends.native import solve_scf
 
     if setup.hartree_matrix is None:
         raise ValueError("setup must include hartree_matrix (use build_bilayer_layer_resolved).")
@@ -387,7 +388,7 @@ def bootstrap_cn_reference_density(
     cn_nonint, _ = setup.h_template.state.compute_densitymatrix_for_density(setup.ne_cn)
     cn_nonint = np.asarray(cn_nonint)
 
-    kernel = cpp_hf.HartreeFockKernel(
+    kernel = hartreefock.HartreeFockKernel(
         weights=setup.weights,
         hamiltonian=np.asarray(setup.h_template.hs),
         coulomb_q=setup.Vq,
@@ -407,7 +408,7 @@ def bootstrap_cn_reference_density(
     result = solve_scf(
         kernel, np.asarray(cn_nonint), float(setup.ne_cn), config=config,
     )
-    return np.asarray(result.density_matrix)
+    return np.asarray(result.density)
 
 
 def n_electrons_for_density(setup: BilayerSetup, n_cm12: float, temperature: float) -> tuple[float, Any]:

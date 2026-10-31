@@ -5,14 +5,8 @@ import pytest
 
 import jax.numpy as jnp
 
-from hartreefock.backends.jax import (
-    HartreeFockKernel,
-    SCFConfig,
-    SolverConfig,
-    SolveResult,
-    solve,
-    solve_scf,
-)
+from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig, SolveResult
+from hartreefock.backends.jax import solve, solve_scf
 
 
 def _comm_rms(F, P, weights_2d):
@@ -295,7 +289,7 @@ class TestContactTerms:
         np.testing.assert_allclose(
             float(dm.energy), float(scf.energy), atol=1e-5, rtol=1e-6,
         )
-        density_diff = float(jnp.linalg.norm(dm.density - scf.density_matrix))
+        density_diff = float(jnp.linalg.norm(dm.density - scf.density))
         assert density_diff < 1e-4, (
             f"DM and SCF densities disagree (||ΔP||_F = {density_diff:.3e}); "
             "indicates the contact term is missing from the inner-loop Fock build."

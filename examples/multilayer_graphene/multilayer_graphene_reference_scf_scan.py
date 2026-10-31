@@ -29,8 +29,10 @@ EXAMPLES_DIR = Path(__file__).resolve().parent
 if str(EXAMPLES_DIR) not in sys.path:
     sys.path.insert(0, str(EXAMPLES_DIR))
 
-import hartreefock.backends.native as cpp_hf
-from hartreefock.backends.native import SCFConfig, solve_scf
+import hartreefock
+
+from hartreefock import SCFConfig
+from hartreefock.backends.native import solve_scf
 import _bilayer_common as common
 
 
@@ -69,7 +71,7 @@ def run_scan(args: argparse.Namespace) -> list[dict]:
         d_gate=args.d_gate, init_scale=args.init_scale,
     )
 
-    kernel = cpp_hf.HartreeFockKernel(
+    kernel = hartreefock.HartreeFockKernel(
         weights=setup.weights,
         hamiltonian=np.asarray(setup.h_template.hs),
         coulomb_q=setup.Vq,
@@ -119,7 +121,7 @@ def run_scan(args: argparse.Namespace) -> list[dict]:
             row = _make_row(branch, n_cm12, n_e, r, t, seed_label)
             rows.append(row)
             _print_row(row)
-            seed_P = r.density_matrix
+            seed_P = r.density
 
     return rows
 
@@ -127,7 +129,7 @@ def run_scan(args: argparse.Namespace) -> list[dict]:
 def _make_row(branch: str, n_cm12: float, n_electrons: float, r, elapsed: float, seed_kind: str) -> dict:
     hist_d = np.asarray(r.history["density_residual"])
     hist_c = np.asarray(r.history["commutator_residual"])
-    k = int(r.iterations)
+    k = int(r.n_iter)
     return {
         "branch": branch,
         "density_cm12": n_cm12,
@@ -137,7 +139,7 @@ def _make_row(branch: str, n_cm12: float, n_electrons: float, r, elapsed: float,
         "energy": float(r.energy),
         "density_residual_last": float(hist_d[k - 1]) if k > 0 else float("nan"),
         "commutator_residual_last": float(hist_c[k - 1]) if k > 0 else float("nan"),
-        "mu": float(r.chemical_potential),
+        "mu": float(r.mu),
         "time_s": elapsed,
         "seed": seed_kind,
     }

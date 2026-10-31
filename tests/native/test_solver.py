@@ -3,14 +3,8 @@
 import numpy as np
 import pytest
 
-from hartreefock.backends.native import (
-    HartreeFockKernel,
-    SCFConfig,
-    SolverConfig,
-    SolveResult,
-    solve,
-    solve_scf,
-)
+from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig, SolveResult
+from hartreefock.backends.native import solve, solve_scf
 
 
 def _comm_rms(F, P, weights_2d):
@@ -227,8 +221,8 @@ class TestSolveResult:
             ),
         )
 
-        assert result.density_matrix is None
-        assert result.fock_matrix is None
+        assert result.density is None
+        assert result.fock is None
         assert np.isfinite(float(result.energy))
 
 
@@ -273,7 +267,7 @@ class TestContactTerms:
         np.testing.assert_allclose(
             float(dm.energy), float(scf.energy), atol=1e-5, rtol=1e-6,
         )
-        density_diff = float(np.linalg.norm(dm.density - scf.density_matrix))
+        density_diff = float(np.linalg.norm(dm.density - scf.density))
         assert density_diff < 1e-4, (
             f"DM and SCF densities disagree (||dP||_F = {density_diff:.3e}); "
             "indicates the contact term is missing from the inner-loop Fock build."

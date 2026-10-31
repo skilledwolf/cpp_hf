@@ -11,7 +11,7 @@ import pytest
 
 import jax.numpy as jnp
 
-from hartreefock.backends.jax import HartreeFockKernel
+from hartreefock import HartreeFockKernel
 from hartreefock.backends.jax.fock import build_fock, hf_energy
 
 
@@ -49,7 +49,7 @@ def _make_kernels(*, embed: bool, with_hartree: bool, refP_arg, **extra):
 def _build_F(kernel, P):
     Sigma, H, F = build_fock(
         jnp.asarray(P, dtype=jnp.complex128),
-        h=kernel.h, VR=kernel._VR_shifted, refP=kernel.refP,
+        h=kernel.h, VR=kernel.VR_shifted, refP=kernel.refP,
         HH=kernel.HH, w2d=kernel.w2d,
         include_exchange=kernel.include_exchange,
         include_hartree=kernel.include_hartree,

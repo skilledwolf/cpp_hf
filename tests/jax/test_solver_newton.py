@@ -27,13 +27,8 @@ jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
 
-from hartreefock.backends.jax import (
-    HartreeFockKernel,
-    SCFConfig,
-    SolverConfig,
-    solve,
-    solve_scf,
-)
+from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig
+from hartreefock.backends.jax import solve, solve_scf
 from hartreefock.backends.jax.fock import build_fock
 from hartreefock.backends.jax.utils import density_matrix_from_fock
 

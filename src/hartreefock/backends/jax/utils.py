@@ -14,6 +14,14 @@ from jax.scipy.special import expit
 from .linalg import eigh, normalize_block_specs
 
 
+def device_args(kernel) -> dict:
+    """``kernel.as_args()`` with arrays on the JAX device in canonical dtypes."""
+    return {
+        k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
+        for k, v in kernel.as_args().items()
+    }
+
+
 def _has_tracer(value: Any) -> bool:
     return isinstance(value, jax.core.Tracer)
 

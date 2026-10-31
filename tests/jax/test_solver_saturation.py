@@ -26,7 +26,8 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from hartreefock.backends.jax import HartreeFockKernel, SCFConfig, SolverConfig, solve, solve_scf
+from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig
+from hartreefock.backends.jax import solve, solve_scf
 from hartreefock.backends.jax.fock import build_fock, free_energy, hf_energy
 import hartreefock.backends.jax.solver as S
 

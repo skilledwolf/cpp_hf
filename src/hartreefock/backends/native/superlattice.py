@@ -445,7 +445,7 @@ class SuperlatticeHartreeFockKernel:
         self.weights_b = w2d[..., None, None]
         self.w2d = w2d
         self.weight_sum = float(np.sum(w2d))
-        self._VR_shifted = np.zeros((nkx, nky, 1, 1), dtype=h.dtype)
+        self.VR_shifted = np.zeros((nkx, nky, 1, 1), dtype=h.dtype)
         self.exchange_hermitian_channel_packing = False
         self.HH = np.zeros((D, D), dtype=np.float64)
         self.contact_g = np.zeros((1,), dtype=np.float64)

@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from hartreefock.backends.jax.fock import build_fock, hf_energy, occupation_entropy
-from hartreefock.backends.jax.problem import HartreeFockKernel
+from hartreefock.kernel import HartreeFockKernel
 
 
 def test_reference_subtracted_energy_gradient_matches_fock():
@@ -97,7 +97,7 @@ def test_exchange_applies_nonuniform_weights_to_density():
     Sigma, _, _ = build_fock(
         jnp.asarray(density[..., None, None], dtype=jnp.complex64),
         h=kernel.h,
-        VR=kernel._VR_shifted,
+        VR=kernel.VR_shifted,
         refP=kernel.refP,
         HH=kernel.HH,
         w2d=kernel.w2d,

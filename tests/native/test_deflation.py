@@ -13,7 +13,8 @@ Covers:
 import numpy as np
 import pytest
 
-from hartreefock.backends.native import HartreeFockKernel, SolverConfig, solve, solve_deflated
+from hartreefock import HartreeFockKernel, SolverConfig, solve_deflated
+from hartreefock.backends.native import solve
 
 
 def _comm_rms(F, P, w2d):

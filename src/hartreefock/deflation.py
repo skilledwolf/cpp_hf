@@ -12,37 +12,33 @@ candidate.
 
 The biased free energy minimised by the Newton solver is
 
-    Ω_eff(P) = Ω(P) + σ · Σ_i exp(-d_i² / (2 L²)),
-    d_i² = Σ_k w_k ‖P_k − P*_{i,k}‖_F²    (weighted Frobenius; gauge-invariant in P)
+    Omega_eff(P) = Omega(P) + sigma * sum_i exp(-d_i^2 / (2 L^2)),
+    d_i^2 = sum_k w_k ||P_k - P*_{i,k}||_F^2   (weighted Frobenius; gauge-invariant)
 
-with ``σ = deflation_sigma`` (height) and ``L = deflation_length`` (width).
+with ``sigma = deflation_sigma`` (height) and ``L = deflation_length`` (width).
+
+With the JAX backend, deflation needs float64 like the rest of the Newton
+path (enable x64).
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import NamedTuple
 
 import numpy as np
 
-from .solver import SolveResult, SolverConfig, solve
-
-
-class DeflatedResult(NamedTuple):
-    solutions: list          # list[SolveResult], distinct minima, ascending energy
-    energies: np.ndarray     # physical energies of `solutions`, ascending
-    best: SolveResult        # lowest-energy solution (ground-state candidate)
-    n_found: int             # == len(solutions)
+from .backends import get_backend
+from .config import DeflatedResult, SolverConfig
 
 
 def _wnorm2(M: np.ndarray, w2d: np.ndarray) -> float:
-    """Σ_k w2d_k ‖M_k‖_F²  (raw weighted Frobenius², matching the C++ metric)."""
+    """sum_k w2d_k ||M_k||_F^2  (raw weighted Frobenius^2, matching the solver metric)."""
     per_k = np.sum(np.abs(M) ** 2, axis=(-2, -1))  # (nk1, nk2)
     return float(np.sum(np.asarray(w2d) * per_k))
 
 
 def _wdist(A: np.ndarray, B: np.ndarray, w2d: np.ndarray) -> float:
-    """sqrt(Σ_k w2d_k ‖A_k − B_k‖_F²) — same units as ``deflation_length``."""
+    """sqrt(sum_k w2d_k ||A_k - B_k||_F^2) — same units as ``deflation_length``."""
     return float(np.sqrt(max(_wnorm2(np.asarray(A) - np.asarray(B), w2d), 0.0)))
 
 
@@ -66,6 +62,7 @@ def solve_deflated(
     perturb: float = 1e-2,
     repolish: bool = True,
     seed: int = 0,
+    backend: str = "native",
 ) -> DeflatedResult:
     """Find distinct HF solutions by deflated trust-region Newton.
 
@@ -84,7 +81,7 @@ def solve_deflated(
         reachable within ``max_retries``).
     sigma, length:
         Bias height / width.  Auto-scaled from the first solution when ``None``
-        (``length = ½‖P*₀‖_w``, ``sigma = max(|E₀|, 1)``).
+        (``length = 0.5 * ||P*_0||_w``, ``sigma = max(|E_0|, 1)``).
     distinct_tol:
         Two densities closer than this (weighted distance) are the same basin.
         Defaults to ``0.25 * length``.
@@ -103,18 +100,19 @@ def solve_deflated(
     DeflatedResult
         Distinct solutions sorted by ascending physical energy.
     """
+    solve = get_backend(backend).solve
     w2d = np.asarray(kernel.w2d)
     rng = np.random.default_rng(seed)
 
     base = base_config if base_config is not None else SolverConfig()
-    # Deflation is a Newton-path feature; force the optimizer, ensure densities
-    # are returned, and clear any stray deflation settings on the base config.
+    # Deflation is a Newton-path feature; force the optimizer and clear any
+    # stray deflation settings on the base (unbiased) config.
     newton_cfg = replace(
         base, optimizer="newton", return_density=True,
         deflation_targets=None, deflation_sigma=0.0,
     )
 
-    P0 = np.ascontiguousarray(P0, dtype=np.complex128)
+    P0 = np.ascontiguousarray(np.asarray(P0), dtype=np.complex128)
 
     # 1. initial unbiased solve
     r0 = solve(kernel, P0, float(n_electrons), config=newton_cfg)
@@ -150,7 +148,7 @@ def solve_deflated(
             cand = (
                 solve(
                     kernel,
-                    np.ascontiguousarray(rb.density, dtype=np.complex128),
+                    np.ascontiguousarray(np.asarray(rb.density), dtype=np.complex128),
                     float(n_electrons),
                     config=newton_cfg,
                 )
@@ -178,5 +176,3 @@ def solve_deflated(
         n_found=len(solutions),
     )
 
-
-__all__ = ["DeflatedResult", "solve_deflated"]

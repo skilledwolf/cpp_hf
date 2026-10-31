@@ -20,98 +20,21 @@ serves as a reference / fallback.  DIIS and ODA mirror cpp_hf's solver_scf.hpp.
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
 from functools import partial
-from numbers import Integral
-from typing import Any, Callable
+from typing import Callable
 
 import jax
 import jax.numpy as jnp
 
+from ...config import SCFConfig, SCFResult, drop_unrequested
 from .fock import build_fock, free_energy, hf_energy
 from .utils import (
+    device_args,
     find_chemical_potential,
     fermidirac,
     validate_electron_count,
     validate_temperature,
 )
-
-
-@dataclass(frozen=True)
-class SCFConfig:
-    max_iter: int = 200
-    density_tol: float = 1e-7
-    comm_tol: float = 1e-6
-    mixing: float = 0.5
-    level_shift: float = 0.0
-    # Acceleration scheme: "linear" (alpha-mixing, default), "diis" (Pulay
-    # commutator-DIIS extrapolation of the Fock), or "oda" (optimal damping --
-    # exact analytic line search on E at T=0 and free-energy backtracking at
-    # finite T, with one extra endpoint Fock build per iter).
-    acceleration: str = "linear"
-    diis_size: int = 6        # DIIS history depth (Pulay)
-    diis_start: int = 2       # begin DIIS extrapolation after this many iters
-    # DIIS damping: F_used = damp * F_extrap + (1 - damp) * F_current.
-    # 1.0 = pure DIIS (default); ~0.7 suppresses late-iteration oscillation.
-    diis_damping: float = 1.0
-    # Trust radius on the density step (weighted Frobenius norm).  0.0 = off.
-    # Bounds the per-iter motion so DIIS extrapolations cannot launch the
-    # iteration to unphysical states (e.g. ungated Coulomb at high doping).
-    trust_radius: float = 0.0
-    project_fn: Callable[[Any], Any] | None = None
-    # RDIIS/Anderson: accept finite-temperature free-energy descent, with
-    # residual improvement permitted within floating-point objective noise.
-    # Appended to preserve the existing positional configuration prefix.
-    safeguard: bool = True
-
-    def __post_init__(self) -> None:
-        for name in ("density_tol", "comm_tol", "mixing", "level_shift",
-                     "diis_damping", "trust_radius"):
-            if not math.isfinite(float(getattr(self, name))):
-                raise ValueError(f"{name} must be finite")
-        for name in ("max_iter", "diis_size", "diis_start"):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, Integral):
-                raise ValueError(f"{name} must be an integer")
-        if self.max_iter <= 0:
-            raise ValueError("max_iter must be positive")
-        if self.acceleration not in ("linear", "diis", "oda", "rdiis", "anderson"):
-            raise ValueError(
-                "SCFConfig.acceleration must be 'linear', 'diis', 'oda', "
-                "'rdiis', or 'anderson'; "
-                f"got {self.acceleration!r}"
-            )
-        if self.diis_size <= 0:
-            raise ValueError("diis_size must be positive")
-        if self.density_tol < 0.0:
-            raise ValueError("density_tol must be non-negative")
-        if self.comm_tol < 0.0:
-            raise ValueError("comm_tol must be non-negative")
-        if not 0.0 <= self.mixing <= 1.0:
-            raise ValueError("mixing must be between 0 and 1")
-        if self.diis_start < 0:
-            raise ValueError("diis_start must be non-negative")
-        if not 0.0 <= self.diis_damping <= 1.0:
-            raise ValueError("diis_damping must be between 0 and 1")
-        if self.trust_radius < 0.0:
-            raise ValueError("trust_radius must be non-negative")
-        if self.project_fn is not None and not callable(self.project_fn):
-            raise ValueError("project_fn must be callable or None")
-        if not isinstance(self.safeguard, bool):
-            raise ValueError("safeguard must be a bool")
-
-
-@dataclass(frozen=True)
-class SCFResult:
-    density_matrix: Any
-    fock_matrix: Any
-    energy: Any
-    chemical_potential: Any
-    iterations: int
-    converged: bool
-    message: str
-    history: dict[str, Any] = field(default_factory=dict)
 
 
 def _herm(X):
@@ -222,13 +145,14 @@ def solve_scf(
     Returns
     -------
     SCFResult
-        ``density_matrix, fock_matrix, energy, chemical_potential,
-        iterations, converged, message, history``.
+        ``density, fock, energy, mu, n_iter, converged, message, history``.
     """
     if config is None:
         config = SCFConfig()
 
-    args = kernel.as_args()
+    if config.block_sizes is not None:
+        raise NotImplementedError("block_sizes is not supported by the JAX SCF solver")
+    args = device_args(kernel)
     h = args["h"]
     P0_arr = jnp.asarray(P0)
     if P0_arr.shape != h.shape:
@@ -303,12 +227,12 @@ def solve_scf(
         cr = float(hist_comm[n_iter - 1]) if n_iter > 0 else float("nan")
         message = f"stopped after {n_iter} iterations (density_res={dr:.3e}, comm_res={cr:.3e})"
 
-    return SCFResult(
-        density_matrix=density,
-        fock_matrix=fock,
+    return drop_unrequested(SCFResult(
+        density=density,
+        fock=fock,
         energy=energy,
-        chemical_potential=mu,
-        iterations=n_iter,
+        mu=mu,
+        n_iter=n_iter,
         converged=is_converged,
         message=message,
         history={
@@ -318,7 +242,7 @@ def solve_scf(
             "commutator_residual": hist_comm[:n_iter],
             **diagnostics,
         },
-    )
+    ), config)
 
 
 @partial(

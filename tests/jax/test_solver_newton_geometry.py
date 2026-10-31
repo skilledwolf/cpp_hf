@@ -7,7 +7,8 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from scipy.linalg import expm
 
-from hartreefock.backends.jax import HartreeFockKernel, SolverConfig, solve
+from hartreefock import HartreeFockKernel, SolverConfig
+from hartreefock.backends.jax import solve
 from hartreefock.backends.jax.fock import build_fock
 from hartreefock.backends.jax.solver import (
     _deflation_bias, _deflation_response, _density_from_Qp,

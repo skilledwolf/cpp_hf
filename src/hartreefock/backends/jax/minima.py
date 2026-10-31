@@ -1,9 +1,11 @@
 """Stability-checked local minimization with bounded negative-curvature recovery."""
 from dataclasses import dataclass
+import jax
 import jax.numpy as jnp
 import numpy as np
 from scipy.special import xlogy
-from .reference_scf import SCFConfig, SCFResult, solve_scf
+from ...config import SCFConfig, SCFResult
+from .reference_scf import solve_scf
 from .stability import (
     StabilityResult, stability_analysis, _evaluate_fock, _fock_kwargs,
     _host_fermi_density, _response_fock,
@@ -107,7 +109,7 @@ def solve_minimum(kernel, P0, n_electrons, *, config=None, max_escapes=4,
     for cycle in range(max_escapes+1):
         result = solve_scf(kernel,initial,n_electrons,config=cfg,
                            fock_build_fn=fock_build_fn)
-        iterations += result.iterations
+        iterations += result.n_iter
         # The new RDIIS/Anderson paths count every build. For legacy methods
         # without counters, -1 propagates "unavailable" rather than fabricating
         # a total from iteration counts.
@@ -117,7 +119,7 @@ def solve_minimum(kernel, P0, n_electrons, *, config=None, max_escapes=4,
         # Legacy SCF histories can stop before the final density/Fock rebuild.
         # Compare every escape against the actual returned state's free energy,
         # using the same spectral entropy as the accepted finite-step trials.
-        p = np.clip(np.linalg.eigvalsh(np.asarray(result.density_matrix)), 0., 1.)
+        p = np.clip(np.linalg.eigvalsh(np.asarray(result.density)), 0., 1.)
         omega = float(result.energy) + kernel.T*np.sum(
             w[..., None]*(xlogy(p, p)+xlogy(1-p, 1-p)))
         omega = float(omega)
@@ -132,7 +134,7 @@ def solve_minimum(kernel, P0, n_electrons, *, config=None, max_escapes=4,
         if not result.converged and residual > recovery_tol:
             stability = None
             break
-        stability = stability_analysis(kernel,result.density_matrix,n_electrons,
+        stability = stability_analysis(kernel,result.density,n_electrons,
             stationarity_tol=recovery_tol,eigen_tol=eigen_tol,
             maxiter=stability_maxiter, fock_build_fn=fock_build_fn)
         if builds >= 0:
@@ -159,7 +161,7 @@ def solve_minimum(kernel, P0, n_electrons, *, config=None, max_escapes=4,
         # The actual finite-step energy check also covers slightly stalled,
         # nonstationary starting densities where this tangent equality is
         # approximate. Count the exact JVP response as one additional build.
-        device_density = jnp.asarray(result.density_matrix, dtype=kernel.h.dtype)
+        device_density = jnp.asarray(result.density, dtype=jax.dtypes.canonicalize_dtype(kernel.h.dtype))
         device_direction = jnp.asarray(direction, dtype=device_density.dtype)
         response_field = np.asarray(_response_fock(
             device_density, device_direction, **args)) / (1-stability.lowest_eigenvalue)
@@ -171,14 +173,14 @@ def solve_minimum(kernel, P0, n_electrons, *, config=None, max_escapes=4,
                 for sign in (-1.,1.):
                     step = sign*amplitude
                     if use_fermi:
-                        trial = _fermi_escape_density(result.fock_matrix, response_field,
+                        trial = _fermi_escape_density(result.fock, response_field,
                             w, n_electrons, kernel.T, step)
                     else:
-                        trial = _feasible_density(result.density_matrix+step*direction,w,n_electrons)
+                        trial = _feasible_density(result.density+step*direction,w,n_electrons)
                     # Judge and retain exactly the density representable by this
                     # kernel. A host float64 perturbation must not silently change
                     # the precision of a float32 custom Fock builder.
-                    device_trial = jnp.asarray(trial, dtype=kernel.h.dtype)
+                    device_trial = jnp.asarray(trial, dtype=jax.dtypes.canonicalize_dtype(kernel.h.dtype))
                     trial = np.asarray(device_trial)
                     E = float(_evaluate_fock(device_trial, **args)[1])
                     if builds >= 0:

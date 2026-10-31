@@ -31,6 +31,8 @@ EXAMPLES_DIR = Path(__file__).resolve().parent
 if str(EXAMPLES_DIR) not in sys.path:
     sys.path.insert(0, str(EXAMPLES_DIR))
 
+import hartreefock
+
 import hartreefock.backends.native as cpp_hf
 import _bilayer_common as common
 
@@ -91,7 +93,7 @@ def run_scan(args: argparse.Namespace) -> list[dict]:
     )
     print(f"  done in {time.perf_counter() - t0:.1f}s")
 
-    kernel = cpp_hf.HartreeFockKernel(
+    kernel = hartreefock.HartreeFockKernel(
         weights=setup.weights,
         hamiltonian=np.asarray(setup.h_template.hs),
         coulomb_q=setup.Vq,
@@ -120,7 +122,7 @@ def run_scan(args: argparse.Namespace) -> list[dict]:
     for branch in args.branches:
         print(f"\n=== {branch} ({args.seed_mode}-seed) ===")
         project_fn = setup.project_fns[branch]
-        config = cpp_hf.SolverConfig(
+        config = hartreefock.SolverConfig(
             max_iter=int(args.max_iter),
             tol_E=float(args.tol_e),
             max_step=float(args.max_step),
@@ -155,7 +157,7 @@ def run_scan(args: argparse.Namespace) -> list[dict]:
 
 
 def _make_row(branch: str, n_cm12: float, n_electrons: float,
-              r: cpp_hf.SolveResult, elapsed: float, seed_kind: str) -> dict:
+              r: hartreefock.SolveResult, elapsed: float, seed_kind: str) -> dict:
     k = int(r.n_iter)
     grad_hist = np.asarray(r.history["grad_norm"])
     E_hist = np.asarray(r.history["E"])

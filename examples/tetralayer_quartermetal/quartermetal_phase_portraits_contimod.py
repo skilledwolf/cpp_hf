@@ -56,7 +56,7 @@ from contimod.meanfield.coulomb import (
 from contimod.meanfield.symmetry import build_graphene_projections
 from contimod.utils.spectrum_fermi import FermiParams
 
-from hartreefock.backends.native.utils import find_chemical_potential
+from hartreefock.backends.native import find_chemical_potential
 
 
 # ---- Physical constants (tetralayer ABC) --------------------------------
@@ -231,7 +231,7 @@ def _pm_c3_cn_reference(setup: dict) -> np.ndarray:
             f"PM_C3 CN reference SCF did not converge ({res.n_iter} iters)"
         )
     return np.ascontiguousarray(
-        np.asarray(res.density_matrix), dtype=np.complex128,
+        np.asarray(res.density), dtype=np.complex128,
     )
 
 
@@ -282,8 +282,7 @@ def _physical_eigs(res, weights, n_e):
     eigs = np.linalg.eigvalsh(fock.reshape(-1, n_orb, n_orb))
     eigs = eigs.reshape(*fock.shape[:2], -1)
     E_F = float(find_chemical_potential(
-        eigs, weights, n_e, T, method="bisection",
-    ))
+        eigs, weights, n_e, T))
     return eigs, E_F
 
 
