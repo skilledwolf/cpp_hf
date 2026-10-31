@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from cpp_hf.symmetry import make_project_fn
+from hartreefock.backends.native.symmetry import make_project_fn
 
 
 def _seeded_complex(rng, shape):

@@ -32,8 +32,8 @@ for opt in (REPO_ROOT.parent / "contimod" / "src",
     if opt.exists() and str(opt) not in sys.path:
         sys.path.insert(0, str(opt))
 
-import cpp_hf
-from cpp_hf import (
+import hartreefock.backends.native as cpp_hf
+from hartreefock.backends.native import (
     HartreeNewtonConfig, solve_hartree_newton,
     SCFConfig, solve_scf,
     SolverConfig, solve_direct_minimization,

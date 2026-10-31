@@ -29,9 +29,9 @@ for optional_src in (
 
 contimod = pytest.importorskip("contimod")
 
-import cpp_hf
-from cpp_hf import SCFConfig, solve_scf
-from cpp_hf.symmetry import make_project_fn
+import hartreefock.backends.native as cpp_hf
+from hartreefock.backends.native import SCFConfig, solve_scf
+from hartreefock.backends.native.symmetry import make_project_fn
 
 from contimod.meanfield.init_guess import init_to_density_matrix
 from contimod.utils.spectrum_fermi import FermiParams

@@ -35,7 +35,7 @@ EXAMPLES_DIR = Path(__file__).resolve().parent
 if str(EXAMPLES_DIR) not in sys.path:
     sys.path.insert(0, str(EXAMPLES_DIR))
 
-import cpp_hf
+import hartreefock.backends.native as cpp_hf
 import _bilayer_common as common
 
 

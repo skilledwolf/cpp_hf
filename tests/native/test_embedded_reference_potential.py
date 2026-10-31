@@ -17,8 +17,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cpp_hf import HartreeFockKernel
-from cpp_hf.fock import build_fock, hf_energy
+from hartreefock.backends.native import HartreeFockKernel
+from hartreefock.backends.native.fock import build_fock, hf_energy
 
 
 def _setup(nk=4, n_orb=2, T=0.05, seed=0):

@@ -8,9 +8,9 @@ requires = [
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "cpp_hf"
+name = "hartreefock"
 dynamic = ["version"]
-description = "Hartree-Fock solvers on 2D k-meshes — C++ reimplementation of jax_hf"
+description = "Hartree-Fock solvers on 2D k-meshes with native (C++) and JAX backends"
 readme = "Readme.md"
 requires-python = ">=3.10"
 authors = [{ name = "Tobias Wolf", email = "public@wolft.xyz" }]
@@ -31,6 +31,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+jax = ["jax>=0.5.3"]
 dev = ["pytest"]
 
 [project.urls]
@@ -38,7 +39,7 @@ Homepage = "https://github.com/skilledwolf/cpp_hf"
 Issues   = "https://github.com/skilledwolf/cpp_hf/issues"
 
 [tool.scikit-build]
-wheel.packages = ["src/cpp_hf"]
+wheel.packages = ["src/hartreefock"]
 
 [tool.scikit-build.metadata.version]
 provider = "scikit_build_core.metadata.setuptools_scm"
@@ -55,6 +56,7 @@ CMAKE_OSX_DEPLOYMENT_TARGET = { env = "MACOSX_DEPLOYMENT_TARGET", default = "11.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--import-mode=importlib"
 
 # ---------------------------------------------------------------------------
 # cibuildwheel: cross-platform wheel provisioning.  Restored after fb81931

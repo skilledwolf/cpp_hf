@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from cpp_hf.linalg import eigh
-from cpp_hf.utils import selfenergy_fft
+from hartreefock.backends.native.linalg import eigh
+from hartreefock.backends.native.utils import selfenergy_fft
 
 
 def test_block_eigh_falls_back_to_full_when_coupled():

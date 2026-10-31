@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from cpp_hf import (
+from hartreefock.backends.native import (
     HartreeFockKernel,
     SCFConfig,
     SolverConfig,
@@ -346,8 +346,8 @@ class TestSpectralCayley:
         return F.astype(dtype)
 
     def test_spectral_unitary_matches_cayley_lu(self):
-        from cpp_hf.solver import _cayley_retract
-        from cpp_hf import _native
+        from hartreefock.backends.native.solver import _cayley_retract
+        from hartreefock.backends.native import _native
 
         rng = np.random.default_rng(0)
         d = self._make_skew(rng, (3, 3, 6, 6))
@@ -363,8 +363,8 @@ class TestSpectralCayley:
             )
 
     def test_spectral_diag_matches_lu_diag(self):
-        from cpp_hf.solver import _cayley_retract
-        from cpp_hf import _native
+        from hartreefock.backends.native.solver import _cayley_retract
+        from hartreefock.backends.native import _native
 
         rng = np.random.default_rng(1)
         d = self._make_skew(rng, (3, 3, 6, 6))
@@ -385,7 +385,7 @@ class TestSpectralCayley:
             )
 
     def test_spectral_unitary_is_unitary(self):
-        from cpp_hf import _native
+        from hartreefock.backends.native import _native
 
         rng = np.random.default_rng(2)
         d = self._make_skew(rng, (2, 2, 8, 8))

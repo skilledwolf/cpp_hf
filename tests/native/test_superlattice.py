@@ -10,8 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cpp_hf import _compat
-from cpp_hf.superlattice import (
+from hartreefock.backends.native import _compat
+from hartreefock.backends.native.superlattice import (
     ExtendedGridLayout,
     build_extended_layout,
     superlattice_fock,

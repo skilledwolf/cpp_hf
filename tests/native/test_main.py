@@ -3,11 +3,11 @@
 import numpy as np
 import pytest
 
-from cpp_hf import HartreeFockKernel
-from cpp_hf._compat import _native
-from cpp_hf.fock import build_fock, hf_energy
-from cpp_hf.solver import _kernel_args_for_native
-from cpp_hf.utils import (
+from hartreefock.backends.native import HartreeFockKernel
+from hartreefock.backends.native._compat import _native
+from hartreefock.backends.native.fock import build_fock, hf_energy
+from hartreefock.backends.native.solver import _kernel_args_for_native
+from hartreefock.backends.native.utils import (
     density_matrix_from_fock,
     fermidirac,
     find_chemical_potential,

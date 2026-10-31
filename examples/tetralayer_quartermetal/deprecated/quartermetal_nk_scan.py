@@ -37,8 +37,8 @@ for p in (str(SRC_DIR), str(EXAMPLES_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-import cpp_hf
-from cpp_hf import (
+import hartreefock.backends.native as cpp_hf
+from hartreefock.backends.native import (
     SCFConfig, solve_scf,
     SolverConfig, solve_direct_minimization,
 )

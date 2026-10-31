@@ -15,8 +15,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))
 
-import cpp_hf  # noqa: E402
-from cpp_hf import SCFConfig  # noqa: E402
+import hartreefock.backends.native as cpp_hf  # noqa: E402
+from hartreefock.backends.native import SCFConfig  # noqa: E402
 
 
 def _default_case_path() -> Path:

@@ -3,7 +3,7 @@
 
 Picks the QM-heart cell with SVP+C3 at the production settings (T=0.3,
 nk=96, kmax=0.30) — took ~42 iters in the prior scan.  Reports:
-  - free-energy and gradient-norm history per iter (from cpp_hf hist_E,
+  - free-energy and gradient-norm history per iter (from hartreefock.backends.native hist_E,
     hist_grad)
   - SV-population imbalance per iter (requires running iter-by-iter)
   - Δ_tb per iter
@@ -30,8 +30,8 @@ for p in (str(SRC_DIR), str(EXAMPLES_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-import cpp_hf
-from cpp_hf import SolverConfig, solve_direct_minimization
+import hartreefock.backends.native as cpp_hf
+from hartreefock.backends.native import SolverConfig, solve_direct_minimization
 import _common as qm
 
 

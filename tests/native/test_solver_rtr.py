@@ -14,14 +14,14 @@ unique-minimum kernel (the contact case) or assert only stationarity.
 import numpy as np
 import pytest
 
-from cpp_hf import (
+from hartreefock.backends.native import (
     HartreeFockKernel,
     SCFConfig,
     SolverConfig,
     solve,
     solve_scf,
 )
-from cpp_hf.solver import _kernel_args_for_native
+from hartreefock.backends.native.solver import _kernel_args_for_native
 
 
 def _comm_rms(F, P, w2d):
@@ -77,7 +77,7 @@ def _multiband(nk, nb, T, ex, seed):
 class TestRtrHvp:
     def test_matches_finite_difference(self):
         from scipy.linalg import expm
-        from cpp_hf import _native
+        from hartreefock.backends.native import _native
 
         def offdiag(X):
             X = X.copy(); idx = np.arange(X.shape[-1]); X[..., idx, idx] = 0; return X

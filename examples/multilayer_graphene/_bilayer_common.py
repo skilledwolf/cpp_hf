@@ -184,7 +184,7 @@ def build_bilayer(
     import contimod as cm
     from contimod.utils.spectrum_fermi import FermiParams
 
-    from cpp_hf.symmetry import make_project_fn
+    from hartreefock.backends.native.symmetry import make_project_fn
 
     model = cm.graphene.Bernal(2, valleyful=True, spinful=True, U=float(U_meV))
     h_template = model.discretize(nk=int(nk), kmax=float(kmax))
@@ -290,7 +290,7 @@ def build_bilayer_layer_resolved(
     from contimod.meanfield.coulomb import layer_coulomb_kernel
     from contimod.utils.spectrum_fermi import FermiParams
 
-    from cpp_hf.symmetry import make_project_fn
+    from hartreefock.backends.native.symmetry import make_project_fn
 
     model = cm.graphene.Bernal(2, valleyful=True, spinful=True, U=float(U_meV))
     h_template = model.discretize(nk=int(nk), kmax=float(kmax))
@@ -378,8 +378,8 @@ def bootstrap_cn_reference_density(
     matrix, which can then be used as the ``reference_density`` for the full
     scan.
     """
-    import cpp_hf
-    from cpp_hf import SCFConfig, solve_scf
+    import hartreefock.backends.native as cpp_hf
+    from hartreefock.backends.native import SCFConfig, solve_scf
 
     if setup.hartree_matrix is None:
         raise ValueError("setup must include hartree_matrix (use build_bilayer_layer_resolved).")

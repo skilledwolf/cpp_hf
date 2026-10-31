@@ -69,8 +69,8 @@ def _run_d_row(args: tuple) -> list[dict]:
     _ = (max_iter_h, enable_c3, panel_mode)
 
     import _common as qm
-    import cpp_hf
-    from cpp_hf import SolverConfig, solve_direct_minimization
+    import hartreefock.backends.native as cpp_hf
+    from hartreefock.backends.native import SolverConfig, solve_direct_minimization
 
     # Build the full (32-orbital) setup on the rhombic BZ.  All scan configs
     # use this same cell and the same PM_C3 CN reference.

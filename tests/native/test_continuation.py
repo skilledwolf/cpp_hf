@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cpp_hf import (
+from hartreefock.backends.native import (
     ContinuationResult,
     HartreeFockKernel,
     SCFConfig,

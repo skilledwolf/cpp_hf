@@ -703,7 +703,7 @@ def pm_c3_cn_reference_density(setup: QMSetup, *,
 
 def hf_energy_for_density(kernel, P: np.ndarray) -> float:
     """Evaluate the current referenced HF functional for ``P``."""
-    from cpp_hf.fock import build_fock, hf_energy
+    from hartreefock.backends.native.fock import build_fock, hf_energy
     Sigma, H, _ = build_fock(
         P, h=kernel.h, VR=kernel._VR_shifted, refP=kernel.refP,
         HH=kernel.HH, w2d=kernel.w2d,
@@ -739,8 +739,8 @@ def _bootstrap_cn_sc_reference(setup: QMSetup, *,
     the bootstrap SCF, runs DM at the same external U as the production
     setup, returns the converged density.
     """
-    import cpp_hf
-    from cpp_hf import SolverConfig, solve_direct_minimization
+    import hartreefock.backends.native as cpp_hf
+    from hartreefock.backends.native import SolverConfig, solve_direct_minimization
     if T is None:
         T = float(setup.h_template.fermi.T)
     if projector_key not in setup.project_fns:

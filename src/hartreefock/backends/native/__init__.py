@@ -20,12 +20,9 @@ from __future__ import annotations
 from importlib import metadata
 
 try:  # pragma: no cover - metadata only
-    __version__ = metadata.version("cpp_hf")
-    _meta = metadata.metadata("cpp_hf")
-    __author__ = _meta.get("Author", "unknown")
+    __version__ = metadata.version("hartreefock")
 except metadata.PackageNotFoundError:  # pragma: no cover - editable install
     __version__ = "0.0.0"
-    __author__ = "unknown"
 
 from .problem import HartreeFockKernel
 from .solver import (

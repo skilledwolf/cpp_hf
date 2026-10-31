@@ -56,7 +56,7 @@ from contimod.meanfield.coulomb import (
 from contimod.meanfield.symmetry import build_graphene_projections
 from contimod.utils.spectrum_fermi import FermiParams
 
-from cpp_hf.utils import find_chemical_potential
+from hartreefock.backends.native.utils import find_chemical_potential
 
 
 # ---- Physical constants (tetralayer ABC) --------------------------------
