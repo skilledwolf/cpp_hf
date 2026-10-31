@@ -179,8 +179,11 @@ def main(argv=None) -> int:
     for i, Dtb in enumerate(Delta_grid):
         D_Vnm = float(Dtb) / DELTA_TB_PER_D
         # Build small_orbital model + setup once per Δ_tb row.
-        model = cm.graphene.NlayerABC(
-            N=qm.N_LAYERS, valleyful=False, spinful=False, U=-float(Dtb),
+        model = cm.graphene.Rhombohedral(
+            qm.N_LAYERS,
+            valleyful=False,
+            spinful=False,
+            U=-float(Dtb),
         )
         setup = qm.build_setup(
             D_Vnm=D_Vnm, nk=64, kmax=0.30, T=args.T,

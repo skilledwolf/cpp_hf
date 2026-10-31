@@ -77,7 +77,7 @@ Likely sources of the model discrepancy:
    this repo) gives ‖HH‖₂ ≈ 10⁶ and is within ~2× of references,
    which is what I'm using as default.
 2. **U sign convention.** Spec puts top at `+U/2`, contimod's
-   `NlayerABC(U=...)` at `-U/2`.  Fixed: pass `-U_spec` to constructor.
+   `Rhombohedral(U=...)` at `-U/2`.  Fixed: pass `-U_spec` to constructor.
 3. **`P_ref` choice.** Spec says "no field, U=0, half-filling"; using
    the bootstrapped HF-CN density (which has interaction-induced gap
    from exchange) instead corrupts σ and gives Δ_tb +160 meV instead of

@@ -56,7 +56,7 @@ def diag_along_kx_cut(model, kx_array: np.ndarray) -> np.ndarray:
     nk_y = 4  # we only need one row, but discretize requires a 2D mesh
     kmax_x = float(np.max(np.abs(kx_array)))
     kmax_y = max(kmax_x * 0.05, 0.01)
-    # Build a 1D k-array directly via NlayerABC.h(k); fall back to mesh
+    # Build a 1D k-array directly via Rhombohedral.h(k); fall back to mesh
     # discretization if the model lacks that.
     try:
         H_at_k = np.stack([np.asarray(model.h(np.array([kx, 0.0])))
@@ -124,8 +124,11 @@ def main(argv=None) -> int:
     U_spec = float(args.Delta_tb)
     D_Vnm = U_spec / DELTA_TB_PER_D
     import contimod as cm
-    model = cm.graphene.NlayerABC(
-        N=qm.N_LAYERS, valleyful=False, spinful=False, U=-U_spec,
+    model = cm.graphene.Rhombohedral(
+        qm.N_LAYERS,
+        valleyful=False,
+        spinful=False,
+        U=-U_spec,
     )
 
     # 1D band cut along k_x at K (in 1/lat).

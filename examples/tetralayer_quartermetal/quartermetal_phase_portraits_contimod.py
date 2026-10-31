@@ -129,8 +129,11 @@ def _build_setup(D_Vnm: float, *, hartree_kind: str = "dualgate_eps2") -> dict:
     eps_perp, eps_zz = _eps_from_kind(hartree_kind)
     U_spec = _U_meV_from_D(D_Vnm)
 
-    model = cm.graphene.NlayerABC(
-        N=N_LAYERS, valleyful=True, spinful=True, U=-U_spec,
+    model = cm.graphene.Rhombohedral(
+        N_LAYERS,
+        valleyful=True,
+        spinful=True,
+        U=-U_spec,
     )
     bz = _rhombic_bz(KMAX)
     h = model.discretize(nk=NK, bz=bz)
@@ -184,8 +187,11 @@ def _build_setup(D_Vnm: float, *, hartree_kind: str = "dualgate_eps2") -> dict:
 def _noninteracting_cn_density(setup: dict) -> np.ndarray:
     """U=0 non-interacting CN density on the same mesh as ``setup['h']``."""
     bz = setup["h"].kmesh.brillouin_zone
-    m_u0 = cm.graphene.NlayerABC(
-        N=N_LAYERS, valleyful=True, spinful=True, U=0.0,
+    m_u0 = cm.graphene.Rhombohedral(
+        N_LAYERS,
+        valleyful=True,
+        spinful=True,
+        U=0.0,
     )
     h_u0 = m_u0.discretize(nk=NK, bz=bz)
     h_u0.fermi = FermiParams(T=T, mu=0.0)

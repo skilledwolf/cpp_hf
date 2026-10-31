@@ -3,13 +3,13 @@
 Mirrors the structure of ``_bilayer_common.py`` but for the four-layer ABC
 problem in the quartermetal task spec:
 
-  - ``cm.graphene.NlayerABC(N=4, valleyful=True, spinful=True, U=U_mev)``
+  - ``cm.graphene.Rhombohedral(4, valleyful=True, spinful=True, U=U_mev)``
   - layer-resolved Coulomb for exchange plus q=0 Hartree overrides
   - PM, SVP, PM_C3, and SVP_C3 projectors on the rhombic k cell
   - SVP-biased seed for symmetry-broken initialization
 
 Sign convention: spec puts top at +U/2, bottom at -U/2.  contimod's
-``NlayerABC(U=...)`` uses the OPPOSITE convention; we flip the sign when
+``Rhombohedral(5, U=...)`` uses the OPPOSITE convention; we flip the sign when
 constructing the model so that bare Δ_tb = +U_spec for D > 0.
 
 To keep the validation harness reusable, this module exposes both gated
@@ -57,7 +57,7 @@ LAT_NM = 0.246
 LAYER_SPACING_NM = 0.34
 PER_CM = 0.246e-7
 
-# Spin-valley sector layout: NlayerABC(valleyful, spinful) lays out
+# Spin-valley sector layout: Rhombohedral(valleyful, spinful) lays out
 # (spin × valley) blocks of 8 layer-sublattice orbitals, with spin slowest
 # and valley next.  N_ORB_PER_SV = 2 sublattice × 4 layer = 8.
 N_ORB_PER_SV = 8
@@ -232,11 +232,19 @@ def build_setup(*, D_Vnm: float, nk: int = NK_DEFAULT, kmax: float = KMAX,
     U_spec = U_meV_from_D(D_Vnm)
     # Flip sign for contimod's opposite convention.
     if small_orbital:
-        model = cm.graphene.NlayerABC(N=N_LAYERS, valleyful=False,
-                                       spinful=False, U=-U_spec)
+        model = cm.graphene.Rhombohedral(
+                                       N_LAYERS,
+                                       valleyful=False,
+                                       spinful=False,
+                                       U=-U_spec,
+                                   )
     else:
-        model = cm.graphene.NlayerABC(N=N_LAYERS, valleyful=True,
-                                       spinful=True, U=-U_spec)
+        model = cm.graphene.Rhombohedral(
+                                       N_LAYERS,
+                                       valleyful=True,
+                                       spinful=True,
+                                       U=-U_spec,
+                                   )
 
     if bz_kind == "rhombic":
         s = 2.0 * float(kmax)
@@ -657,9 +665,12 @@ def noninteracting_cn_reference(setup: QMSetup, T: float | None = None,
     else:
         raise ValueError(f"unknown ref_kind: {ref_kind}")
 
-    m = cm.graphene.NlayerABC(N=N_LAYERS,
-                               valleyful=not small, spinful=not small,
-                               U=U_ref)
+    m = cm.graphene.Rhombohedral(
+                               N_LAYERS,
+                               valleyful=not small,
+                               spinful=not small,
+                               U=U_ref,
+                           )
     bz = setup.h_template.kmesh.brillouin_zone
     if bz is not None:
         h = m.discretize(nk=nk, bz=bz)
@@ -778,7 +789,7 @@ C3_OMEGA = np.exp(2.0j * np.pi / 3.0)
 
 def _make_c3_orbital_unitary(n_layers: int) -> np.ndarray:
     """C3z unitary on the (spin) ⊗ (valley) ⊗ (A_1, B_1, ..., A_N, B_N) basis
-    used by contimod's NlayerABC valleyful=spinful=True.
+    used by contimod's Rhombohedral valleyful=spinful=True.
 
     Diagonal: ω^((ℓ-1)+s) at K, conjugate at K'.  Spin = identity.
     """

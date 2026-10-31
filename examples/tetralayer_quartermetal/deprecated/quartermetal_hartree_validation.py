@@ -75,8 +75,8 @@ def U_meV_from_D(D_Vnm: float, *, N: int = N_LAYERS,
 
     Spec formula: ``U = D·(N-1)·d / ε_zz`` (D in V/nm → V → meV).  Spec
     convention places top at ``+U/2`` and bottom at ``-U/2``, i.e.
-    ``Δ_tb_bare = +U``.  Contimod's ``NlayerABC(U=...)`` uses the OPPOSITE
-    sign (top at ``-U/2``); we flip when passing to ``NlayerABC``.
+    ``Δ_tb_bare = +U``.  Contimod's ``Rhombohedral(5, U=...)`` uses the OPPOSITE
+    sign (top at ``-U/2``); we flip when passing to ``Rhombohedral``.
     """
     return D_Vnm * (N - 1) * layer_spacing_nm / epsilon_zz * 1000.0
 
@@ -85,8 +85,12 @@ def build_model(D_Vnm: float, *, nk: int, kmax: float = KMAX,
                 T: float = TEMPERATURE):
     U_meV_spec = U_meV_from_D(D_Vnm)
     # Flip sign for contimod's opposite convention; bare Δ_tb (top − bot) is +U_spec.
-    m = cm.graphene.NlayerABC(N=N_LAYERS, valleyful=True, spinful=True,
-                               U=-U_meV_spec)
+    m = cm.graphene.Rhombohedral(
+                               N_LAYERS,
+                               valleyful=True,
+                               spinful=True,
+                               U=-U_meV_spec,
+                           )
     h = m.discretize(nk=nk, kmax=kmax)
     h.fermi = FermiParams(T=float(T), mu=0.0)
     return m, h

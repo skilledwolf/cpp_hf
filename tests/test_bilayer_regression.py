@@ -166,7 +166,7 @@ def _build_bilayer_setup(ref):
     d_gate = float(ref["d_gate"])
     init_scale = float(ref["init_scale"])
 
-    model = cm.graphene.MultilayerAB(valleyful=True, spinful=True, U=U_meV)
+    model = cm.graphene.Bernal(2, valleyful=True, spinful=True, U=U_meV)
     h_template = model.discretize(nk=nk, kmax=kmax)
     h_template.fermi = FermiParams(T=temperature, mu=0.0)
 

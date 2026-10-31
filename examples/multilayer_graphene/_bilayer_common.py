@@ -186,7 +186,7 @@ def build_bilayer(
 
     from cpp_hf.symmetry import make_project_fn
 
-    model = cm.graphene.MultilayerAB(valleyful=True, spinful=True, U=float(U_meV))
+    model = cm.graphene.Bernal(2, valleyful=True, spinful=True, U=float(U_meV))
     h_template = model.discretize(nk=int(nk), kmax=float(kmax))
     h_template.fermi = FermiParams(T=float(temperature), mu=0.0)
 
@@ -292,7 +292,7 @@ def build_bilayer_layer_resolved(
 
     from cpp_hf.symmetry import make_project_fn
 
-    model = cm.graphene.MultilayerAB(valleyful=True, spinful=True, U=float(U_meV))
+    model = cm.graphene.Bernal(2, valleyful=True, spinful=True, U=float(U_meV))
     h_template = model.discretize(nk=int(nk), kmax=float(kmax))
     h_template.fermi = FermiParams(T=float(temperature), mu=0.0)
 

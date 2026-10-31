@@ -2,7 +2,7 @@
 """(n_e, Δ_tb) DOS-at-E_F map for the BARE non-interacting band structure.
 
 No Hartree, no Fock, no SCF — just diagonalize the bare h(k) of
-``contimod.graphene.NlayerABC`` at each layer-bias Δ_tb, find μ for the
+``contimod.graphene.Rhombohedral`` at each layer-bias Δ_tb, find μ for the
 requested per-flavor density n_e, and compute the DOS at μ via
 ``bztetra.twod``.
 
