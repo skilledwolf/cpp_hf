@@ -291,6 +291,9 @@ def main():
     save_dict = {
         "nk": NK,
         "kmax": KMAX,
+        "kx": np.asarray(h_template.kmesh.kx),
+        "ky": np.asarray(h_template.kmesh.ky),
+        "weight": float(h_template.kmesh.weight),
         "U_meV": U_MEV,
         "temperature": TEMPERATURE,
         "epsilon_r": EPSILON_R,

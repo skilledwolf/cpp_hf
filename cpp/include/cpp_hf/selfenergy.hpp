@@ -14,26 +14,32 @@
 
 namespace cpp_hf {
 
-// Plan cache keyed on (nk1, nk2, batch).  Plans are expensive to build, so we
-// keep them around for the lifetime of the process.  Concurrent access is
-// rare; a small lock keeps the cache safe without measurable overhead.
+// Plan cache keyed on (nk1, nk2, batch, effective thread count).  Keep these
+// expensive plans between calls; the lock also coordinates parallel channels.
 class FftPlanCache {
 public:
     static FftPlanCache& instance() {
-        static FftPlanCache c;
-        return c;
+        // The cache is intentionally process-lifetime.  Letting its entries
+        // destruct while a Python extension and FFTW's own globals are being
+        // torn down creates an unspecified cross-DSO destruction order.
+        static auto* cache = new FftPlanCache;
+        return *cache;
     }
 
-    FftBatched2D& get(std::size_t nk1, std::size_t nk2, std::size_t batch) {
+    std::shared_ptr<FftBatched2D> get(
+        std::size_t nk1, std::size_t nk2, std::size_t batch) {
+        const int nthreads = FftBatched2D::choose_threads();
         std::lock_guard<std::mutex> lock(mu_);
         for (auto& e : entries_) {
-            if (e->nk1() == nk1 && e->nk2() == nk2 && e->batch() == batch)
-                return *e;
+            if (e->nk1() == nk1 && e->nk2() == nk2 && e->batch() == batch
+                && e->nthreads() == nthreads)
+                return e;
         }
         const std::size_t max_n = max_entries();
         while (entries_.size() >= max_n) entries_.erase(entries_.begin());
-        entries_.emplace_back(std::make_unique<FftBatched2D>(nk1, nk2, batch));
-        return *entries_.back();
+        entries_.emplace_back(
+            std::make_shared<FftBatched2D>(nk1, nk2, batch, nthreads));
+        return entries_.back();
     }
 
     void clear() {
@@ -50,7 +56,10 @@ private:
         return 4;
     }
 
-    std::vector<std::unique_ptr<FftBatched2D>> entries_;
+    // Callers retain shared ownership for the complete FFT execution.  This
+    // prevents eviction/clear from destroying a plan after get() returns but
+    // before forward()/inverse() finish.
+    std::vector<std::shared_ptr<FftBatched2D>> entries_;
     std::mutex mu_;
 };
 
@@ -109,11 +118,41 @@ inline void selfenergy_fft_full_inplace(c64* sigma, const c64* VR,
     const std::size_t nb2 = nb * nb;
     const std::size_t n_tot = nk1 * nk2 * nb2;
 
-    auto& plan = FftPlanCache::instance().get(nk1, nk2, nb2);
-    plan.forward(sigma);
+    auto plan = FftPlanCache::instance().get(nk1, nk2, nb2);
+    plan->forward(sigma);
     multiply_VR_inplace(sigma, VR, nk1, nk2, nb, dv1, dv2);
-    plan.inverse(sigma);
+    plan->inverse(sigma);
     for (std::size_t i = 0; i < n_tot; ++i) sigma[i] = -sigma[i];
+}
+
+// Exact exchange on nonzero symmetry blocks.  The caller checks that every
+// off-block density entry is zero; no coherence is dropped by this path.
+inline void selfenergy_fft_blocks_inplace(c64* sigma, const c64* VR,
+                                          std::size_t nk1, std::size_t nk2,
+                                          std::size_t nb, bool scalar,
+                                          const std::vector<std::size_t>& blocks) {
+    const std::size_t nk = nk1*nk2, nb2 = nb*nb;
+    std::vector<std::size_t> indices;
+    std::size_t start = 0;
+    for (auto size : blocks) {
+        for (std::size_t i = start; i < start+size; ++i)
+            for (std::size_t j = start; j < start+size; ++j)
+                indices.push_back(i*nb+j);
+        start += size;
+    }
+    const std::size_t batch = indices.size();
+    std::vector<c64> packed(nk*batch);
+    for (std::size_t k = 0; k < nk; ++k)
+        for (std::size_t a = 0; a < batch; ++a) packed[k*batch+a] = sigma[k*nb2+indices[a]];
+    auto plan = FftPlanCache::instance().get(nk1, nk2, batch);
+    plan->forward(packed.data());
+    for (std::size_t k = 0; k < nk; ++k)
+        for (std::size_t a = 0; a < batch; ++a)
+            packed[k*batch+a] *= VR[scalar ? k : k*nb2+indices[a]];
+    plan->inverse(packed.data());
+    std::fill(sigma, sigma+nk*nb2, c64(0.0));
+    for (std::size_t k = 0; k < nk; ++k)
+        for (std::size_t a = 0; a < batch; ++a) sigma[k*nb2+indices[a]] = -packed[k*batch+a];
 }
 
 // Hermitian-channel-packed variant: only the upper triangle of (nb, nb) is
@@ -146,15 +185,15 @@ inline void selfenergy_fft_full_hcp(const c64* P, c64* sigma, const c64* VR,
             dst[t] = pk[tri_i[t] * nb + tri_j[t]];
     }
 
-    auto& plan = FftPlanCache::instance().get(nk1, nk2, n_pack);
-    plan.forward(packed.data());
+    auto plan = FftPlanCache::instance().get(nk1, nk2, n_pack);
+    plan->forward(packed.data());
     // Multiply by scalar VR[k]
     for (std::size_t k = 0; k < nk; ++k) {
         const c64 v = VR[k];
         c64* p = packed.data() + k * n_pack;
         for (std::size_t t = 0; t < n_pack; ++t) p[t] *= v;
     }
-    plan.inverse(packed.data());
+    plan->inverse(packed.data());
 
     // Negate and unpack into sigma, mirroring conj into the lower triangle.
     for (std::size_t k = 0; k < nk; ++k) {

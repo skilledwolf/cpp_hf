@@ -23,9 +23,11 @@ using ProjectFn = std::function<void(c64* /*F*/,
                                      std::size_t nb)>;
 
 inline bool has_contact_terms(const HFKernel& K) {
+    // All-zero couplings contribute exactly nothing; skip the O(nk*nb^2)
+    // rho_bar reduction regardless of how many zeroed channels are declared.
     for (std::size_t t = 0; t < K.n_contact; ++t)
         if (K.contact_g[t] != 0.0) return true;
-    return K.n_contact > 1;
+    return false;
 }
 
 // Solver-oriented Fock builder.  It writes Sigma and F, and returns the
@@ -33,7 +35,9 @@ inline bool has_contact_terms(const HFKernel& K) {
 // full dense Hartree array in every solver iteration.
 inline void build_fock_compact(const HFKernel& K, const c64* P,
                                c64* Sigma, c64* F, f32* hartree_diag,
-                               const ProjectFn* project_fn = nullptr) {
+                               const ProjectFn* project_fn = nullptr,
+                               bool include_one_body = true) {
+    if (K.fock_builds) ++*K.fock_builds;
     const std::size_t nk = K.nk();
     const std::size_t nb = K.nb;
     const std::size_t nb2 = K.nb2();
@@ -175,7 +179,9 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
         }
     }
 
-    // Σ = -FFT⁻¹[FFT(P − refP) · VR]  (no ifftshift; VR is phase-shifted)
+    // Σ = -FFT⁻¹[FFT(w · (P − refP)) · VR]
+    // (no ifftshift; VR is phase-shifted).  The quadrature weight belongs to
+    // the integrated source momentum q, not the transfer momentum k-q.
     // Or, for superlattice mode, Σ = streaming Fock on (P − refP).
     if (K.include_exchange) {
         if (K.superlattice_fock_active) {
@@ -197,12 +203,24 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
                 K.n_G, K.dim_orb,
                 /*hermitian_rho=*/true);
             std::memcpy(Sigma, sigma_out.data(), n_tot * sizeof(c64));
-        } else if (K.exchange_hcp && K.dv1 == 1 && K.dv2 == 1) {
-            selfenergy_fft_full_hcp(Sigma, Sigma, K.VR,
-                                    K.nk1, K.nk2, nb);
         } else {
-            selfenergy_fft_full_inplace(Sigma, K.VR,
-                                        K.nk1, K.nk2, nb, K.dv1, K.dv2);
+            parallel_for(nk, [&](std::size_t k) {
+                c64* source = Sigma + k * nb2;
+                const f32 weight = K.w2d[k];
+                for (std::size_t i = 0; i < nb2; ++i)
+                    source[i] *= weight;
+            });
+            if (K.exchange_blocks && K.exchange_blocks->size() > 1
+                && max_offblock_sizes(Sigma, nk, nb, *K.exchange_blocks) == 0.0) {
+                selfenergy_fft_blocks_inplace(Sigma, K.VR, K.nk1, K.nk2, nb,
+                                              K.dv1 == 1 && K.dv2 == 1, *K.exchange_blocks);
+            } else if (K.exchange_hcp && K.dv1 == 1 && K.dv2 == 1) {
+                selfenergy_fft_full_hcp(Sigma, Sigma, K.VR,
+                                        K.nk1, K.nk2, nb);
+            } else {
+                selfenergy_fft_full_inplace(Sigma, K.VR,
+                                            K.nk1, K.nk2, nb, K.dv1, K.dv2);
+            }
         }
     } else {
         std::memset(Sigma, 0, n_tot * sizeof(c64));
@@ -284,7 +302,7 @@ inline void build_fock_compact(const HFKernel& K, const c64* P,
         const c64* sk = Sigma + k * nb2;
         c64* fk = F + k * nb2;
         for (std::size_t i = 0; i < nb2; ++i)
-            fk[i] = hk[i] + sk[i];
+            fk[i] = (include_one_body ? hk[i] : c64(0.0, 0.0)) + sk[i];
         if (K.include_hartree) {
             for (std::size_t i = 0; i < nb; ++i)
                 fk[i * nb + i] += c64(hartree_diag[i], 0.0);
@@ -389,11 +407,15 @@ inline f32 occupation_entropy(const f32* p, const f32* w_norm,
         const f32 wk = w_norm[k];
         const f32* pk = p + k * nb;
         for (std::size_t b = 0; b < nb; ++b) {
-            f32 pv = pk[b];
-            if (pv < ENTROPY_CLIP) pv = ENTROPY_CLIP;
-            if (pv > 1.0 - ENTROPY_CLIP) pv = 1.0 - ENTROPY_CLIP;
-            const double s = static_cast<double>(pv) * std::log(static_cast<double>(pv))
-                           + static_cast<double>(1.0 - pv) * std::log1p(static_cast<double>(-pv));
+            const f32 pv = std::clamp(pk[b], 0.0, 1.0);
+            const f32 qv = 1.0 - pv;
+            double s = 0.0;
+            if (pv > 0.0)
+                s += static_cast<double>(pv)
+                   * std::log(static_cast<double>(pv));
+            if (qv > 0.0)
+                s += static_cast<double>(qv)
+                   * std::log(static_cast<double>(qv));
             S -= static_cast<double>(wk) * s;
         }
     }

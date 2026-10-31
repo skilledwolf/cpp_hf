@@ -9,10 +9,10 @@
 //
 // is a single 2D convolution in absolute momentum p = k - G, decoupled into
 // independent (α, β, ΔG = G_a - G_b) channels.  This routine streams those
-// channels through one shared (N_ext_x, N_ext_y, dim_orb, dim_orb) scratch
-// buffer: scatter ρ̃ onto the extended grid, FFT-convolve against the lag
-// Coulomb kernel, gather σ̃ back to (k, G_a, G_b).  Peak memory is
-// O(N_ext^2 · dim_orb^2), independent of n_delta.
+// channels through a (N_ext_x, N_ext_y, dim_orb, dim_orb) scratch buffer per
+// active OpenMP worker: scatter ρ̃ onto the extended grid, FFT-convolve
+// against the lag Coulomb kernel, gather σ̃ back to (k, G_a, G_b).  Scratch
+// memory is O(N_ext^2 · dim_orb^2) per worker, without storing every channel.
 #pragma once
 
 #include "cpp_hf/parallel.hpp"
@@ -130,7 +130,6 @@ inline void selfenergy_superlattice_streamed(
     // via fftw_execute_dft (new-array execute), which FFTW guarantees
     // thread-safe on a shared plan; the plan cache itself is mutex-guarded.
     parallel_for_dynamic(n_delta, [&](std::size_t dg) {
-        std::vector<c64> rho_dg(channel_size);
         const int64_t pr = partner[dg];
         // A genuine (distinct) conjugate partner: compute the lower-indexed
         // member of the pair and fill its partner; skip the higher-indexed one
@@ -142,8 +141,37 @@ inline void selfenergy_superlattice_streamed(
         const std::size_t b = static_cast<std::size_t>(pair_start[dg + 1]);
         if (a == b) return;
 
-        // --- 1) Zero the channel buffer. ---
-        std::memset(rho_dg.data(), 0, channel_size * sizeof(c64));
+        // Test the actual source blocks before allocating a padded FFT grid.
+        // Uniform states populate only delta-G=0. Allocating/clearing a large
+        // grid for every empty channel can otherwise dominate their Fock cost.
+        // This is an exact-zero test, with no coherence threshold: NaNs and
+        // arbitrarily small nonzero entries still take the ordinary path.
+        bool source_nonzero = false;
+        for (std::size_t p = a; p < b && !source_nonzero; ++p) {
+            const std::size_t i = static_cast<std::size_t>(pair_i[p]);
+            const std::size_t j = static_cast<std::size_t>(pair_j[p]);
+            for (std::size_t kx = 0; kx < nkx && !source_nonzero; ++kx) {
+                const c64* rho_row = rho + kx * row_rho;
+                for (std::size_t ky = 0; ky < nky && !source_nonzero; ++ky) {
+                    const c64* block = rho_row +
+                        (((ky * n_G + i) * dim_orb) * n_G * dim_orb) + j * dim_orb;
+                    for (std::size_t aa = 0; aa < dim_orb && !source_nonzero; ++aa) {
+                        const c64* src = block + aa * n_G * dim_orb;
+                        for (std::size_t bb = 0; bb < dim_orb; ++bb) {
+                            if (src[bb].real() != 0.0 || src[bb].imag() != 0.0) {
+                                source_nonzero = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (!source_nonzero) return;
+
+        // Value initialization already zeros the scatter buffer, including
+        // grid points outside the source tiles; no second memset is needed.
+        std::vector<c64> rho_dg(channel_size);
 
         // --- 2) Scatter ρ[kx, ky, i, α, j, β] → ρ_dg[ox+kx, oy+ky, α, β]. ---
         for (std::size_t p = a; p < b; ++p) {
@@ -168,24 +196,6 @@ inline void selfenergy_superlattice_streamed(
                 }
             }
         }
-
-        // --- 2.5) Skip channels whose scattered density is identically zero.
-        // The FFT-convolution of an all-zero channel produces an all-zero
-        // self-energy, and ``sigma_out`` is already zeroed, so the FFT +
-        // gather would be pure wasted work.  Empty channels dominate for
-        // sparse-coherence problems (e.g. a diagonal / no-CDW density
-        // populates only the ΔG=0 channel, leaving every other ΔG empty),
-        // so skipping their FFTs is the main speedup for the isolated-patch
-        // (CDW) layout.  Bit-identical to computing them (zero in → zero out);
-        // the early-exit scan is O(channel_size), negligible vs the FFT.
-        bool channel_nonzero = false;
-        for (std::size_t t = 0; t < channel_size; ++t) {
-            if (rho_dg[t].real() != 0.0 || rho_dg[t].imag() != 0.0) {
-                channel_nonzero = true;
-                break;
-            }
-        }
-        if (!channel_nonzero) return;
 
         // --- 3) FFT, multiply by VR_fft, iFFT, negate. ---
         // selfenergy_fft_full_inplace expects (nk1, nk2, nb, nb) with nb*nb

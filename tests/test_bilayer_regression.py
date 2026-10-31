@@ -34,6 +34,7 @@ from cpp_hf import SCFConfig, solve_scf
 from cpp_hf.symmetry import make_project_fn
 
 from contimod.meanfield.init_guess import init_to_density_matrix
+from contimod.kdiscrete import kMeshgrid2D
 from contimod.utils.spectrum_fermi import FermiParams
 import contimod as cm
 
@@ -166,9 +167,20 @@ def _build_bilayer_setup(ref):
     d_gate = float(ref["d_gate"])
     init_scale = float(ref["init_scale"])
 
+    # Replay the saved quadrature rather than contimod's current default.
+    # The original reference used endpoint samples; contimod now defaults
+    # to midpoint cells, changing both the Hamiltonian and particle count.
+    mesh = kMeshgrid2D(kmax, nk)
+    mesh.kx = np.array(ref["kx"], copy=True)
+    mesh.ky = np.array(ref["ky"], copy=True)
+    mesh.ks = np.stack(np.meshgrid(mesh.kx, mesh.ky, indexing="ij"), axis=-1)
+    mesh.dk = np.array([mesh.kx[1] - mesh.kx[0], mesh.ky[1] - mesh.ky[0]])
+    mesh.dk_sq = float(np.prod(mesh.dk))
+    mesh.weight = float(ref["weight"])
     model = cm.graphene.MultilayerAB(valleyful=True, spinful=True, U=U_meV)
-    h_template = model.discretize(nk=nk, kmax=kmax)
-    h_template.fermi = FermiParams(T=temperature, mu=0.0)
+    h_template = model.discretize(
+        ks=mesh, fermi=FermiParams(T=temperature, mu=0.0),
+    )
 
     ne_cn = float(h_template.state.compute_density_from_filling(0.5 - 1e-6))
     weights = np.asarray(h_template.kmesh.weights)

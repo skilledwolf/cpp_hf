@@ -4,10 +4,14 @@
 #include "cpp_hf/types.hpp"
 
 #include <stdexcept>
+#include <vector>
 
 namespace cpp_hf {
 
 struct HFKernel {
+    // Per-call instrumentation; never shared between concurrent solves.
+    std::size_t* fock_builds = nullptr;
+    const std::vector<std::size_t>* exchange_blocks = nullptr;
     std::size_t nk1 = 0;
     std::size_t nk2 = 0;
     std::size_t nb = 0;

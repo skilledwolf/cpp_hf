@@ -24,6 +24,43 @@ def test_find_chemical_potential_hits_target_density():
     assert abs(total - 1.0) < 1e-4
 
 
+@pytest.mark.parametrize("method", ["bisection", "newton", "native"])
+@pytest.mark.parametrize("target", [1e-25, 1e-6, 2.0 - 1e-6])
+@pytest.mark.parametrize("bandwidth", [0.0, 0.2])
+def test_chemical_potential_bounds_cover_low_and_high_fillings(method, target, bandwidth):
+    bands = np.array([[[0.0, bandwidth]]])
+    weights = np.ones((1, 1))
+    T = 0.1
+    if method == "native":
+        mu = _native.find_mu_bisection(bands, weights, target, T)
+    else:
+        mu = find_chemical_potential(bands, weights, target, T, method=method)
+    # Test holes directly near full filling, without subtracting two counts
+    # of order one and hiding a relative error in the unoccupied fraction.
+    if target > 1.0:
+        count = np.sum(fermidirac(mu - bands, T))
+        expected = 2.0 - target
+    else:
+        count = np.sum(fermidirac(bands - mu, T))
+        expected = target
+    np.testing.assert_allclose(count, expected, rtol=2e-8, atol=0.0)
+
+
+@pytest.mark.parametrize("acceleration", ["linear", "diis", "oda"])
+def test_zero_temperature_scf_preserves_flat_band_particle_count(acceleration):
+    from cpp_hf import SCFConfig, solve_scf
+
+    h = np.zeros((1, 1, 2, 2), complex)
+    kernel = HartreeFockKernel(np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=0.0)
+    density = np.eye(2)[None, None] * 0.05
+    result = solve_scf(kernel, density, 0.1, config=SCFConfig(
+        acceleration=acceleration, max_iter=4, mixing=1.0,
+        density_tol=1e-12, comm_tol=1e-12,
+    ))
+    assert result.converged
+    np.testing.assert_allclose(np.trace(result.density_matrix[0, 0]), 0.1, atol=1e-14)
+
+
 def test_find_chemical_potential_rejects_unreachable_density():
     bands = np.array([[[0.0]]], dtype=np.float32)
     weights = np.ones((1, 1), dtype=np.float32)
@@ -209,21 +246,7 @@ def test_find_chemical_potential_hits_target_multiband(method):
     assert abs(total - n_target) < 1e-4
 
 
-@pytest.mark.parametrize(
-    "method",
-    [
-        "bisection",
-        pytest.param(
-            "newton",
-            marks=pytest.mark.xfail(
-                reason="Newton chemical-potential solver diverges at very low T "
-                       "(known pre-existing numerical issue, mirrors jax_hf). "
-                       "Bisection is the default and works correctly.",
-                strict=False,
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("method", ["bisection", "newton"])
 def test_find_chemical_potential_cold_limit(method):
     bands = np.array([[[0.0, 1.0, 2.0]]])
     weights = np.ones((1, 1))

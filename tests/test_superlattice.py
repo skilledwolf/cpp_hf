@@ -142,6 +142,27 @@ def test_native_handles_zero_density(small_layout):
     assert np.max(np.abs(sigma)) == 0.0
 
 
+@pytest.mark.parametrize('hermitian',[False,True])
+@pytest.mark.parametrize('kind',['diagonal','tiny_coherence'])
+def test_sparse_channels_preserve_exact_convolution(small_layout,hermitian,kind):
+    layout,n_G,nk=(small_layout[k] for k in ['layout','n_G','nk'])
+    no=2;rho=np.zeros((nk,nk,n_G*no,n_G*no),complex)
+    if kind=='diagonal':
+        rng=np.random.default_rng(14)
+        for g in range(n_G):
+            block=rng.normal(size=(nk,nk,no,no))+1j*rng.normal(size=(nk,nk,no,no))
+            rho[...,g*no:(g+1)*no,g*no:(g+1)*no]=block
+    else:
+        # Any nonzero coherence must be retained, far below SCF tolerances.
+        rho[0,1,0,no]=1e-30+2e-30j
+    if hermitian:rho=.5*(rho+rho.conj().swapaxes(-2,-1))
+    actual=superlattice_fock(rho,layout,n_G,no,nk,nk,hermitian_rho=hermitian)
+    expected=_np_streaming_fock(rho,layout,n_G,no,nk,nk)
+    scale=np.max(abs(expected))
+    assert scale>0
+    assert np.max(abs(actual-expected))/scale<1e-12
+
+
 def test_native_shape_validation(small_layout):
     layout = small_layout["layout"]
     n_G = small_layout["n_G"]

@@ -8,8 +8,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cpp_hf {
@@ -32,7 +34,13 @@ inline void validate_electron_count(const f32* weights, std::size_t nk,
                                      std::size_t nb, f32 n_e,
                                      const std::string& context = "n_electrons") {
     double total = 0.0;
-    for (std::size_t i = 0; i < nk; ++i) total += weights[i];
+    for (std::size_t i = 0; i < nk; ++i) {
+        if (!std::isfinite(weights[i]))
+            throw std::invalid_argument("weights must be finite.");
+        total += weights[i];
+    }
+    if (!std::isfinite(total) || total <= 0.0)
+        throw std::invalid_argument("weights must have a finite positive sum.");
     const double max_e = total * static_cast<double>(nb);
     const double tol = std::max(1e-8, 1e-6 * std::max(1.0, std::abs(max_e)));
     const double target = static_cast<double>(n_e);
@@ -45,20 +53,36 @@ inline void validate_electron_count(const f32* weights, std::size_t nk,
             std::to_string(max_e) + "].");
 }
 
+// A flat spectrum at either spectral edge bounds the particle count. Unlike
+// a fixed number of thermal widths, these bounds also cover dilute fillings.
+// temperature is the effective denominator used by the caller's sigmoid.
+inline std::pair<f32, f32> chemical_potential_bounds(
+        const f32* eps, std::size_t n_eps, f32 capacity, f32 target,
+        f32 temperature) {
+    const auto edges = std::minmax_element(eps, eps + n_eps);
+    const f32 shift = temperature * (std::log(target) - std::log(capacity - target));
+    return {
+        std::nextafter(*edges.first + shift, -std::numeric_limits<f32>::infinity()),
+        std::nextafter(*edges.second + shift, std::numeric_limits<f32>::infinity()),
+    };
+}
+
 // Bisection μ-finder.  Returns μ such that ∑_k w_k Σ_j f(ε_kj − μ) = n_e.
 inline f32 find_mu_bisection(const f32* eps, std::size_t n_eps,
                               const f32* weights, std::size_t nk, std::size_t nb,
                               f32 n_e, f32 T, int maxiter = 0) {
-    if (maxiter <= 0) maxiter = 30;  // float32 default matches jax_hf
-    const f32 Tj = std::max(T, 1.0e-12);
-    f32 emin = eps[0], emax = eps[0];
-    for (std::size_t i = 1; i < n_eps; ++i) {
-        if (eps[i] < emin) emin = eps[i];
-        if (eps[i] > emax) emax = eps[i];
-    }
-    const f32 span = emax - emin + 10.0 * std::max(Tj, 1.0e-6);
-    f32 lo = emin - span;
-    f32 hi = emax + span;
+    validate_electron_count(weights, nk, nb, n_e);
+    double capacity = 0.0;
+    for (std::size_t k = 0; k < nk; ++k)
+        capacity += static_cast<double>(weights[k]) * static_cast<double>(nb);
+    if (n_e <= 0.0)
+        return -std::numeric_limits<f32>::infinity();
+    if (static_cast<double>(n_e) >= capacity)
+        return std::numeric_limits<f32>::infinity();
+    // f32 is cpp_hf's historical name for its double-precision scalar.
+    if (maxiter <= 0) maxiter = 54;
+    auto [lo, hi] = chemical_potential_bounds(
+        eps, n_eps, capacity, n_e, T + 1.0e-12);
     for (int it = 0; it < maxiter; ++it) {
         const f32 mid = 0.5 * (lo + hi);
         double count = 0.0;
@@ -66,7 +90,7 @@ inline f32 find_mu_bisection(const f32* eps, std::size_t n_eps,
             const f32 wk = weights[k];
             const f32* eb = eps + k * nb;
             for (std::size_t b = 0; b < nb; ++b)
-                count += static_cast<double>(wk) * fermidirac_scalar(eb[b] - mid, Tj);
+                count += static_cast<double>(wk) * fermidirac_scalar(eb[b] - mid, T);
         }
         if (count > n_e) hi = mid;
         else             lo = mid;
@@ -76,18 +100,49 @@ inline f32 find_mu_bisection(const f32* eps, std::size_t n_eps,
 
 // In-loop Newton-bracket μ-finder, mirrors jax_hf.solver._solve_mu (uses
 // normalised weights and the previous μ as a warm start).
+//
+// Safeguarded Newton iteration on a shrinking bracket.  ``maxiter`` is an
+// upper bound: the loop stops as soon as the particle count matches to a few
+// ULPs of the occupied (or empty) fraction, or the update stops moving μ at
+// working precision — from a warm start a handful of steps rather than the
+// full budget.
 inline f32 solve_mu_inloop(const f32* eps, std::size_t n_eps,
                            const f32* w_norm, std::size_t nk, std::size_t nb,
                            f32 n_target_norm, f32 mu0, f32 T, int maxiter = 25) {
+    validate_electron_count(
+        w_norm, nk, nb, n_target_norm, "normalised n_electrons");
+    double capacity = 0.0;
+    for (std::size_t k = 0; k < nk; ++k)
+        capacity += static_cast<double>(w_norm[k]) * static_cast<double>(nb);
+    if (n_target_norm <= 0.0)
+        return -std::numeric_limits<f32>::infinity();
+    if (static_cast<double>(n_target_norm) >= capacity)
+        return std::numeric_limits<f32>::infinity();
     const f32 Tj = std::max(T, 1.0e-12);
-    f32 emin = eps[0], emax = eps[0];
-    for (std::size_t i = 1; i < n_eps; ++i) {
-        if (eps[i] < emin) emin = eps[i];
-        if (eps[i] > emax) emax = eps[i];
-    }
-    f32 lo = emin - 50.0 * Tj;
-    f32 hi = emax + 50.0 * Tj;
+    auto [lo, hi] = chemical_potential_bounds(
+        eps, n_eps, capacity, n_target_norm, Tj);
     f32 mu = std::clamp(mu0, lo, hi);
+
+    // Resolve the count to the precision of the *occupied* (or empty)
+    // fraction, not of the total capacity: the direct-minimisation solvers
+    // take their occupations straight from this μ, and a capacity-scaled
+    // tolerance would leave a relative particle error of order
+    // capacity/n_target at low filling.
+    const f32 eps_m = std::numeric_limits<f32>::epsilon();
+    const f32 occ_scale = std::min(
+        n_target_norm, static_cast<f32>(capacity) - n_target_norm);
+    const f32 count_tol = 4.0 * eps_m * occ_scale;
+
+    auto count = [&](f32 m) -> double {
+        double N = 0.0;
+        for (std::size_t k = 0; k < nk; ++k) {
+            const f32 wk = w_norm[k];
+            const f32* eb = eps + k * nb;
+            for (std::size_t b = 0; b < nb; ++b)
+                N += static_cast<double>(wk * expit_scalar((m - eb[b]) / Tj));
+        }
+        return N;
+    };
 
     for (int it = 0; it < maxiter; ++it) {
         double N = 0.0, Z = 0.0;
@@ -104,14 +159,31 @@ inline f32 solve_mu_inloop(const f32* eps, std::size_t n_eps,
         const f32 g = static_cast<f32>(N) - n_target_norm;
         if (g < 0.0) lo = mu;
         if (g > 0.0) hi = mu;
-        const f32 Z_safe = std::max(static_cast<f32>(Z), 1.0e-18);
-        f32 mu_new = mu - g / Z_safe;
+        // An iterate whose count already matches stays in place.
+        if (std::abs(g) <= count_tol) break;
         const f32 mu_bis = 0.5 * (lo + hi);
-        if (mu_new <= lo || mu_new >= hi) mu_new = mu_bis;
+        f32 mu_new = Z > 0.0 ? mu - g / static_cast<f32>(Z) : mu_bis;
+        // A Newton update that rounds back onto μ (which has just become a
+        // bracket end) is a converged iterate, not an out-of-bracket step;
+        // bisecting from it would throw the solution away.
+        const bool stalled = (mu_new == mu);
+        if (!stalled && (mu_new <= lo || mu_new >= hi)) mu_new = mu_bis;
         mu_new = std::clamp(mu_new, lo, hi);
         if (!std::isfinite(mu_new)) mu_new = mu_bis;
+        const bool unchanged = (mu_new == mu);
         mu = mu_new;
+        // Only representability at the active μ can stop the iteration;
+        // distant bands must not set its resolution at low temperature.
+        if (unchanged) break;
     }
+    // Return whichever of the safeguarded Newton iterate and the remaining
+    // bracket midpoint has the smaller count residual: at very low
+    // temperature an integer filling has a broad, numerically flat gap in
+    // which the Newton step can stall short of the midpoint (jax_hf parity).
+    const f32 mu_bis = 0.5 * (lo + hi);
+    const double target = static_cast<double>(n_target_norm);
+    if (std::abs(count(mu_bis) - target) < std::abs(count(mu) - target))
+        mu = mu_bis;
     return mu;
 }
 

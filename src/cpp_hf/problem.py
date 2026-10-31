@@ -10,15 +10,17 @@ from typing import Any
 import numpy as np
 
 from ._compat import fftn2d
-from .utils import selfenergy_fft
+from .fock import _contact_self_energy
+from .utils import selfenergy_fft, validate_temperature
 
 
 class HartreeFockKernel:
     """Precomputed arrays for the HF solver loop.
 
-    Mirrors :class:`jax_hf.HartreeFockKernel` exactly: holds the FFT of the
-    interaction kernel (with the ifftshift phase pre-absorbed into VR), the
-    Hartree matrix, weights, and the single-particle Hamiltonian.
+    Follows the common :class:`jax_hf.HartreeFockKernel` data contract: it
+    holds the FFT of the interaction kernel (with the ifftshift phase
+    pre-absorbed into VR), the Hartree matrix, weights, and the single-particle
+    Hamiltonian.
     """
 
     def __init__(
@@ -58,20 +60,43 @@ class HartreeFockKernel:
 
         Setting ``embed_reference_potential=True`` requires
         ``reference_density`` to be provided.  Energy reported by
-        :func:`cpp_hf.fock.hf_energy` is then equal to the standard HF
-        energy plus a P-independent constant
-        ``½ Tr[V_HF[refP]·refP]`` — phase comparisons (energy
-        differences) are unaffected.
+        :func:`cpp_hf.fock.hf_energy` can be converted to the standard HF
+        energy as ``E_standard = E_reported - embedded_energy_offset
+        + embedded_hartree_shift * n_electrons``.  Here the offset is
+        ``½ Tr[V_HF[refP]·refP]`` before centering and the shift is the
+        removed Hartree mean (zero without centering).  ``n_electrons``
+        is ``sum_k weights[k] Tr[P[k]]``, not normalized by weight_sum.
+        The same shift restores the chemical potential:
+        ``mu_standard = mu_reported + embedded_hartree_shift``.
+        At fixed particle number, phase energy differences are unaffected.
         """
         # We work in double precision throughout (complex128 / float64).
         h = np.ascontiguousarray(np.asarray(hamiltonian), dtype=np.complex128)
+        if h.ndim != 4 or h.shape[-2] != h.shape[-1]:
+            raise ValueError(
+                "hamiltonian must have shape (nk1, nk2, nb, nb); "
+                f"got {h.shape}."
+            )
+        if any(size <= 0 for size in h.shape[:3]):
+            raise ValueError("hamiltonian dimensions must be positive.")
         self.h = h
         real_dtype = np.float64
         w2d = np.ascontiguousarray(np.asarray(weights), dtype=real_dtype)
+        if w2d.shape != h.shape[:2]:
+            raise ValueError(
+                f"weights must have shape {h.shape[:2]}, got {w2d.shape}."
+            )
+        if not np.all(np.isfinite(w2d)):
+            raise ValueError("weights must be finite.")
+        if np.any(w2d < 0.0):
+            raise ValueError("weights must be non-negative.")
+        if float(np.sum(w2d)) <= 0.0:
+            raise ValueError("weights must have a positive sum.")
         self.weights_b = w2d[..., None, None]
-        self.weight_sum = np.sum(w2d)
+        self.weight_sum = float(np.sum(w2d))
         self.w2d = w2d
 
+        validate_temperature(T, context="T")
         self.T = float(T)
         self.include_hartree = bool(include_hartree)
         self.include_exchange = bool(include_exchange)
@@ -83,6 +108,16 @@ class HartreeFockKernel:
         n0, n1 = int(h.shape[0]), int(h.shape[1])
         if self.include_exchange:
             Vq = np.asarray(coulomb_q)
+            valid_exchange_shapes = (
+                (n0, n1, 1, 1),
+                (n0, n1, h.shape[-1], h.shape[-1]),
+            )
+            if Vq.shape not in valid_exchange_shapes:
+                raise ValueError(
+                    "coulomb_q must have shape "
+                    f"{valid_exchange_shapes[0]} or {valid_exchange_shapes[1]}; "
+                    f"got {Vq.shape}."
+                )
             if np.iscomplexobj(Vq):
                 imag_max = float(np.max(np.abs(np.imag(Vq))))
                 if imag_max <= 1e-8:
@@ -92,7 +127,10 @@ class HartreeFockKernel:
             self.exchange_hermitian_channel_packing = bool(
                 Vq.shape[-2:] == (1, 1) and not np.iscomplexobj(Vq)
             )
-            VR = fftn2d(self.weights_b * Vq.astype(h.dtype, copy=False))
+            # The quadrature weight belongs to the integrated density P(q),
+            # not the transfer-momentum kernel V(k-q).  build_fock applies
+            # w(q) before transforming the density.
+            VR = fftn2d(Vq.astype(h.dtype, copy=False))
 
             s0, s1 = n0 // 2, n1 // 2
             phase0 = np.exp(2j * np.pi * np.arange(n0) * s0 / n0)
@@ -101,8 +139,19 @@ class HartreeFockKernel:
                 VR.dtype
             )
             VR *= shift_phase
+            # The quadratic exchange energy depends only on the self-adjoint
+            # part of its convolution. On even, oblique transfer grids the
+            # sampled V(q) need not be reciprocal under *periodic* inversion
+            # (Nyquist edges are the common source). Keeping that skew part in
+            # F would make it cease to be the derivative of the HF energy.
+            # The adjoint FFT multiplier is VR.conj(); average them exactly.
+            self.exchange_reciprocity_defect = float(
+                np.linalg.norm(VR.imag) / max(np.linalg.norm(VR), np.finfo(float).tiny)
+            )
+            VR = VR.real.astype(h.dtype)
             self._VR_shifted = np.ascontiguousarray(VR)
         else:
+            self.exchange_reciprocity_defect = 0.0
             self.exchange_hermitian_channel_packing = False
             self._VR_shifted = np.zeros((n0, n1, 1, 1), dtype=h.dtype)
 
@@ -174,6 +223,7 @@ class HartreeFockKernel:
         self.embed_reference_potential = bool(embed_reference_potential)
         self.center_embedded_hartree = bool(center_embedded_hartree)
         self.embedded_energy_offset = 0.0
+        self.embedded_hartree_shift = 0.0
         if self.embed_reference_potential:
             if self._refP is None:
                 raise ValueError(
@@ -191,20 +241,20 @@ class HartreeFockKernel:
             if self.include_hartree:
                 diag_R = np.einsum("ij,ijaa->a", w2d, ref).real
                 J_ref_diag = self.HH @ diag_R
-                if self.center_embedded_hartree:
-                    J_ref_diag = J_ref_diag - float(np.mean(J_ref_diag))
-                H_ref_diag_addition = J_ref_diag.astype(real_dtype, copy=False)
-                # Tr[J[refP] · refP] = Σ_a J_diag[a] · diag_R[a]   (over orbitals)
-                # Note: this Tr is BZ-integrated already because J is k-independent
-                # and refP[k]'s diagonal is summed with weights into diag_R.
+                # The constant normal-ordering offset uses the uncentered
+                # potential.  Centering separately subtracts c*N(P) from E.
                 const_J_refP_refP = float(np.sum(J_ref_diag * diag_R))
+                if self.center_embedded_hartree:
+                    self.embedded_hartree_shift = float(np.mean(J_ref_diag))
+                    J_ref_diag = J_ref_diag - self.embedded_hartree_shift
+                H_ref_diag_addition = J_ref_diag.astype(real_dtype, copy=False)
             # Exchange contribution from refP:
             #   Σ_ref[k] = (−K[refP])[k]  is a full (nk, nk, nb, nb) tensor
             const_Sigma_refP_refP = 0.0
             Sigma_ref = None
             if self.include_exchange:
                 Sigma_ref = selfenergy_fft(
-                    self._VR_shifted, ref,
+                    self._VR_shifted, self.weights_b * ref,
                     _apply_ifftshift=False,
                     hermitian_channel_packing=self.exchange_hermitian_channel_packing,
                 )
@@ -213,18 +263,29 @@ class HartreeFockKernel:
                 const_Sigma_refP_refP = float(np.einsum(
                     "ij,ijab,ijba->", w2d, Sigma_ref, ref,
                 ).real)
+            rho_bar_ref = np.einsum("ij,ijab->ab", w2d, ref)
+            Sigma_contact_ref = _contact_self_energy(
+                rho_bar_ref,
+                self.contact_g,
+                self.contact_Oi,
+                self.contact_Oj,
+            ).astype(h.dtype)
+            const_contact_refP_refP = float(
+                np.einsum("ab,ba->", Sigma_contact_ref, rho_bar_ref).real
+            )
             # Build h_eff in place (overwrite self.h).
             h_eff = self.h.copy()
             if Sigma_ref is not None:
                 h_eff += Sigma_ref
+            h_eff += Sigma_contact_ref[None, None, ...]
             for a in range(n_orb):
                 h_eff[..., a, a] += H_ref_diag_addition[a]
             self.h = np.ascontiguousarray(h_eff, dtype=np.complex128)
-            # Energy reported by hf_energy(h=h_eff, ...) equals
-            # E_std + ½ Tr[V_HF[refP] refP].  We track the offset so callers
-            # can recover E_std if desired.
+            # E_reported = E_standard + offset - embedded_hartree_shift*N(P).
             self.embedded_energy_offset = 0.5 * (
-                const_J_refP_refP + const_Sigma_refP_refP
+                const_J_refP_refP
+                + const_Sigma_refP_refP
+                + const_contact_refP_refP
             )
 
     @property

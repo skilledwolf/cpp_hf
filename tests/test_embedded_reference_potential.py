@@ -9,8 +9,8 @@ Identities under test:
   1. Embedded F at P=refP equals h_bare + V_HF[refP] exactly.
   2. Unembedded F at P=refP equals h_bare exactly.
   3. F_embedded(P) − F_unembedded(P) = V_HF[refP] for any P.
-  4. Energy reported with embedding equals E_std + ½ Tr[V_HF[refP] · refP],
-     with the constant available as ``kernel.embedded_energy_offset``.
+  4. E_std = E_reported - embedded_energy_offset + embedded_hartree_shift*N,
+     including centered runs whose particle count differs from the reference.
 """
 from __future__ import annotations
 
@@ -18,7 +18,10 @@ import numpy as np
 import pytest
 
 from cpp_hf import HartreeFockKernel
-from cpp_hf.fock import build_fock, hf_energy
+from cpp_hf._compat import _native
+from cpp_hf.fock import build_fock
+from cpp_hf.solver import _kernel_args_for_native
+from cpp_hf.superlattice import SuperlatticeHartreeFockKernel, build_extended_layout
 
 
 def _setup(nk=4, n_orb=2, T=0.05, seed=0):
@@ -161,28 +164,58 @@ def test_centering_shifts_h_by_constant_only():
     )
 
 
-def test_embedded_energy_offset_is_correct():
-    """E_cpp(h_eff) = E_std + ½ Tr[V_HF[refP] refP], offset accessible
-    as kernel.embedded_energy_offset."""
-    kernel_embed = _make_kernels(
-        embed=True, with_hartree=True, refP_arg=None,
-        center_embedded_hartree=False,
+@pytest.mark.parametrize("kind", ["regular", "superlattice"])
+@pytest.mark.parametrize("center", [False, True])
+@pytest.mark.parametrize("density_scale", [0.6, 1.4])
+def test_embedded_energy_correction_recovers_standard_hf(kind, center, density_scale):
+    """The gauge correction must use the current count, not the reference count."""
+    weights, h, Vq, HH, T, refP = _setup(nk=2)
+    # Exercise physical (unnormalized) particle counts as well.
+    weights *= 0.3
+    common = dict(weights=weights, hamiltonian=h, T=T, include_hartree=True)
+    if kind == "regular":
+        common.update(coulomb_q=Vq, hartree_matrix=HH)
+        factory = HartreeFockKernel
+    else:
+        common.update(
+            layout=build_extended_layout(
+                np.zeros((1, 2), dtype=int), np.eye(2), 2, 2,
+                lambda q: np.full_like(q, 0.3), float(weights[0, 0]),
+            ),
+            HH_GG=np.zeros((1, 1)),
+            HH_GG_orbital=HH[None, None, ...],
+        )
+
+        def factory(**kwargs):
+            with pytest.warns(UserWarning, match="nonzero diagonal-G"):
+                return SuperlatticeHartreeFockKernel(**kwargs)
+
+    embedded = factory(
+        **common, reference_density=refP, embed_reference_potential=True,
+        center_embedded_hartree=center,
     )
-    kernel_plain = _make_kernels(
-        embed=False, with_hartree=True, refP_arg=None,
+    standard = factory(**common, reference_density=np.zeros_like(refP))
+    P = density_scale * refP
+
+    def evaluate(kernel, density):
+        return _native.build_fock_apply(_kernel_args_for_native(kernel), density, None)
+
+    _, _, F_standard, E_standard = evaluate(standard, P)
+    _, _, F_embedded, E_embedded = evaluate(embedded, P)
+    n_electrons = float(np.einsum("ij,ijaa->", weights, P).real)
+    corrected = (E_embedded - embedded.embedded_energy_offset
+                 + embedded.embedded_hartree_shift * n_electrons)
+    np.testing.assert_allclose(corrected, E_standard, atol=1e-12)
+    np.testing.assert_allclose(
+        F_embedded + embedded.embedded_hartree_shift * np.eye(h.shape[-1]),
+        F_standard, atol=1e-12,
     )
-    # Energy at P = refP:
-    refP = kernel_plain.refP
-    Sigma_p, H_p, _ = _build_F(kernel_plain, refP)
-    Sigma_e, H_e, _ = _build_F(kernel_embed, refP)
-    E_plain = hf_energy(refP, h=kernel_plain.h, Sigma=Sigma_p, H=H_p,
-                        weights_b=kernel_plain.weights_b, refP=kernel_plain.refP)
-    E_embed = hf_energy(refP, h=kernel_embed.h, Sigma=Sigma_e, H=H_e,
-                        weights_b=kernel_embed.weights_b, refP=kernel_embed.refP)
-    # At P=refP: Σ+H is zero (since they use P-refP), so E reduces to Tr[h refP].
-    # E_embed = Tr[(h+V_HF[refP]) refP] = Tr[h refP] + Tr[V_HF[refP] refP]
-    # E_plain = Tr[h refP]
-    # so E_embed - E_plain = Tr[V_HF[refP] refP] = 2 * embedded_energy_offset
-    delta = float(E_embed - E_plain)
-    expected = 2.0 * kernel_embed.embedded_energy_offset
-    np.testing.assert_allclose(delta, expected, atol=1e-9, rtol=1e-9)
+    Sigma_ref, H_ref, _, _ = evaluate(standard, refP)
+    expected_offset = 0.5 * np.einsum(
+        "ij,ijab,ijba->", weights, Sigma_ref + H_ref, refP,
+    ).real
+    np.testing.assert_allclose(embedded.embedded_energy_offset, expected_offset, atol=1e-12)
+    if center:
+        assert embedded.embedded_hartree_shift != 0.0
+    else:
+        assert embedded.embedded_hartree_shift == 0.0

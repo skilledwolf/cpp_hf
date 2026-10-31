@@ -11,8 +11,8 @@ is a single 2D convolution in absolute momentum p = k - G, decoupled into
 independent (α, β, ΔG = G_a - G_b) channels.  This module precomputes the
 extended-grid scatter/gather layout and offers a thin wrapper around the
 native ``_native.selfenergy_superlattice_streamed`` primitive, which streams
-channels one at a time through a shared scratch buffer so peak memory is
-O(N_ext^2 · dim_orb^2), independent of n_delta.
+channels through one scratch buffer per active OpenMP worker.  Scratch memory
+is O(N_ext^2 · dim_orb^2) per worker, without storing every channel at once.
 
 The native loop owns the per-channel scatter, FFT, multiply, iFFT, and
 gather entirely in C++, so SCF inner loops pay no Python↔C transition cost
@@ -34,6 +34,7 @@ from typing import Any, Callable
 import numpy as np
 
 from ._compat import _native, native_required
+from .utils import validate_temperature
 
 
 @dataclass(frozen=True)
@@ -301,6 +302,13 @@ class SuperlatticeHartreeFockKernel:
     center_embedded_hartree : bool
         If embedding a Hartree reference, subtract its scalar diagonal mean
         as a gauge choice (matches contimod convention).
+
+    With embedding enabled, recover standard HF energy using
+    ``E_standard = E_reported - embedded_energy_offset
+    + embedded_hartree_shift * n_electrons``.  The offset is the uncentered
+    ``½ Tr[V_HF[refP] refP]``; the shift is the removed Hartree mean, or zero
+    without centering.  ``n_electrons = sum_k weights[k] Tr[P[k]]``.
+    Similarly, ``mu_standard = mu_reported + embedded_hartree_shift``.
     """
 
     def __init__(
@@ -338,6 +346,7 @@ class SuperlatticeHartreeFockKernel:
         if w2d.shape != (nkx, nky):
             raise ValueError(f"weights must have shape ({nkx}, {nky}); got {w2d.shape}")
 
+        validate_temperature(T, context="T")
         self.T = float(T)
         self.include_hartree = bool(include_hartree)
         self.include_exchange = bool(include_exchange)
@@ -467,6 +476,7 @@ class SuperlatticeHartreeFockKernel:
         self.embed_reference_potential = bool(embed_reference_potential)
         self.center_embedded_hartree = bool(center_embedded_hartree)
         self.embedded_energy_offset = 0.0
+        self.embedded_hartree_shift = 0.0
         if self.embed_reference_potential:
             if self._refP is None:
                 raise ValueError(
@@ -489,13 +499,18 @@ class SuperlatticeHartreeFockKernel:
                     HH_GG=self._HH_GG, degeneracy=self.hartree_degeneracy,
                     HH_GG_orbital=self._HH_GG_orbital,
                 )
-                if self.center_embedded_hartree:
-                    mean_diag = float(np.mean(np.real(np.diag(sigma_H_ref_full))))
-                    sigma_H_ref_full = sigma_H_ref_full - mean_diag * np.eye(D, dtype=h.dtype)
-                V_ref = V_ref + sigma_H_ref_full[None, None, :, :]
                 offset += float(
                     np.einsum("ij,ab,ijba->", w2d, sigma_H_ref_full, self._refP).real
                 )
+                if self.center_embedded_hartree:
+                    self.embedded_hartree_shift = float(
+                        np.mean(np.real(np.diag(sigma_H_ref_full)))
+                    )
+                    sigma_H_ref_full = (
+                        sigma_H_ref_full
+                        - self.embedded_hartree_shift * np.eye(D, dtype=h.dtype)
+                    )
+                V_ref = V_ref + sigma_H_ref_full[None, None, :, :]
             self.h = np.ascontiguousarray(self.h + V_ref, dtype=np.complex128)
             self.embedded_energy_offset = 0.5 * offset
 

@@ -26,7 +26,12 @@ def validate_electron_count(
     *,
     context: str = "n_electrons",
 ) -> None:
-    total_weight = float(np.real(np.asarray(weights)).sum())
+    weights_arr = np.real(np.asarray(weights))
+    if not np.all(np.isfinite(weights_arr)):
+        raise ValueError("weights must be finite.")
+    total_weight = float(weights_arr.sum())
+    if not np.isfinite(total_weight) or total_weight <= 0.0:
+        raise ValueError("weights must have a finite positive sum.")
     target = float(np.asarray(n_electrons))
     max_electrons = total_weight * int(nbands)
     tol = max(1e-8, 1e-6 * max(1.0, abs(max_electrons)))
@@ -40,7 +45,18 @@ def validate_electron_count(
         )
 
 
+def validate_temperature(T: Any, *, context: str = "T") -> None:
+    """Reject non-finite or negative temperatures."""
+    temperature = float(np.asarray(T))
+    if not np.isfinite(temperature):
+        raise ValueError(f"{context} must be finite, got {temperature!r}.")
+    if temperature < 0.0:
+        raise ValueError(f"{context} must be non-negative, got {temperature!r}.")
+
+
 def fermidirac(x: np.ndarray, T: float) -> np.ndarray:
+    """Finite-temperature Fermi--Dirac occupation."""
+    validate_temperature(T)
     return expit(-np.asarray(x) / (float(T) + 1e-12))
 
 
@@ -266,12 +282,30 @@ def find_chemical_potential(
     the safe default; ``newton`` is faster but more fragile in cold-T regimes.
     """
     validate_electron_count(weights, bands.shape[-1], n_electrons, context="n_electrons")
+    validate_temperature(T)
     method = str(method).lower()
-    if method == "bisection":
-        return _find_mu_bisection(bands, weights, n_electrons, T, maxiter=maxiter)
-    if method == "newton":
-        return _find_mu_newton(bands, weights, n_electrons, T, maxiter=maxiter)
-    raise ValueError(f"method must be 'bisection' or 'newton', got {method!r}")
+    if method not in ("bisection", "newton"):
+        raise ValueError(f"method must be 'bisection' or 'newton', got {method!r}")
+
+    real_dtype = np.asarray(bands).real.dtype
+    target = float(np.asarray(n_electrons))
+    capacity = float(np.sum(np.asarray(weights))) * int(np.asarray(bands).shape[-1])
+    if target <= 0.0:
+        return np.asarray(-np.inf, dtype=real_dtype)
+    if target >= capacity:
+        return np.asarray(np.inf, dtype=real_dtype)
+    finder = _find_mu_bisection if method == "bisection" else _find_mu_newton
+    return finder(bands, weights, target, T, maxiter=maxiter)
+
+
+def _chemical_potential_bounds(bands, weights, target, temperature):
+    """Bracket μ using the occupation of a flat band at each spectral edge."""
+    capacity = float(np.sum(weights)) * bands.shape[-1]
+    shift = temperature * (np.log(target) - np.log(capacity - target))
+    return (
+        np.nextafter(float(np.min(bands)) + shift, -np.inf),
+        np.nextafter(float(np.max(bands)) + shift, np.inf),
+    )
 
 
 def _find_mu_bisection(
@@ -286,14 +320,10 @@ def _find_mu_bisection(
     weights = np.asarray(weights)
     real_dtype = bands.real.dtype if np.iscomplexobj(bands) else bands.dtype
     if maxiter is None:
-        maxiter = 30 if real_dtype == np.float64 else 54
-    Tj = max(float(T), 1e-12)
-
-    bands_min = float(np.min(bands))
-    bands_max = float(np.max(bands))
-    span = bands_max - bands_min + 10.0 * max(Tj, 1e-6)
-    lo = bands_min - span
-    hi = bands_max + span
+        maxiter = 30 if real_dtype == np.dtype(np.float32) else 54
+    lo, hi = _chemical_potential_bounds(
+        bands, weights, float(n_electrons), float(T) + 1e-12,
+    )
 
     w_b = weights[..., None]
     for _ in range(int(maxiter)):
@@ -320,15 +350,11 @@ def _find_mu_newton(
     weights = np.asarray(weights)
     real_dtype = bands.real.dtype if np.iscomplexobj(bands) else bands.dtype
     if maxiter is None:
-        maxiter = 15 if real_dtype == np.float64 else 25
+        maxiter = 15 if real_dtype == np.dtype(np.float32) else 25
     Tj = max(float(T), 1e-12)
     n_target = float(n_electrons)
 
-    bands_min = float(np.min(bands))
-    bands_max = float(np.max(bands))
-    span = bands_max - bands_min + 10.0 * max(Tj, 1e-6)
-    lo = bands_min - span
-    hi = bands_max + span
+    lo, hi = _chemical_potential_bounds(bands, weights, n_target, Tj)
     mu = 0.5 * (lo + hi)
     w_b = weights[..., None]
 
@@ -342,21 +368,26 @@ def _find_mu_newton(
     for _ in range(int(maxiter)):
         N, Z = count_and_slope(mu)
         g = N - n_target
+        if g == 0.0:
+            break
         if g < 0:
             lo = mu
         if g > 0:
             hi = mu
-        Z_safe = max(Z, 1e-18)
-        mu_new = mu - g / Z_safe
         mu_bis = 0.5 * (lo + hi)
+        mu_new = mu - g / Z if Z > 0.0 else mu_bis
+        if mu_new == mu:
+            break
         if mu_new <= lo or mu_new >= hi or not np.isfinite(mu_new):
             mu_new = mu_bis
         mu_new = max(min(mu_new, hi), lo)
         mu = mu_new
 
     N_fin, _ = count_and_slope(mu)
-    if abs(N_fin - n_target) > 1e-12:
-        mu = 0.5 * (lo + hi)
+    mu_bis = 0.5 * (lo + hi)
+    N_bis, _ = count_and_slope(mu_bis)
+    if abs(N_bis - n_target) < abs(N_fin - n_target):
+        mu = mu_bis
     return np.asarray(mu, dtype=real_dtype)
 
 
@@ -373,6 +404,7 @@ def density_matrix_from_fock(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build a physical density matrix P(k) from a Hermitian Fock matrix F(k)."""
     F = hermitize(np.asarray(F))
+    validate_temperature(T)
     validate_electron_count(weights, F.shape[-1], n_electrons, context="n_electrons")
     eps, U = eigh(
         F,
