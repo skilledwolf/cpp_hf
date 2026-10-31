@@ -1,15 +1,18 @@
 # cpp_hf — Hartree–Fock on k‑grids (C++ reimplementation of jax_hf)
 
 `cpp_hf` is a C++ reimplementation of [`jax_hf`](https://github.com/skilledwolf/jax_hf):
-two Hartree–Fock solvers on uniform 2D k‑meshes that share the same kernel,
-the same public API, and pass the same regression tests, with the JAX
-dependency replaced by a single pybind11 extension built on FFTW + Eigen.
+two Hartree–Fock solvers on 2D k‑meshes that share the common kernel, config,
+solver, continuation, and result surface, with the JAX dependency replaced by
+a pybind11 extension built on FFTW + Eigen.
 
 * **Direct minimisation** (default) — preconditioned Riemannian CG on
-  Stiefel × capped simplex, eigen‑free inner loop, Cayley retraction,
-  one Fock build per iteration.
-* **Reference SCF** (baseline / fallback) — standard Roothaan iteration
-  with linear mixing.
+  Stiefel × capped simplex with Cayley retraction, or trust-region Newton.
+  Trial free energies are evaluated explicitly, so backtracking and Newton
+  Hessian-vector products may require multiple Fock builds per outer iteration.
+* **Self-consistent field** — safeguarded full-density-residual DIIS and
+  Anderson acceleration, plus the legacy linear, commutator-DIIS and
+  optimal-damping methods. `rdiis` is the recommended fixed-point solver for
+  finite-temperature workloads.
 
 Both solvers run in **double precision** throughout (complex128 / float64).
 
@@ -44,14 +47,44 @@ kernel = cpp_hf.HartreeFockKernel(
     include_exchange=True,
 )
 
-# Solve (direct minimisation, default)
-result = cpp_hf.solve(kernel, P0=np.zeros_like(hamiltonian), n_electrons=N)
-print(result.energy, result.converged, result.n_iter)
-# result.density, result.fock, result.Q, result.p, result.mu, result.history
+# Safeguarded acceleration with explicit stationarity tolerances.
+result = cpp_hf.solve_scf(
+    kernel, P0=np.zeros_like(hamiltonian), n_electrons=N,
+    config=cpp_hf.SCFConfig(acceleration="rdiis", diis_size=8,
+                           density_tol=1e-6, comm_tol=1e-6, max_iter=500),
+)
+print(result.energy, result.converged, result.iterations)
+print(result.history["fock_builds"])
+# result.density_matrix, result.fock_matrix, result.chemical_potential
 
-# Or use SCF as a fallback baseline
-result_scf = cpp_hf.solve_scf(kernel, P0=np.zeros_like(hamiltonian), n_electrons=N)
+# Or use the hybrid with Newton recovery and the direct-solver result surface.
+result_dm = cpp_hf.solve(
+    kernel, P0=np.zeros_like(hamiltonian), n_electrons=N,
+    config=cpp_hf.SolverConfig(optimizer="auto", tol_grad=1e-6, max_iter=500),
+)
+# result_dm.density, result_dm.fock, result_dm.Q, result_dm.p, result_dm.mu
 ```
+
+For a local minimum with a stability check and bounded saddle recovery:
+
+```python
+minimum = cpp_hf.solve_minimum(kernel, np.zeros_like(hamiltonian), N)
+print(minimum.converged, minimum.solution.energy, minimum.escapes)
+print(minimum.fock_builds)  # includes stability and recovery cost
+```
+
+A converged residual alone does not establish that a solution is a minimum.
+`solve_minimum` starts with safeguarded RDIIS, checks negative curvature, and
+tries finite feasible descent perturbations when needed. Escape trials first
+use a fixed-particle Fermi-density map along the interaction response of the
+unstable mode; this preserves the tangent near saturated occupations. Projected
+density perturbations remain a fallback. Both require actual free-energy descent.
+For phase comparisons, compare free energies across seeds. The standalone
+diagnostic is `cpp_hf.stability_analysis(kernel, result.density_matrix, N)`.
+These are local checks within the supplied basis; they do not certify a global
+minimum. Existing calls to `solve` without a config still select the CG
+optimizer, but its stopping test and objective changed in 1.2.0 (see
+[CHANGELOG.md](CHANGELOG.md)).
 
 ## Architecture
 
@@ -62,8 +95,8 @@ result_scf = cpp_hf.solve_scf(kernel, P0=np.zeros_like(hamiltonian), n_electrons
 | **Python surface** | `src/cpp_hf/*.py` | Public dataclasses (`SolverConfig`, `SCFConfig`, `SolveResult`, `SCFResult`, `ContinuationResult`), the `HartreeFockKernel` constructor (input validation + kernel precomputation), the symmetry projector framework (passed to the C++ solver as a Python callback), and the continuation driver (composes two C++ solver calls + `resample_kgrid`). |
 
 The Python surface is intentionally thin: it validates inputs, packs them
-into the dict shape the C++ binding expects, then hands off.  Every
-production code path runs in C++; importing the package without the
+into the dict shape the C++ binding expects, then hands off.  The expensive Fock and iteration kernels run in C++; stability and escape
+orchestration use Python/SciPy. Importing the package without the
 compiled extension raises a clear `RuntimeError` from `native_required()`.
 
 ## Public API
@@ -72,14 +105,20 @@ compiled extension raises a clear `RuntimeError` from `native_required()`.
 |---|---|
 | `HartreeFockKernel` | Problem definition + precomputed arrays |
 | `solve` (alias `solve_direct_minimization`), `SolverConfig`, `SolveResult` | Primary solver |
-| `solve_scf`, `SCFConfig`, `SCFResult` | Reference SCF solver |
+| `solve_scf`, `SCFConfig`, `SCFResult` | Safeguarded full-residual and legacy SCF methods |
+| `solve_minimum`, `MinimumResult` | RDIIS with local stability checks and bounded saddle recovery |
+| `stability_analysis`, `StabilityResult` | Matrix-free local stability test of an unconstrained finite-T solution |
 | `build_fock`, `hf_energy`, `free_energy`, `occupation_entropy` | HF objective building blocks |
 | `solve_continuation`, `ContinuationResult`, `resample_kgrid` | Coarse → fine multigrid driver + k‑grid resampler |
 | `cpp_hf.symmetry.make_project_fn` | Symmetry projector builder (unitary / spatial / time‑reversal) |
 | `cpp_hf.linalg.eigh` | Block‑diagonal Hermitian eigh with optional structure check |
 
-The API mirrors `jax_hf` exactly so that scripts written against `jax_hf`
-work against `cpp_hf` by changing only the import line.
+The common API closely follows `jax_hf`, and ordinary built-in-kernel scripts
+can generally switch by changing the import. Backend-specific features remain
+explicit: `cpp_hf` does not accept JAX tracing/differentiation or the
+`fock_build_fn=` callback, and typed config objects belong to the backend that
+created them. Use a plain config dictionary in higher-level code that needs to
+route settings across both backends.
 
 ## Coarse → fine continuation
 
