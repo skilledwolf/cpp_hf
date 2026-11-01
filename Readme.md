@@ -112,7 +112,7 @@ python -m pytest -n 4 tests --deselect tests/test_bilayer_regression.py
 
 `tests/` holds the backend-independent checks (superlattice, continuation,
 symmetry, backend parity); `tests/native` and `tests/jax` hold the
-backend-specific ones. `test_bilayer_regression.py` (about 12 minutes) pins
+backend-specific ones. `test_bilayer_regression.py` (about a minute on 4 cores; needs contimod) pins
 energies against `tests/data/bilayer_reference.npz`.
 
 ## License

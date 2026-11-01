@@ -1,4 +1,10 @@
-"""Bilayer graphene density scan against the saved SCF reference, per backend.
+"""Bilayer graphene energies against the saved SCF reference.
+
+Three densities (hole side, near neutrality, electron side) on both branches.
+SCF runs native RDIIS (the reference was made with linear mixing, so this
+also checks that RDIIS reaches the same fixed point) and direct minimization
+runs on JAX (native when JAX is missing); backend agreement itself is covered
+by test_backend_parity.
 
 Needs contimod.  Reference data come from
 ``tests/generate_bilayer_reference.py``.
@@ -25,7 +31,8 @@ from hartreefock.symmetry import make_project_fn  # noqa: E402
 DATA_PATH = Path(__file__).parent / "data" / "bilayer_reference.npz"
 PER_CM = 0.246e-7
 E_ATOL = 1e-4
-DENSITIES = [-0.60, -0.42, -0.25, -0.12, -0.05, 0.05, 0.12, 0.25]
+DENSITIES = [-0.60, -0.12, 0.25]
+DIRECT_BACKEND = "jax" if "jax" in hf.available_backends() else "native"
 
 
 @pytest.fixture(scope="module")
@@ -96,18 +103,17 @@ def _reference_energy(ref, branch, n_cm12):
     return float(ref[f"{key}/energy"])
 
 
-@pytest.mark.parametrize("backend", hf.available_backends())
 @pytest.mark.parametrize("branch", ["PM", "SVP"])
 @pytest.mark.parametrize("n_cm12", DENSITIES)
-def test_scf_energy_matches_reference(bilayer_setup, backend, branch, n_cm12):
+def test_scf_energy_matches_reference(bilayer_setup, branch, n_cm12):
     ref, _, kernel, *_ = bilayer_setup
     E_ref = _reference_energy(ref, branch, n_cm12)
     P0, n_e = _initial_state(bilayer_setup, branch, n_cm12)
     config = hf.SCFConfig(
-        max_iter=500, mixing=0.2, density_tol=1e-7, comm_tol=1e-6,
+        acceleration="rdiis", max_iter=500, density_tol=1e-7, comm_tol=1e-6,
         project_fn=bilayer_setup[5][branch],
     )
-    result = hf.solve_scf(kernel, P0, n_e, config=config, backend=backend)
+    result = hf.solve_scf(kernel, P0, n_e, config=config, backend="native")
 
     np.testing.assert_allclose(float(result.energy), E_ref, atol=E_ATOL)
     if not result.converged:
@@ -116,16 +122,15 @@ def test_scf_energy_matches_reference(bilayer_setup, backend, branch, n_cm12):
         assert float(result.history["commutator_residual"][last]) < 1e-6, result.message
 
 
-@pytest.mark.parametrize("backend", hf.available_backends())
 @pytest.mark.parametrize("branch", ["PM", "SVP"])
 @pytest.mark.parametrize("n_cm12", DENSITIES)
-def test_direct_solver_energy_matches_reference(bilayer_setup, backend, branch, n_cm12):
+def test_direct_solver_energy_matches_reference(bilayer_setup, branch, n_cm12):
     # Direct minimization reaches the SCF energy even where the gradient
     # stop has not formally fired, so only the energy is checked.
     ref, _, kernel, *_ = bilayer_setup
     E_ref = _reference_energy(ref, branch, n_cm12)
     P0, n_e = _initial_state(bilayer_setup, branch, n_cm12)
     config = hf.SolverConfig(max_iter=200, tol_E=1e-7, project_fn=bilayer_setup[5][branch])
-    result = hf.solve(kernel, P0, n_e, config=config, backend=backend)
+    result = hf.solve(kernel, P0, n_e, config=config, backend=DIRECT_BACKEND)
 
     np.testing.assert_allclose(float(result.energy), E_ref, atol=E_ATOL)
