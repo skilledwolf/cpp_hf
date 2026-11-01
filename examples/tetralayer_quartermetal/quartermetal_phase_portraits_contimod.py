@@ -51,6 +51,7 @@ import contimod as cm
 import hartreefock as hf
 
 from contimod import meanfield as mf
+from contimod.interaction import Interaction
 from contimod.coulomb import (
     dualgate_hartree_q0_matrix,
     layer_coulomb_kernel,
@@ -215,7 +216,8 @@ def _pm_c3_cn_reference(setup: dict) -> np.ndarray:
     h_cn = h_cn.with_chemical_potential(density=setup["ne_cn"])
     res = mf.solve(
         h_cn,
-        _interaction(setup, refP_init),
+        _interaction(setup),
+        **_terms(refP_init),
         target=mf.Density(setup["ne_cn"]),
         config=hf.SolverConfig(
             max_iter=MAX_ITER_REF, tol_E=TOL_E, max_step=0.6, block_sizes=(8, 8, 8, 8),
@@ -252,7 +254,8 @@ def _solve_meanfield_phase(setup: dict, h_run, *, seed_op, project_fn,
     """
     return mf.solve(
         h_run,
-        _interaction(setup, refP),
+        _interaction(setup),
+        **_terms(refP),
         target=mf.Density(h_run.state.density()),
         config=hf.SolverConfig(
             max_iter=int(max_iter), tol_E=TOL_E, max_step=0.6, block_sizes=(8, 8, 8, 8),
@@ -263,13 +266,12 @@ def _solve_meanfield_phase(setup: dict, h_run, *, seed_op, project_fn,
     )
 
 
-def _interaction(setup: dict, refP) -> mf.Interaction:
-    return mf.Interaction(
-        setup["Vq"],
-        hartree=True,
-        reference=mf.Reference(refP, embed=True),
-        hartree_matrix=setup["HH"],
-    )
+def _interaction(setup: dict) -> Interaction:
+    return Interaction.tabulated(setup["h"].kmesh, setup["Vq"], hartree=setup["HH"])
+
+
+def _terms(refP) -> dict:
+    return dict(hartree=True, reference=mf.Reference(refP, embed=True))
 
 
 def _physical_eigs(res, weights, n_e):
