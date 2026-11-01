@@ -21,7 +21,7 @@ contimod = pytest.importorskip("contimod")
 cg_symmetry = pytest.importorskip("contimod.materials.graphene.symmetry")
 
 import contimod as cm  # noqa: E402
-from contimod.kdiscrete import kMeshgrid2D  # noqa: E402
+from contimod.kdiscrete import Mesh  # noqa: E402
 from contimod.meanfield import SelfEnergySeed  # noqa: E402
 from contimod.utils.spectrum_fermi import FermiParams  # noqa: E402
 
@@ -41,16 +41,14 @@ def bilayer_setup():
     nk, kmax = int(ref["nk"]), float(ref["kmax"])
     temperature = float(ref["temperature"])
 
-    # Replay the saved endpoint quadrature (contimod now uses midpoint cells).
-    mesh = kMeshgrid2D(kmax, nk)
-    mesh.kx = np.array(ref["kx"], copy=True)
-    mesh.ky = np.array(ref["ky"], copy=True)
-    mesh.ks = np.stack(np.meshgrid(mesh.kx, mesh.ky, indexing="ij"), axis=-1)
-    mesh.dk = np.array([mesh.kx[1] - mesh.kx[0], mesh.ky[1] - mesh.ky[0]])
-    mesh.dk_sq = float(np.prod(mesh.dk))
-    mesh.weight = float(ref["weight"])
+    # The reference was saved on the endpoint grid linspace(-kmax, kmax, nk)
+    # (odd nk).  That grid is the odd-nk square Mesh of half side
+    # kmax * nk / (nk - 1): same points, same weight.
+    mesh = Mesh.square(kmax * nk / (nk - 1), nk)
+    np.testing.assert_allclose(mesh.kx, ref["kx"], atol=1e-12)
+    np.testing.assert_allclose(mesh.weight, float(ref["weight"]), rtol=1e-12)
     model = cm.graphene.Bernal(2, valleyful=True, spinful=True, U=float(ref["U_meV"]))
-    h = model.discretize(ks=mesh, fermi=FermiParams(T=temperature, mu=0.0))
+    h = model.discretize(mesh, fermi=FermiParams(T=temperature, mu=0.0))
 
     Vq = cm.coulomb.dualgate_coulomb(
         h.kmesh.distance_grid, epsilon_r=float(ref["epsilon_r"]), d_gate=float(ref["d_gate"])
