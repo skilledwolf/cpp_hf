@@ -177,7 +177,7 @@ def _solve_newton_impl(
     delta0 = jnp.asarray(tr_delta0, dtype=real_dtype)
     delta_min = jnp.asarray(1e-10, dtype=real_dtype)
     # Relative energy-noise floor for the trust-region ratio: ~4500 * machine
-    # epsilon, i.e. ~1e-12 in float64 (cpp_hf's hard-coded value) and ~5e-4 in
+    # epsilon, i.e. ~1e-12 in float64 (the native hard-coded value) and ~5e-4 in
     # float32, tracking the precision of the Fock build that produces E.
     noise_floor = jnp.maximum(
         jnp.asarray(1e-12, dtype=real_dtype),
@@ -434,7 +434,7 @@ def _solve_newton_impl(
 
         # Energy-noise floor below which the predicted reduction is meaningless
         # and the step is judged on the gradient instead.  Scaled to the working
-        # precision: ~1e-12 in float64 (matching cpp_hf), ~5e-4 in float32, so
+        # precision: ~1e-12 in float64 (matching the native backend), ~5e-4 in float32, so
         # the trust-region ratio is never trusted below the actual Fock-build
         # round-off (otherwise float32 noise makes every ratio garbage).
         noise = noise_floor * jnp.maximum(jnp.abs(Omega), 1.0)
@@ -559,7 +559,7 @@ def _solve_newton_impl(
     # Fermi-Dirac re-occupation acts as one extra (unconverged) SCF step that
     # would move the density away from the stationary point the loop reached.
     # Reporting the loop's own (Q, p) keeps the solution self-consistent
-    # (mirrors cpp_hf's solve_rtr finalize).
+    # (mirrors the native solve_rtr finalize).
     P_fin, Q_fin, p_fin, _ = _project_density_eigensystem(Q_fin, p_fin, project_fn)
     Sigma_fin, H_fin, F_fin = _fock_full(P_fin)
     E_fin = hf_energy(

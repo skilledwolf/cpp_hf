@@ -3,9 +3,11 @@
 
 #include "cpp_hf/types.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 #include <mutex>
+#include <shared_mutex>
 #include <stdexcept>
 #include <string>
 
@@ -24,20 +26,23 @@ namespace cpp_hf {
 // over axes (0, 1).  The plan operates in-place.
 class FftBatched2D {
 public:
-    FftBatched2D(std::size_t nk1, std::size_t nk2, std::size_t batch)
-        : nk1_(nk1), nk2_(nk2), batch_(batch), n_tot_(nk1 * nk2 * batch) {
+    FftBatched2D(std::size_t nk1, std::size_t nk2, std::size_t batch,
+                 int nthreads = choose_threads())
+        : nk1_(nk1), nk2_(nk2), batch_(batch), n_tot_(nk1 * nk2 * batch),
+          nthreads_(nthreads) {
         if (nk1_ == 0 || nk2_ == 0 || batch_ == 0)
             throw std::invalid_argument("FftBatched2D: zero-size dimensions are not allowed.");
 
         plan_buf_ = reinterpret_cast<c64*>(fftw_malloc(sizeof(c64) * n_tot_));
         if (!plan_buf_) throw std::bad_alloc{};
 
+        // FFTW planning and plan destruction are not thread-safe.  Executing
+        // existing plans is safe, so a shared mutex permits concurrent
+        // transforms while excluding plan lifecycle operations.
+        std::unique_lock<std::shared_mutex> planner_lock(fftw_mutex());
         init_threads_once();
-        const int nthreads = choose_threads();
 #if defined(FFTW3_THREADS)
-        fftw_plan_with_nthreads(nthreads);
-#else
-        (void)nthreads;
+        fftw_plan_with_nthreads(nthreads_);
 #endif
 
         fftw_iodim64 dims[2];
@@ -53,13 +58,18 @@ public:
         how[0].is = 1;
         how[0].os = 1;
 
-        int plan_flag = FFTW_ESTIMATE;
+        // New-array execution is used on NumPy/std::vector buffers whose
+        // alignment need not match fftw_malloc's planning buffer.  FFTW
+        // requires FFTW_UNALIGNED in that case; without it, SIMD plans may
+        // legally assume an alignment the execution buffer does not have.
+        int plan_flag = FFTW_ESTIMATE | FFTW_UNALIGNED;
         if (const char* p = std::getenv("HF_FFTW_PLAN")) {
             const std::string s(p);
-            if (s == "estimate") plan_flag = FFTW_ESTIMATE;
-            else if (s == "measure") plan_flag = FFTW_MEASURE;
-            else if (s == "patient") plan_flag = FFTW_PATIENT;
-            else if (s == "exhaustive") plan_flag = FFTW_EXHAUSTIVE;
+            if (s == "estimate") plan_flag = FFTW_ESTIMATE | FFTW_UNALIGNED;
+            else if (s == "measure") plan_flag = FFTW_MEASURE | FFTW_UNALIGNED;
+            else if (s == "patient") plan_flag = FFTW_PATIENT | FFTW_UNALIGNED;
+            else if (s == "exhaustive")
+                plan_flag = FFTW_EXHAUSTIVE | FFTW_UNALIGNED;
         }
 
         fwd_ = fftw_plan_guru64_dft(
@@ -85,6 +95,7 @@ public:
     }
 
     ~FftBatched2D() {
+        std::unique_lock<std::shared_mutex> planner_lock(fftw_mutex());
         if (fwd_) fftw_destroy_plan(fwd_);
         if (bwd_) fftw_destroy_plan(bwd_);
         if (plan_buf_) fftw_free(plan_buf_);
@@ -94,6 +105,7 @@ public:
     FftBatched2D& operator=(const FftBatched2D&) = delete;
 
     void forward(c64* buf) const {
+        std::shared_lock<std::shared_mutex> execute_lock(fftw_mutex());
         fftw_execute_dft(fwd_,
                          reinterpret_cast<fftw_complex*>(buf),
                          reinterpret_cast<fftw_complex*>(buf));
@@ -102,9 +114,12 @@ public:
     // Backward (FFTW unnormalised) followed by normalisation, matching
     // numpy.fft.ifftn semantics: ifftn(x) == bwd(x) / (nk1 * nk2).
     void inverse(c64* buf) const {
-        fftw_execute_dft(bwd_,
-                         reinterpret_cast<fftw_complex*>(buf),
-                         reinterpret_cast<fftw_complex*>(buf));
+        {
+            std::shared_lock<std::shared_mutex> execute_lock(fftw_mutex());
+            fftw_execute_dft(bwd_,
+                             reinterpret_cast<fftw_complex*>(buf),
+                             reinterpret_cast<fftw_complex*>(buf));
+        }
         const std::size_t n = n_tot_;
         const double s = norm_;
         for (std::size_t i = 0; i < n; ++i) buf[i] *= s;
@@ -113,16 +128,17 @@ public:
     std::size_t nk1() const { return nk1_; }
     std::size_t nk2() const { return nk2_; }
     std::size_t batch() const { return batch_; }
-
-private:
-    static void init_threads_once() {
-#if defined(FFTW3_THREADS)
-        static std::once_flag once;
-        std::call_once(once, [] { fftw_init_threads(); });
-#endif
-    }
+    int nthreads() const { return nthreads_; }
 
     static int choose_threads() {
+#if !defined(FFTW3_THREADS)
+        return 1;
+#else
+#if defined(_OPENMP)
+        // Superlattice channels already run concurrently.  Keep each FFT
+        // serial there, even when HF_FFTW_THREADS is set for standalone FFTs.
+        if (omp_in_parallel()) return 1;
+#endif
         if (const char* env = std::getenv("HF_FFTW_THREADS")) {
             const int v = std::atoi(env);
             if (v > 0) return v;
@@ -132,9 +148,28 @@ private:
 #else
         return 1;
 #endif
+#endif
+    }
+
+private:
+    static std::shared_mutex& fftw_mutex() {
+        // FFT plans may be owned by process-lifetime caches whose destruction
+        // order relative to function-local statics is otherwise unspecified.
+        // Keep this small synchronization primitive alive until process exit
+        // so a late plan destructor can never lock an already-destroyed mutex.
+        static auto* mutex = new std::shared_mutex;
+        return *mutex;
+    }
+
+    static void init_threads_once() {
+#if defined(FFTW3_THREADS)
+        static std::once_flag once;
+        std::call_once(once, [] { fftw_init_threads(); });
+#endif
     }
 
     std::size_t nk1_, nk2_, batch_, n_tot_;
+    int nthreads_;
     c64* plan_buf_ = nullptr;
     fftw_plan fwd_ = nullptr;
     fftw_plan bwd_ = nullptr;

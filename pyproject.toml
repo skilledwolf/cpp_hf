@@ -32,7 +32,7 @@ classifiers = [
 
 [project.optional-dependencies]
 jax = ["jax>=0.5.3"]
-dev = ["pytest"]
+dev = ["pytest", "pytest-xdist", "jax>=0.5.3"]
 
 [project.urls]
 Homepage = "https://github.com/skilledwolf/cpp_hf"
@@ -69,8 +69,10 @@ addopts = "--import-mode=importlib"
 [tool.cibuildwheel]
 build = "cp311-* cp312-* cp313-*"
 skip = "pp* *-musllinux_*"
-# Load test: the native extension (FFTW/OpenMP linked) imports from the repaired wheel.
-test-command = "python -c \"import hartreefock; hartreefock.get_backend('native')\""
+# Exercise an actual native solve from the repaired, installed wheel.  A plain
+# ``import hartreefock`` is not sufficient because the package intentionally
+# remains importable when the native extension fails to load.
+test-command = "python {project}/ci/smoke_test.py"
 
 [tool.cibuildwheel.linux]
 before-all = "bash ci/linux_before_all.sh"
@@ -96,9 +98,3 @@ CMAKE_PREFIX_PATH = "/project/.cache/fftw-3.3.10-x86_64:/project/.cache/fftw-3.3
 LIBRARY_PATH      = "/project/.cache/fftw-3.3.10-x86_64/lib:/project/.cache/fftw-3.3.10-aarch64/lib:$LIBRARY_PATH"
 CPATH             = "/project/.cache/fftw-3.3.10-x86_64/include:/project/.cache/fftw-3.3.10-aarch64/include:$CPATH"
 BOOST_INCLUDEDIR  = "/project/.cache/boost-1.89.0/include"
-
-# Build the extension for macOS 14 so the wheel's platform tag matches the
-# bundled Homebrew libomp (minimum target 14.0 on the macos-14 runner) — keeps
-# delocate happy and the tag honest.
-[tool.cibuildwheel.macos.environment]
-MACOSX_DEPLOYMENT_TARGET = "14.0"

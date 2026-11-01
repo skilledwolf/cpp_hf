@@ -1,7 +1,7 @@
 """Compute backends: ``native`` (C++ extension) and ``jax`` (optional).
 
-Each backend module provides ``solve``, ``solve_scf``, ``build_fock`` and
-``resample_kgrid`` for the shared :class:`hartreefock.HartreeFockKernel`.
+Each backend module provides ``solve``, ``solve_scf``, ``build_fock``,
+``fock_operators`` and ``resample_kgrid`` for the shared :class:`hartreefock.HartreeFockKernel`.
 """
 
 from __future__ import annotations

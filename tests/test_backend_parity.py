@@ -84,3 +84,18 @@ def test_native_project_callback_runs_after_gil_release():
     )
     F = native_fock.build_fock(kernel, np.zeros_like(kernel.h), project_fn=np.zeros_like)[2]
     np.testing.assert_array_equal(F, 0.0)
+
+
+def test_native_only_options_raise_on_jax():
+    pytest.importorskip("jax")
+    import hartreefock as hf
+
+    kernel = HartreeFockKernel(
+        np.ones((1, 1)), np.zeros((1, 1, 2, 2), complex), np.ones((1, 1, 1, 1)), T=0.1
+    )
+    P0 = np.eye(2, dtype=complex)[None, None] / 2
+    with pytest.raises(NotImplementedError, match="native"):
+        hf.solve(kernel, P0, 1.0, config=hf.SolverConfig(optimizer="auto"), backend="jax")
+    config = hf.SCFConfig(acceleration="rdiis", preconditioner="hartree")
+    with pytest.raises(NotImplementedError, match="native"):
+        hf.solve_scf(kernel, P0, 1.0, config=config, backend="jax")

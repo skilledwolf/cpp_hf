@@ -19,3 +19,6 @@ quick_sanity_check.py
 .DS_Store
 .vscode/
 .idea/
+
+# Local solver-study benchmarks and raw results (not yet published)
+benchmarks/

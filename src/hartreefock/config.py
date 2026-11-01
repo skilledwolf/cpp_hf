@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from numbers import Integral
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
 
-_OPTIMIZERS = ("cg", "newton")
+_OPTIMIZERS = ("cg", "newton", "auto")
 _ACCELERATIONS = ("linear", "diis", "oda", "rdiis", "anderson")
 
 
@@ -41,6 +42,8 @@ class SolverConfig:
     by less than ``tol_E`` over ``plateau_window`` iterations (0 = per
     iteration), and Newton uses an internal 1e-6 stationarity tolerance.
 
+    ``optimizer="auto"`` (native only) starts with CG and hands over to
+    Newton once the iterate is in the local quadratic regime.
     ``optimizer="newton"`` is a Steihaug truncated-CG trust region on the
     joint (Q, p) response Hessian; it ignores the CG-only knobs ``max_step``,
     ``cg_restart``, ``bt_shrink`` and ``bt_max`` and needs float64.
@@ -107,7 +110,7 @@ class SolverConfig:
         if not 0.0 < self.bt_shrink < 1.0:
             raise ValueError("bt_shrink must be strictly between 0 and 1")
         if str(self.optimizer).lower() not in _OPTIMIZERS:
-            raise ValueError(f"optimizer must be 'cg' or 'newton', got {self.optimizer!r}")
+            raise ValueError(f"optimizer must be one of {_OPTIMIZERS}, got {self.optimizer!r}")
         _check_blocks(self.block_sizes)
         if self.project_fn is not None and not callable(self.project_fn):
             raise ValueError("project_fn must be callable or None")
@@ -124,7 +127,9 @@ class SCFConfig:
     schemes. ``diis_damping`` blends the extrapolated and current Fock;
     ``trust_radius`` (weighted Frobenius norm, 0 = off) clips each density
     step. ``safeguard`` lets RDIIS/Anderson accept free-energy descent within
-    floating-point objective noise. ``return_density`` / ``return_fock`` set
+    floating-point objective noise. ``preconditioner="hartree"`` applies the
+    Hartree response to the RDIIS/Anderson residual (native only).
+    ``return_density`` / ``return_fock`` set
     to False drop those arrays from the result.
     """
 
@@ -139,6 +144,7 @@ class SCFConfig:
     diis_damping: float = 1.0
     trust_radius: float = 0.0
     safeguard: bool = True
+    preconditioner: str = "none"
     block_sizes: tuple[int, ...] | None = None
     project_fn: Callable[[Any], Any] | None = None
     return_density: bool = True
@@ -155,6 +161,10 @@ class SCFConfig:
             raise ValueError(
                 f"acceleration must be one of {_ACCELERATIONS}, got {self.acceleration!r}"
             )
+        if self.preconditioner not in ("none", "hartree"):
+            raise ValueError("preconditioner must be 'none' or 'hartree'")
+        if self.preconditioner != "none" and self.acceleration not in ("anderson", "rdiis"):
+            raise ValueError("preconditioner requires acceleration='anderson' or 'rdiis'")
         if self.diis_size <= 0:
             raise ValueError("diis_size must be positive")
         for name in ("density_tol", "comm_tol", "diis_start", "trust_radius"):

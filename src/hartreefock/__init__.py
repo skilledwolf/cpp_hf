@@ -7,9 +7,9 @@ Build a :class:`HartreeFockKernel` (or, for a moiré plane-wave basis, a
     result = hartreefock.solve(kernel, P0, n_electrons, backend="native")
 
 ``backend="native"`` (default) runs the C++ extension in double precision;
-``backend="jax"`` runs the jitted JAX solvers and adds the RDIIS/Anderson SCF
-schemes, stability analysis and checked minimization
-(:mod:`hartreefock._backends.jax`).
+``backend="jax"`` runs the jitted JAX solvers (differentiable, GPU-capable).
+:func:`stability_analysis` and :func:`solve_minimum` test and enforce local
+stability on either backend.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from .config import (
 from .continuation import solve_continuation
 from .deflation import solve_deflated
 from .kernel import HartreeFockKernel
+from .stability import MinimumResult, StabilityResult, solve_minimum, stability_analysis
 from .superlattice import SuperlatticeHartreeFockKernel
 
 try:  # pragma: no cover - metadata only
@@ -36,26 +37,13 @@ except metadata.PackageNotFoundError:  # pragma: no cover
     __version__ = "0.0.0"
 
 
-def __getattr__(name):
-    # JAX-only tools, imported on first use.
-    if name in ("StabilityResult", "stability_analysis"):
-        from ._backends.jax import stability
-
-        return getattr(stability, name)
-    if name in ("MinimumResult", "solve_minimum"):
-        from ._backends.jax import minima
-
-        return getattr(minima, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None, backend: str = "native"):
     """Direct minimization (Riemannian CG or trust-region Newton)."""
     return get_backend(backend).solve(kernel, P0, n_electrons, config=config)
 
 
 def solve_scf(kernel, P0, n_electrons, *, config: SCFConfig | None = None, backend: str = "native"):
-    """Roothaan SCF iteration with linear, DIIS, ODA (or, on JAX, RDIIS/Anderson) acceleration."""
+    """Roothaan SCF iteration (linear, DIIS, ODA, RDIIS or Anderson acceleration)."""
     return get_backend(backend).solve_scf(kernel, P0, n_electrons, config=config)
 
 
@@ -66,9 +54,9 @@ __all__ = [
     "MinimumResult",
     "SCFConfig",
     "SCFResult",
-    "StabilityResult",
     "SolveResult",
     "SolverConfig",
+    "StabilityResult",
     "SuperlatticeHartreeFockKernel",
     "available_backends",
     "get_backend",

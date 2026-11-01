@@ -5,11 +5,10 @@ from __future__ import annotations
 import numpy as np
 
 from ...config import SCFConfig, SCFResult
+from ...kernel import validate_temperature
 from ._compat import _native, native_required
 from ._lower import kernel_args
 from .utils import validate_electron_count
-
-_NATIVE_ACCELERATIONS = ("linear", "diis", "oda")
 
 
 def solve_scf(
@@ -20,18 +19,25 @@ def solve_scf(
     config: SCFConfig | None = None,
 ) -> SCFResult:
     """Roothaan SCF; see :class:`hartreefock.SCFConfig` for the schemes."""
-    native_required()
     if config is None:
         config = SCFConfig()
-    if config.acceleration not in _NATIVE_ACCELERATIONS:
-        raise NotImplementedError(
-            f"acceleration={config.acceleration!r} is only available with backend='jax'."
-        )
+    P0 = np.asarray(P0)
+    if P0.shape != kernel.h.shape:
+        raise ValueError(f"P0 must have shape {tuple(kernel.h.shape)}, got {tuple(P0.shape)}.")
+    if config.acceleration in ("anderson", "rdiis") and config.level_shift != 0.0:
+        raise ValueError("Native full-residual acceleration requires level_shift=0")
     validate_electron_count(kernel.w2d, kernel.h.shape[-1], n_electrons)
+    validate_temperature(kernel.T, context="kernel.T")
+    native_required()
 
     P0 = np.ascontiguousarray(P0, dtype=np.complex128)
-    density, fock, energy, mu, iterations, converged, hE, hD, hC = _native.solve_scf(
-        kernel_args(kernel),
+    diagnostics: dict[str, int] = {}
+    args = kernel_args(kernel)
+    args["diagnostics"] = diagnostics
+    args["preconditioner"] = config.preconditioner
+    args["safeguard"] = bool(config.safeguard)
+    density, fock, energy, mu, iterations, converged, hE, hF, hD, hC = _native.solve_scf(
+        args,
         P0, float(n_electrons),
         int(config.max_iter),
         float(config.density_tol), float(config.comm_tol),
@@ -65,7 +71,9 @@ def solve_scf(
         message=message,
         history={
             "E": hE,
+            "free_energy": hF,
             "density_residual": hD,
             "commutator_residual": hC,
+            "fock_builds": diagnostics.get("fock_builds"),
         },
     )

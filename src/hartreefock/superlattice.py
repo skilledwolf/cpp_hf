@@ -227,10 +227,11 @@ class SuperlatticeHartreeFockKernel:
     embed_reference_potential : bool
         Add ``V_HF[refP]`` to ``h`` once so the loop solves standard HF.  The
         reported energy then exceeds the standard HF energy by
-        ``embedded_energy_offset``.
+        ``embedded_energy_offset - embedded_hartree_shift * n_electrons``;
+        ``mu_standard = mu + embedded_hartree_shift``.
     center_embedded_hartree : bool
-        With embedding, subtract the mean diagonal of ``σ_H[refP]`` (a gauge
-        choice; a no-op when q = 0 is dropped).
+        With embedding, subtract the mean diagonal of ``σ_H[refP]``
+        (``embedded_hartree_shift``; a gauge choice, zero when q = 0 is dropped).
     k_origin : (float, float)
         Fractional coordinates of the first BZ mesh point; locates the mesh
         for :meth:`potential_at` and for continuation between meshes.
@@ -327,6 +328,7 @@ class SuperlatticeHartreeFockKernel:
         self.embed_reference_potential = bool(embed_reference_potential)
         self.center_embedded_hartree = bool(center_embedded_hartree)
         self.embedded_energy_offset = 0.0
+        self.embedded_hartree_shift = 0.0
         self.h = h
         if self.embed_reference_potential:
             if not self.has_reference_density:
@@ -386,12 +388,12 @@ class SuperlatticeHartreeFockKernel:
     def _reference_potential(self) -> tuple[np.ndarray, float]:
         """``V_HF[refP]`` as embedded into ``h`` (Hartree optionally centred) and ½Tr(V·refP)."""
         ref = self.refP
-        sigma_F = self.exchange(ref)
-        sigma_H = self.hartree(ref)
-        if self.center_embedded_hartree and self.include_hartree:
-            sigma_H = sigma_H - np.mean(np.diag(sigma_H).real) * np.eye(self.D)
-        V = sigma_F + sigma_H[None, None]
+        V = self.exchange(ref) + self.hartree(ref)[None, None]
+        # The offset is the uncentred ½Tr(V·refP); centring is a separate gauge shift.
         offset = 0.5 * float(np.einsum("ij,ijab,ijba->", self.w2d, V, ref).real)
+        if self.center_embedded_hartree and self.include_hartree:
+            self.embedded_hartree_shift = float(np.mean(np.diag(self.hartree(ref)).real))
+            V = V - self.embedded_hartree_shift * np.eye(self.D)
         return V, offset
 
     def _as_args(self) -> dict:

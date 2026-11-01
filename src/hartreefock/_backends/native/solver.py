@@ -1,6 +1,6 @@
 """Direct minimization solver wrapper.
 
-A thin Python layer over ``cpp_hf._native.solve_dm``: prepares the kernel as
+A thin Python layer over the C++ ``solve_dm``: prepares the kernel as
 a dict of contiguous ``complex128`` / ``float64`` arrays, validates inputs,
 and unpacks the C++ tuple back into a :class:`SolveResult`.
 """
@@ -10,12 +10,12 @@ from __future__ import annotations
 import numpy as np
 
 from ...config import SolverConfig, SolveResult
+from ...kernel import validate_temperature
 from ._compat import _native, native_required
 from ._lower import kernel_args
 from .utils import validate_electron_count
 
-
-_OPTIMIZER_CODES = {"cg": 0, "newton": 1}
+_OPTIMIZER_CODES = {"cg": 0, "newton": 1, "auto": 2}
 
 
 def _optimizer_code(name: str) -> int:
@@ -37,16 +37,18 @@ def solve(
 ) -> SolveResult:
     """Direct-minimization Hartree-Fock solver.
 
-    Preconditioned Riemannian CG on Stiefel × capped simplex with one Fock
-    build per iteration.  Algorithm matches :func:`jax_hf.solve` so the same
-    tests apply.  Runs entirely in C++ via the ``cpp_hf._native`` extension.
+    ``optimizer``: preconditioned Riemannian CG on Stiefel × capped simplex
+    (``"cg"``), coupled trust-region Newton (``"newton"``), or safeguarded
+    full-residual DIIS with Newton recovery (``"auto"``).  Runs in C++.
     """
-    native_required()
     if config is None:
         config = SolverConfig()
-    validate_electron_count(
-        kernel.w2d, kernel.h.shape[-1], n_electrons, context="n_electrons",
-    )
+    P0 = np.asarray(P0)
+    if P0.shape != kernel.h.shape:
+        raise ValueError(f"P0 must have shape {tuple(kernel.h.shape)}, got {tuple(P0.shape)}.")
+    validate_electron_count(kernel.w2d, kernel.h.shape[-1], n_electrons, context="n_electrons")
+    validate_temperature(kernel.T, context="kernel.T")
+    native_required()
     P0 = np.ascontiguousarray(P0, dtype=np.complex128)
 
     block_sizes = list(int(s) for s in (config.block_sizes or ()))
@@ -68,14 +70,17 @@ def solve(
             )
     defl_arr = np.ascontiguousarray(defl_arr, dtype=np.complex128)
     if defl_arr.shape[0] > 0 and float(config.deflation_sigma) > 0.0 \
-            and config.optimizer.lower() != "newton":
+            and str(config.optimizer).lower() != "newton":
         raise ValueError(
             "deflation is only supported with optimizer='newton' "
             f"(got optimizer={config.optimizer!r})."
         )
 
-    Q, p, density, fock, mu, energy, n_iter, converged, hE, hG = _native.solve_dm(
-        kernel_args(kernel),
+    diagnostics: dict[str, int] = {}
+    args = kernel_args(kernel)
+    args["diagnostics"] = diagnostics
+    Q, p, density, fock, mu, energy, n_iter, converged, hE, hF, hG = _native.solve_dm(
+        args,
         P0, float(n_electrons),
         int(config.max_iter), float(config.tol_E), float(config.tol_grad),
         float(config.max_step), float(config.bt_shrink), float(config.denom_scale),
@@ -97,7 +102,12 @@ def solve(
         energy=np.asarray(energy),
         n_iter=np.asarray(int(n_iter), dtype=np.int32),
         converged=np.asarray(bool(converged)),
-        history={"E": hE, "grad_norm": hG},
+        history={
+            "E": hE,
+            "free_energy": hF,
+            "grad_norm": hG,
+            "fock_builds": diagnostics.get("fock_builds"),
+        },
     )
 
 
@@ -107,7 +117,7 @@ def _cayley_retract(d: np.ndarray, tau: float) -> np.ndarray:
 
     Provided as a small numpy reference for the algorithm-correctness tests
     (``TestSpectralCayley``); production code uses the spectral form in
-    ``cpp_hf._native``.
+    the C++ extension.
     """
     n = d.shape[-1]
     eye = np.eye(n, dtype=d.dtype)

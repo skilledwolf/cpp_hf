@@ -6,9 +6,8 @@ backends solve it:
 
 * `backend="native"` (default): a pybind11 extension on FFTW + Eigen, double
   precision, GIL released for every solver call.
-* `backend="jax"` (extra `hartreefock[jax]`): jitted JAX solvers. It adds the
-  RDIIS / Anderson SCF schemes, and JAX powers `hf.stability_analysis` and
-  `hf.solve_minimum`.
+* `backend="jax"` (extra `hartreefock[jax]`): jitted JAX solvers,
+  differentiable and GPU-capable.
 
 Two kernel types cover the problems:
 
@@ -18,9 +17,17 @@ Two kernel types cover the problems:
   streamed exchange and scalar or orbital-resolved interactions, plus
   `potential_at` for off-mesh self-energies.
 
-Solvers: direct minimization (`solve`, Riemannian CG or trust-region Newton),
-Roothaan SCF (`solve_scf`, linear / DIIS / ODA), coarse-to-fine
-`solve_continuation`, and `solve_deflated` for several distinct minima.
+Solvers, all available on both backends unless noted:
+
+* `solve`: direct minimization by Riemannian CG or trust-region Newton, or
+  (native) `optimizer="auto"`, which hands CG over to Newton near convergence.
+* `solve_scf`: Roothaan SCF with linear, DIIS or ODA mixing, or the
+  free-energy-safeguarded full-residual `rdiis` (recommended at finite T) and
+  `anderson` schemes; native adds `preconditioner="hartree"`.
+* `solve_minimum`: RDIIS plus a local stability check and bounded saddle
+  recovery; `stability_analysis` is the standalone curvature test.
+* `solve_continuation` (coarse to fine) and `solve_deflated` (several distinct
+  minima).
 
 ## Install
 
@@ -52,6 +59,22 @@ scf = hf.solve_scf(kernel, P0, n_electrons, config=hf.SCFConfig(acceleration="di
 # dm.density, dm.fock, dm.energy, dm.mu, dm.n_iter, dm.converged, dm.history
 ```
 
+A converged residual alone does not make a solution a minimum. `solve_minimum`
+runs safeguarded RDIIS, tests the free-energy curvature, and tries finite
+descent steps along an unstable mode (first through a fixed-particle Fermi
+map of the mode's interaction response, then projected density steps); each
+accepted step must lower the actual free energy:
+
+```python
+minimum = hf.solve_minimum(kernel, P0, n_electrons)
+print(minimum.converged, minimum.solution.energy, minimum.escapes, minimum.fock_builds)
+check = hf.stability_analysis(kernel, minimum.solution.density, n_electrons)
+```
+
+Both are local checks in the supplied basis, not a global-minimum certificate;
+compare free energies across seeds for phase comparisons. SCF and `auto`
+histories report `free_energy` and the total `fock_builds`.
+
 Coarse-to-fine continuation runs `solve_scf` for stages configured with an
 `SCFConfig` and `solve` otherwise:
 
@@ -68,9 +91,10 @@ Both kernels expose the interaction as NumPy linear maps, `kernel.exchange(rho)`
 `h + kernel.potential(P - refP)`. `hartreefock._backends` is private.
 
 Energies are the variational functional
-`E_var = Tr(h P) + 1/2 Tr(V_HF[P - P_ref] (P - P_ref))`; an embedded kernel
-reports `kernel.embedded_energy_offset`, which callers subtract to get the
-standard HF energy.
+`E_var = Tr(h P) + 1/2 Tr(V_HF[P - P_ref] (P - P_ref))`. For an embedded
+kernel, `E_standard = E - kernel.embedded_energy_offset +
+kernel.embedded_hartree_shift * n_electrons` and
+`mu_standard = mu + kernel.embedded_hartree_shift`.
 
 ## Tests
 

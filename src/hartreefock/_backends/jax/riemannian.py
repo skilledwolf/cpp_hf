@@ -317,7 +317,7 @@ def _solve_impl(
     )
 
     def cond(carry):
-        # Stopping rule (mirrors cpp_hf solve_dm):
+        # Stopping rule (mirrors the native solve_dm):
         #
         # tol_grad > 0 — the joint orbital/occupation stationarity criterion is
         # the sole stop: continue only while grad_norm > tol_grad; the energy criterion
@@ -689,7 +689,7 @@ def _solve_impl(
 
     # Convergence flag.  Gradient-primary when tol_grad > 0: grad_fin is the
     # last measured gradient — the entry the loop stopped on, or the final
-    # recorded one when max_iter ran out (which cpp_hf's mid-iteration break
+    # recorded one when max_iter ran out (which the native mid-iteration break
     # would have accepted; the plain k_fin < max_iter test would miss it).
     # tol_grad == 0 keeps the legacy flag: loop exited early on the energy
     # criterion.

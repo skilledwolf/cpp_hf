@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from scipy.special import expit
 
+from ...kernel import validate_temperature
 from ._compat import _native, native_required
 
 
@@ -54,8 +56,26 @@ def resample_kgrid(values: np.ndarray, nk: int, *, method: str = "linear") -> np
 
 def find_chemical_potential(bands, weights, n_electrons: float, T: float) -> float:
     """Chemical potential that puts ``n_electrons`` into ``bands`` (bisection in C++)."""
-    native_required()
     validate_electron_count(weights, np.shape(bands)[-1], n_electrons)
+    validate_temperature(T)
+    target = float(np.asarray(n_electrons))
+    capacity = float(np.sum(np.asarray(weights))) * int(np.shape(bands)[-1])
+    if target <= 0.0:
+        return -np.inf
+    if target >= capacity:
+        return np.inf
+    native_required()
     bands = np.ascontiguousarray(bands, dtype=np.float64)
     weights = np.ascontiguousarray(weights, dtype=np.float64)
     return float(_native.find_mu_bisection(bands, weights, float(n_electrons), float(T), 0))
+
+
+def density_matrix_from_fock(F, weights, n_electrons: float, T: float):
+    """Fixed-particle Fermi density ``(P, mu)`` of the Hermitian part of ``F``."""
+    F = np.asarray(F)
+    F = 0.5 * (F + F.conj().swapaxes(-2, -1))
+    eps, U = np.linalg.eigh(F)
+    mu = find_chemical_potential(eps, weights, n_electrons, T)
+    occ = expit((mu - eps) / float(T))
+    P = (U * occ[..., None, :]) @ U.conj().swapaxes(-2, -1)
+    return 0.5 * (P + P.conj().swapaxes(-2, -1)), mu

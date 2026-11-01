@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace cpp_hf {
@@ -30,6 +32,8 @@ struct SCFConfig {
     // commutator-DIIS extrapolation of Fock), or "oda" (optimal damping —
     // exact analytic line search on E((1−λ)P + λP_new) per iter).
     std::string acceleration = "linear";
+    std::string preconditioner = "none"; // Anderson: none or diagonal Hartree response
+    bool safeguard = true;              // Anderson: true free-energy line search
     std::size_t diis_size = 6;        // history depth (Pulay)
     std::size_t diis_start = 2;       // begin extrapolation after this many iter
     // DIIS damping: blend the extrapolated Fock with the current iter's Fock.
@@ -57,6 +61,7 @@ struct SCFResult {
     std::size_t iterations = 0;
     bool converged = false;
     std::vector<f32> hist_E;
+    std::vector<f32> hist_free;
     std::vector<f32> hist_density;
     std::vector<f32> hist_comm;
 };
@@ -123,22 +128,19 @@ inline f32 density_from_fock(const c64* F, std::size_t nk1, std::size_t nk2,
     if (!used_blocks)
         eigh_batched(F, eps.data(), V.data(), nk1, nk2, nb);
 
-    f32 mu_raw = find_mu_bisection(eps.data(), nk * nb, weights, nk, nb, n_e, T);
-    std::vector<f32> shifted(nk * nb);
+    f32 mu = find_mu_bisection(eps.data(), nk * nb, weights, nk, nb, n_e, T);
     if (level_shift != 0.0) {
         for (std::size_t i = 0; i < nk * nb; ++i) {
-            const f32 occ_raw = fermidirac_scalar(eps[i] - mu_raw, T);
-            shifted[i] = eps[i] + level_shift * (1.0 - occ_raw);
+            const f32 occ_raw = fermidirac_scalar(eps[i] - mu, T);
+            eps[i] += level_shift * (1.0 - occ_raw);
         }
-    } else {
-        std::memcpy(shifted.data(), eps.data(), nk * nb * sizeof(f32));
+        mu = find_mu_bisection(eps.data(), nk * nb, weights, nk, nb, n_e, T);
     }
-    f32 mu = find_mu_bisection(shifted.data(), nk * nb, weights, nk, nb, n_e, T);
 
     // P = V diag(f) V†, hermitize
     std::vector<f32> occ(nk * nb);
     for (std::size_t i = 0; i < nk * nb; ++i)
-        occ[i] = fermidirac_scalar(shifted[i] - mu, T);
+        occ[i] = fermidirac_scalar(eps[i] - mu, T);
 
     parallel_for(nk, [&](std::size_t k) {
         ConstMapMatXcf Vk(V.data() + k * nb2, nb, nb);
@@ -163,6 +165,7 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
     const std::size_t n_tot = K.n_dense();
 
     out.hist_E.assign(cfg.max_iter, 0.0);
+    out.hist_free.assign(cfg.max_iter, 0.0);
     out.hist_density.assign(cfg.max_iter, 0.0);
     out.hist_comm.assign(cfg.max_iter, 0.0);
 
@@ -170,14 +173,22 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
     std::vector<c64> Sigma(n_tot), F(n_tot), P_new(n_tot);
     std::vector<f32> hartree_diag(nb, 0.0);
     std::vector<c64> delta(n_tot), comm(n_tot);
+    std::vector<f32> density_eigs(nk * nb);
+    std::vector<c64> density_eigvecs(n_tot);
 
-    f32 mu = 0.0;
-    f32 E = 0.0;
     bool converged = false;
     std::size_t k = 0;
 
+    auto density_free_energy = [&](f32 E_in, const c64* P_in) {
+        eigh_batched(
+            P_in, density_eigs.data(), density_eigvecs.data(),
+            K.nk1, K.nk2, nb);
+        return free_energy_value(
+            E_in, density_eigs.data(), K.w2d, nk, nb, K.T);
+    };
+
     auto build_and_occupy = [&](std::vector<c64>& d, c64* P_out,
-                                f32& E_out, f32& mu_out) {
+                                f32& E_out, f32& Omega_out, f32& mu_out) {
         // Project + hermitize before Fock build
         if (project_fn && *project_fn) {
             (*project_fn)(d.data(), K.nk1, K.nk2, K.nb);
@@ -187,6 +198,7 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
                            hartree_diag.data(), project_fn);
         E_out = hf_energy_with_hartree_diag(K, d.data(), Sigma.data(),
                                             hartree_diag.data());
+        Omega_out = density_free_energy(E_out, d.data());
         mu_out = density_from_fock(F.data(), K.nk1, K.nk2, K.nb,
                                    K.w2d, n_e, K.T, cfg.level_shift,
                                    P_out, cfg.block_sizes);
@@ -203,9 +215,16 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
         throw std::invalid_argument(
             "SCFConfig.acceleration must be 'linear', 'diis', or 'oda'");
     }
+    if (use_diis && cfg.diis_size == 0) {
+        throw std::invalid_argument(
+            "SCFConfig.diis_size must be positive when acceleration='diis'");
+    }
     // DIIS history (commutator C-DIIS). Stores Fock matrices and commutator
     // residuals; extrapolated F is diagonalized to give next density.
     std::vector<std::vector<c64>> diis_F, diis_R;
+    // Stored residuals are immutable. Reuse their weighted overlaps until
+    // eviction, so each iteration contracts only the newly added residual.
+    std::vector<std::vector<f32>> diis_overlap;
     if (use_diis) {
         diis_F.reserve(cfg.diis_size);
         diis_R.reserve(cfg.diis_size);
@@ -216,10 +235,12 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
     std::vector<c64> Sigma_new(use_oda ? n_tot : 0);
     std::vector<f32> hartree_diag_new(use_oda ? nb : 0);
     std::vector<c64> F_new(use_oda ? n_tot : 0);
+    std::vector<c64> P_oda(use_oda ? n_tot : 0);
 
     while (k < cfg.max_iter && !converged) {
-        f32 E_iter = 0.0, mu_iter = 0.0;
-        build_and_occupy(density, P_new.data(), E_iter, mu_iter);
+        f32 E_iter = 0.0, Omega_iter = 0.0, mu_iter = 0.0;
+        build_and_occupy(
+            density, P_new.data(), E_iter, Omega_iter, mu_iter);
 
         parallel_for(nk, [&](std::size_t kk) {
             const std::size_t off = kk * nb2;
@@ -241,25 +262,52 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
                                                 nk, nb, K.weight_sum);
         converged = (d_res <= cfg.density_tol) && (c_res <= cfg.comm_tol);
 
+        out.hist_E[k] = E_iter;
+        out.hist_free[k] = Omega_iter;
+        out.hist_density[k] = d_res;
+        out.hist_comm[k] = c_res;
+        ++k;
+        // Keep the density whose residuals were checked.  An undamped final
+        // fixed-point step can amplify even a sub-tolerance residual in a
+        // stiff problem, invalidating the convergence certificate.
+        if (converged) break;
+
         // Snapshot density before the update so we can apply a trust-radius
         // clip on the proposed step at the end of the iteration block.
         std::vector<c64> density_pre;
-        if (cfg.trust_radius > 0.0 && !converged) {
+        if (cfg.trust_radius > 0.0) {
             density_pre = density;
         }
 
-        if (converged) {
-            density = P_new;
-        } else if (use_diis) {
+        if (use_diis) {
             // ---- C-DIIS: extrapolate Fock from history --------------------
             // Add current (F, R) to history. R = F P − P F at this iter.
             if (diis_F.size() >= cfg.diis_size) {
                 diis_F.erase(diis_F.begin());
                 diis_R.erase(diis_R.begin());
+                diis_overlap.erase(diis_overlap.begin());
+                for (auto& row : diis_overlap) row.erase(row.begin());
             }
             diis_F.emplace_back(F.begin(), F.end());
             diis_R.emplace_back(comm.begin(), comm.end());
             const std::size_t m = diis_F.size();
+            for (auto& row : diis_overlap) row.resize(m);
+            diis_overlap.emplace_back(m, 0.0);
+            for (std::size_t i = 0; i < m; ++i) {
+                double total = 0.0;
+                const c64* Ri = diis_R[i].data();
+                const c64* Rj = diis_R.back().data();
+                for (std::size_t kk = 0; kk < nk; ++kk) {
+                    double per_k = 0.0;
+                    const c64* rik = Ri + kk * nb2;
+                    const c64* rjk = Rj + kk * nb2;
+                    for (std::size_t a = 0; a < nb2; ++a)
+                        per_k += static_cast<double>((std::conj(rik[a]) * rjk[a]).real());
+                    total += static_cast<double>(K.w2d[kk]) * per_k;
+                }
+                diis_overlap[i][m-1] = static_cast<f32>(total);
+                diis_overlap[m-1][i] = static_cast<f32>(total);
+            }
             if (m >= std::max<std::size_t>(2, cfg.diis_start)) {
                 // Build B[i,j] = Re Σ_k w_k tr(R_i_k^† R_j_k), augmented with
                 // Lagrange multiplier:
@@ -271,19 +319,7 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
                 B.setZero(); rhs.setZero();
                 for (std::size_t i = 0; i < m; ++i) {
                     for (std::size_t j = i; j < m; ++j) {
-                        double total = 0.0;
-                        const c64* Ri = diis_R[i].data();
-                        const c64* Rj = diis_R[j].data();
-                        for (std::size_t kk = 0; kk < nk; ++kk) {
-                            const f32 wk = K.w2d[kk];
-                            double per_k = 0.0;
-                            const c64* rik = Ri + kk * nb2;
-                            const c64* rjk = Rj + kk * nb2;
-                            for (std::size_t a = 0; a < nb2; ++a)
-                                per_k += static_cast<double>((std::conj(rik[a]) * rjk[a]).real());
-                            total += static_cast<double>(wk) * per_k;
-                        }
-                        B(i, j) = static_cast<f32>(total);
+                        B(i, j) = diis_overlap[i][j];
                         B(j, i) = B(i, j);
                     }
                     B(i, m) = -1.0;
@@ -291,14 +327,37 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
                 }
                 B(m, m) = 0.0;
                 rhs[m] = -1.0;
-                Eigen::Matrix<f32, Eigen::Dynamic, 1> sol;
-                bool diis_ok = false;
+                // Normalise the residual overlaps by their largest entry (the
+                // Pulay solution is scale invariant) and solve with a
+                // partial-pivot LU, as jax_hf's _diis_coefficients does.  A
+                // numerically rank-deficient B is the normal case, not a
+                // degenerate one: when the iteration is dominated by a single
+                // slow mode the successive commutators are nearly parallel, the
+                // augmented system is ill-conditioned but solvable, and the
+                // large-coefficient extrapolation it yields is exactly what
+                // removes that mode.  Gating on FullPivLU::isInvertible()
+                // rejected those solves and left the run in plain linear mixing
+                // (bilayer PM +0.05: 11 -> 100+ iterations once the symmetry
+                // projector stopped supplying rounding noise to B).  Only a
+                // non-finite solution now falls back to linear mixing.
+                bool diis_ok = true;
                 {
-                    Eigen::FullPivLU<decltype(B)> lu(B);
+                    f32 bmax = 0.0;
+                    for (std::size_t i = 0; i < m; ++i)
+                        for (std::size_t j = 0; j < m; ++j)
+                            bmax = std::max(bmax, std::abs(B(i, j)));
+                    // A commutator residual already at tolerance carries no
+                    // information to extrapolate on: diagonal F and P commute
+                    // exactly while the occupations are still wrong, and the
+                    // normalised B would then be pure rounding noise.  Mix
+                    // linearly instead of fitting DIIS coefficients to it.
+                    if (!(bmax > 0.0) || c_res <= cfg.comm_tol) diis_ok = false;
+                    else B.topLeftCorner(m, m) /= bmax;
+                }
+                Eigen::Matrix<f32, Eigen::Dynamic, 1> sol;
+                if (diis_ok) {
+                    Eigen::PartialPivLU<decltype(B)> lu(B);
                     sol = lu.solve(rhs);
-                    // FullPivLU has no info(); isInvertible() is the right check
-                    // (reject DIIS when the residual matrix B is singular).
-                    diis_ok = lu.isInvertible();
                     for (std::size_t i = 0; i < m; ++i)
                         diis_ok = diis_ok && std::isfinite(static_cast<double>(sol[i]));
                 }
@@ -379,7 +438,27 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
             const f32 c1 = static_cast<f32>(c1_d);
             const f32 c2 = (E_new - E_iter) - c1;
             f32 lam = 1.0;
-            if (c2 > 1.0e-12) {
+            if (K.T > 0.0) {
+                // At finite temperature the minimized objective is E-T*S.
+                // E is exactly quadratic on this segment; evaluate only the
+                // density-matrix entropy for each scalar backtracking trial.
+                bool accepted = false;
+                for (std::size_t bt = 0; bt < 12; ++bt) {
+                    for (std::size_t i = 0; i < n_tot; ++i)
+                        P_oda[i] = density[i] + c64(lam, 0.0) * delta[i];
+                    hermitize_inplace(P_oda.data(), nk, nb);
+                    const f32 E_lam =
+                        E_iter + lam * c1 + lam * lam * c2;
+                    const f32 Omega_lam =
+                        density_free_energy(E_lam, P_oda.data());
+                    if (Omega_lam < Omega_iter) {
+                        accepted = true;
+                        break;
+                    }
+                    lam *= 0.5;
+                }
+                if (!accepted) lam = 0.0;
+            } else if (c2 > 1.0e-12) {
                 lam = std::clamp(-c1 / (2.0 * c2), 0.0, 1.0);
             } else if (c1 < 0.0) {
                 lam = 1.0;  // downhill, no curvature info — take full step
@@ -406,7 +485,7 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
         // DIIS extrapolations from launching the iteration to unphysical
         // states (e.g. ungated Coulomb at high doping where the model has
         // weak/no minimum and the iteration would otherwise diverge).
-        if (cfg.trust_radius > 0.0 && !converged && !density_pre.empty()) {
+        if (cfg.trust_radius > 0.0 && !density_pre.empty()) {
             const f32 step_norm = weighted_difference_norm(
                 density.data(), density_pre.data(), K.w2d, nk, nb, K.weight_sum);
             if (step_norm > cfg.trust_radius) {
@@ -418,18 +497,12 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
                 hermitize_inplace(density.data(), nk, nb);
             }
         }
-
-        out.hist_E[k] = E_iter;
-        out.hist_density[k] = d_res;
-        out.hist_comm[k] = c_res;
-        E = E_iter;
-        mu = mu_iter;
-        ++k;
     }
 
     // Final evaluation at converged density
-    f32 E_final = 0.0, mu_final = 0.0;
-    build_and_occupy(density, P_new.data(), E_final, mu_final);
+    f32 E_final = 0.0, Omega_final = 0.0, mu_final = 0.0;
+    build_and_occupy(
+        density, P_new.data(), E_final, Omega_final, mu_final);
 
     if (cfg.return_density) out.density = std::move(density);
     if (cfg.return_fock) out.fock = std::move(F);
@@ -438,6 +511,7 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
     out.iterations = k;
     out.converged = converged;
     out.hist_E.resize(k);
+    out.hist_free.resize(k);
     out.hist_density.resize(k);
     out.hist_comm.resize(k);
     return out;

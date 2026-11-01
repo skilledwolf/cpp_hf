@@ -1,4 +1,4 @@
-"""Linear algebra helpers for jax_hf."""
+"""Linear algebra helpers for the JAX backend."""
 
 from __future__ import annotations
 

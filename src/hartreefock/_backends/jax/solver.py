@@ -98,9 +98,7 @@ def solve(
 
     optimizer = str(config.optimizer).lower()
     if optimizer not in ("cg", "newton"):
-        raise ValueError(
-            f"Unknown optimizer {config.optimizer!r}; expected 'cg' or 'newton'."
-        )
+        raise NotImplementedError(f"optimizer={config.optimizer!r} requires backend='native'.")
 
     deflation_on = (
         config.deflation_targets is not None and float(config.deflation_sigma) > 0.0
@@ -115,7 +113,7 @@ def solve(
         # Trust-region Newton is a second-order method: its Steihaug Hessian-
         # vector products go through the FFT Fock build, whose float32 round-off
         # (~1e-6) swamps the small Hessian eigenvalues on near-degenerate
-        # problems and yields ascent directions.  cpp_hf sidesteps this by
+        # problems and yields ascent directions.  the native backend sidesteps this by
         # computing in double precision throughout; warn so a float32 caller
         # knows to enable x64 rather than silently get converged=False.
         if jnp.finfo(jnp.asarray(kernel.h).real.dtype).bits < 64:
@@ -127,7 +125,7 @@ def solve(
                 stacklevel=2,
             )
         # Trust-region Newton converges on the gradient norm; default tol_grad
-        # to 1e-6 when the caller leaves it at 0 (mirrors cpp_hf's solve_rtr).
+        # to 1e-6 when the caller leaves it at 0 (mirrors the native solve_rtr).
         tol_grad = float(config.tol_grad) if config.tol_grad > 0.0 else 1e-6
 
         # Deflation targets -> (n_solutions, nk1, nk2, nb, nb), matching the

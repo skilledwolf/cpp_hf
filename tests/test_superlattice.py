@@ -189,3 +189,28 @@ def test_upsample_density_is_exact_for_band_limited_densities():
     coarse = SuperlatticeHartreeFockKernel(np.full((4, 4), 1 / 16), h_c, scalar, G, B, T=0.1, k_origin=oc)
     fine = SuperlatticeHartreeFockKernel(np.full((8, 8), 1 / 64), h_f, scalar, G, B, T=0.1, k_origin=of)
     np.testing.assert_allclose(upsample_density(Pc, coarse, fine), Pf, atol=1e-13)
+
+
+@pytest.mark.parametrize("hermitian", [False, True])
+@pytest.mark.parametrize("kind", ["diagonal", "tiny_coherence"])
+def test_sparse_channels_preserve_exact_convolution(hermitian, kind):
+    """The native channel stream must not drop sparse or tiny ΔG channels."""
+    from hartreefock._backends.native import superlattice_exchange
+
+    rng = np.random.default_rng(14)
+    D = len(G) * NO
+    kernel = make_kernel(band_hamiltonian(rng))
+    rho = np.zeros((NX, NY, D, D), complex)
+    if kind == "diagonal":
+        for g in range(len(G)):
+            sl = slice(g * NO, (g + 1) * NO)
+            rho[..., sl, sl] = rng.normal(size=(NX, NY, NO, NO)) + 1j * rng.normal(size=(NX, NY, NO, NO))
+    else:
+        rho[0, 1, 0, NO] = 1e-30 + 2e-30j  # far below any SCF tolerance, still nonzero
+    if hermitian:
+        rho = 0.5 * (rho + rho.conj().swapaxes(-2, -1))
+    actual = superlattice_exchange(rho, kernel.layout, len(G), hermitian_rho=hermitian)
+    expected = direct_exchange(rho, scalar)
+    scale = np.max(np.abs(expected))
+    assert scale > 0
+    assert np.max(np.abs(actual - expected)) / scale < 1e-12

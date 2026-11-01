@@ -1,4 +1,4 @@
-"""Low-level physics utilities for jax_hf (self-contained, no external deps)."""
+"""Low-level physics utilities for the JAX backend."""
 
 from __future__ import annotations
 

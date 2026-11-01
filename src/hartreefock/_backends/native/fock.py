@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 
 from ._compat import _native, native_required
@@ -17,6 +19,30 @@ def build_fock(kernel, P, *, project_fn=None):
     native_required()
     P = np.ascontiguousarray(P, dtype=np.complex128)
     return _native.build_fock_apply(kernel_args(kernel), P, project_fn)
+
+
+def fock_operators(kernel):
+    """``evaluate(P) -> (F, E)`` and the linear ``response(P, dP) -> dF``.
+
+    The HF Fock is affine in P, so the response is a Fock build of ``dP``
+    with ``h`` and the reference density removed (which also avoids
+    subtractive cancellation).
+    """
+    native_required()
+    args = kernel_args(kernel)
+    response_args = dict(
+        args, h=np.zeros_like(args["h"]), has_refP=False, refP=np.empty(0, dtype=np.complex128)
+    )
+
+    def evaluate(P):
+        out = _native.build_fock_apply(args, np.ascontiguousarray(P, dtype=np.complex128), None)
+        return np.asarray(out[2]), float(out[3])
+
+    def response(P, dP):
+        dP = np.ascontiguousarray(dP, dtype=np.complex128)
+        return np.asarray(_native.build_fock_apply(response_args, dP, None)[2])
+
+    return SimpleNamespace(evaluate=evaluate, response=response, dtype=np.dtype(np.complex128))
 
 
 def superlattice_exchange(rho, layout, n_G: int, *, hermitian_rho: bool = False):

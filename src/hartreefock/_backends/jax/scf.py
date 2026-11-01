@@ -15,7 +15,7 @@ Roothaan iteration with selectable acceleration:
   5. Check convergence on density change and commutator norm.
 
 This solver is intentionally separate from the direct-minimization solver and
-serves as a reference / fallback.  DIIS and ODA mirror cpp_hf's solver_scf.hpp.
+serves as a reference / fallback.  DIIS and ODA mirror the native solver_scf.hpp.
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ from ...config import SCFConfig, SCFResult, drop_unrequested
 from .fock import fock_builder, free_energy, hf_energy
 from .utils import (
     device_args,
-    find_chemical_potential,
     fermidirac,
+    find_chemical_potential,
     validate_electron_count,
     validate_temperature,
 )
@@ -158,6 +158,8 @@ def solve_scf(
         context="n_electrons",
     )
     validate_temperature(kernel.T, context="kernel.T")
+    if config.preconditioner != "none":
+        raise NotImplementedError("preconditioner='hartree' requires backend='native'.")
 
     run_scf = _run_scf
     extra_args = {}

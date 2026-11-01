@@ -1,0 +1,95 @@
+# Changelog
+
+All notable changes to **hartreefock** (formerly the separate `cpp_hf` and
+`jax_hf` packages) are documented here.
+This project adheres to [Semantic Versioning](https://semver.org).
+
+## [3.0.0] — unreleased
+
+### Breaking changes
+- `cpp_hf` and `jax_hf` are merged into one package, `hartreefock`, with one
+  kernel (`HartreeFockKernel`, `SuperlatticeHartreeFockKernel`), one set of
+  configs and results, and a `backend="native" | "jax"` argument on every
+  solver. `import cpp_hf` and `import jax_hf` are gone; the backend modules
+  under `hartreefock._backends` are private.
+- Result fields follow the former `jax_hf` names: `SCFResult.density`, `.fock`,
+  `.mu`, `.n_iter` (was `density_matrix`, `fock_matrix`, `chemical_potential`,
+  `iterations` in `cpp_hf`). Configs are keyword-only.
+- The NumPy fallbacks of `cpp_hf` (Python `build_fock`, `hf_energy`,
+  Newton chemical potential) are removed; the native backend is C++ only.
+- The package is MIT licensed (binary wheels bundling FFTW remain GPL as a
+  whole).
+
+### Added
+- `solve_minimum` and `stability_analysis` run on either backend
+  (`backend=` argument; the native Fock response replaces the JAX JVP).
+- `rdiis` and `anderson` SCF, `optimizer="auto"` and
+  `preconditioner="hartree"` (the last two native only) from `cpp_hf` 1.2.0,
+  on the merged API; the JAX backend raises `NotImplementedError` for the
+  native-only options.
+
+### Fixed
+- `SuperlatticeHartreeFockKernel` with `center_embedded_hartree=True` now
+  reports the uncentred `embedded_energy_offset` and exposes
+  `embedded_hartree_shift`, so the standard HF energy is recovered at any
+  particle count.
+
+## cpp_hf [1.2.0] — 2026-10-31
+
+### Added
+- `SCFConfig(acceleration="rdiis")`: safeguarded DIIS fitted to the full
+  finite-temperature density residual `f_mu(F[P]) - P` with a pivoted-QR solve,
+  extrapolating Fock matrices and backtracking against the actual free energy.
+  Recommended fixed-point solver for finite-temperature workloads.
+- `SCFConfig(acceleration="anderson")`: the same residual and safeguard,
+  extrapolating density updates.
+- `SCFConfig.preconditioner` (`"none"` or `"hartree"`) and `SCFConfig.safeguard`
+  for the two new methods. Both require `level_shift=0`.
+- `SolverConfig(optimizer="auto")`: RDIIS with 20% of the iteration budget
+  reserved for trust-region Newton recovery.
+- `solve_minimum` / `MinimumResult`: RDIIS plus a local stability check and
+  bounded feasible saddle escapes. `stability_analysis` / `StabilityResult`:
+  the standalone matrix-free curvature test.
+- `history["free_energy"]` and `history["fock_builds"]` on `solve` and
+  `solve_scf` results (Fock builds include rejected trials).
+- `HartreeFockKernel.exchange_reciprocity_defect` and
+  `embedded_hartree_shift` (also on `SuperlatticeHartreeFockKernel`).
+- The wheel smoke test now runs a native solve; a source-build test workflow
+  runs on every push and PR.
+
+### Correctness (these change numerical results)
+- Exchange uses the self-adjoint part of the sampled interaction `VR`, so the
+  Fock matrix is the exact derivative of the reported HF energy. On even or
+  oblique grids where `V(q)` is not reciprocal under periodic inversion,
+  exchange results change.
+- Nonuniform quadrature weights now multiply the convolved density instead of
+  the interaction kernel. Uniform-weight results are unchanged.
+- Embedded-reference kernels include contact interactions in the embedded Fock
+  and energy offset; the centered reference energy/μ conversion uses the
+  weighted particle count.
+- Chemical potential: occupation-aware brackets for dilute and near-full
+  fillings, representable-update stopping, and `±inf` at exactly empty or full
+  filling. `LOGIT_CLIP` tightened from 1e-6 to 1e-14 (matches jax_hf), which
+  changes cold-temperature occupation gradients.
+- Corrected trust-region Newton: joint orbital/occupation steps, one quadrature
+  metric, the unitary connection in the covariant Hessian, full Gaussian
+  deflation curvature, and symmetry projection of the gradient and response.
+- With `tol_grad > 0`, CG and Newton also require the full density fixed-point
+  residual before reporting convergence, and CG uses the free energy for its
+  decisions. `optimizer="cg"` remains the default, but default solves may stop
+  at different iterates than in 1.1.x.
+- FFTW plans are created with `FFTW_UNALIGNED` (execution buffers need not match
+  the planning buffer's alignment). Plan creation and destruction are
+  serialized, and FFTs inside OpenMP superlattice channels run single-threaded.
+
+### Breaking changes
+- macOS wheels (arm64 and x86_64) now require macOS 15: GitHub retired the
+  macOS 14 runner, and the bundled Homebrew `libomp` targets macOS 15. On
+  older macOS, pip falls back to the sdist, which needs FFTW.
+- `SCFConfig` fields were reordered (`project_fn` and `block_sizes` now follow
+  `trust_radius`). Positional construction breaks; keyword construction is
+  unaffected.
+- `SolverConfig.mu_maxiter` default 25 → 50.
+- `SCFConfig`, `SolverConfig` and kernel constructors validate their inputs and
+  raise `ValueError` for non-finite or negative weights/temperatures, malformed
+  shapes and out-of-range options that were previously accepted.
