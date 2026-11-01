@@ -551,6 +551,8 @@ PYBIND11_MODULE(_native, m) {
 #ifdef HF_HAVE_XLA_FFI
         targets["hartreefock_eigh_c128"] =
             py::capsule(reinterpret_cast<void*>(cpp_hf::xla_ffi::EighC128));
+        targets["hartreefock_matmul_c128"] =
+            py::capsule(reinterpret_cast<void*>(cpp_hf::xla_ffi::MatmulC128));
         targets["hartreefock_superlattice_fock"] =
             py::capsule(reinterpret_cast<void*>(cpp_hf::xla_ffi::SuperlatticeFock));
 #endif

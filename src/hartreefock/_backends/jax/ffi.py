@@ -13,6 +13,7 @@ import os
 import jax
 
 EIGH = "hartreefock_eigh_c128"
+MATMUL = "hartreefock_matmul_c128"
 SUPERLATTICE_FOCK = "hartreefock_superlattice_fock"
 
 _registered: frozenset[str] | None = None

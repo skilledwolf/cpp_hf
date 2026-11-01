@@ -8,6 +8,15 @@ project(hartreefock LANGUAGES CXX)
 option(HF_USE_OPENMP       "Enable OpenMP parallelization"   ON)
 option(HF_USE_FFTW_THREADS "Link FFTW threads and call init" ON)
 option(HF_USE_ACCELERATE   "Route Eigen dense products to Apple Accelerate (AMX) on macOS" ON)
+# A source build tunes Eigen's kernels to the build machine (-march=native);
+# on an AVX-512 box that is ~6x faster complex gemm than the SSE2 baseline.
+# Wheels (cibuildwheel sets CIBUILDWHEEL) stay portable.
+if(DEFINED ENV{CIBUILDWHEEL})
+    set(_hf_native_arch_default OFF)
+else()
+    set(_hf_native_arch_default ON)
+endif()
+option(HF_NATIVE_ARCH "Compile for the build machine's CPU (-march=native)" ${_hf_native_arch_default})
 
 # -----------------------------
 # C++ standard
@@ -131,6 +140,14 @@ target_link_libraries(_native PRIVATE
     ${HF_OPENMP_LIB}
 )
 target_compile_options(_native PRIVATE -fvisibility=hidden -O3)
+if(HF_NATIVE_ARCH)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-march=native" HF_HAS_MARCH_NATIVE)
+    if(HF_HAS_MARCH_NATIVE)
+        target_compile_options(_native PRIVATE -march=native)
+        message(STATUS "hartreefock: compiling for this CPU (-march=native)")
+    endif()
+endif()
 
 # XLA FFI handlers for the JAX backend: the headers ship with jaxlib.  Without
 # jaxlib at build time the module still builds and the JAX backend falls back

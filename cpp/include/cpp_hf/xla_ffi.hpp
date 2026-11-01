@@ -7,10 +7,13 @@
 #pragma once
 
 #include "cpp_hf/linalg.hpp"
+#include "cpp_hf/parallel.hpp"
 #include "cpp_hf/superlattice.hpp"
 #include "cpp_hf/types.hpp"
 
 #include "xla/ffi/api/ffi.h"
+
+#include <Eigen/Dense>
 
 #include <cstddef>
 #include <cstdint>
@@ -108,6 +111,45 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(SuperlatticeFock, SuperlatticeFockImpl,
                                   .Arg<ffi::Buffer<ffi::S64>>()
                                   .Ret<ffi::Buffer<ffi::C128>>()
                                   .Attr<bool>("hermitian_rho"));
+
+// Batched complex128 matmul c = a @ b over shared leading axes, threaded over
+// the batch (XLA CPU runs a batched dot serially).  a is (..., n, m), b is
+// (..., m, p) with the same batch shape; c is (..., n, p).
+inline ffi::Error MatmulC128Impl(ffi::Buffer<ffi::C128> a, ffi::Buffer<ffi::C128> b,
+                                 ffi::ResultBuffer<ffi::C128> c) {
+    const auto ad = a.dimensions();
+    const auto bd = b.dimensions();
+    if (ad.size() < 2 || bd.size() != ad.size()) {
+        return ffi::Error::InvalidArgument("matmul needs operands of the same rank >= 2");
+    }
+    const std::size_t r = ad.size();
+    std::size_t batch = 1;
+    for (std::size_t i = 0; i + 2 < r; ++i) {
+        if (ad[i] != bd[i]) return ffi::Error::InvalidArgument("matmul batch shapes differ");
+        batch *= static_cast<std::size_t>(ad[i]);
+    }
+    const std::size_t n = ad[r - 2], m = ad[r - 1], p = bd[r - 1];
+    if (static_cast<std::size_t>(bd[r - 2]) != m) {
+        return ffi::Error::InvalidArgument("matmul inner dimensions differ");
+    }
+    using Mat = Eigen::Matrix<c64, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+    const c64* A = reinterpret_cast<const c64*>(a.typed_data());
+    const c64* B = reinterpret_cast<const c64*>(b.typed_data());
+    c64* C = reinterpret_cast<c64*>(c->typed_data());
+    parallel_for(batch, [&](std::size_t k) {
+        Eigen::Map<const Mat> Ak(A + k * n * m, n, m);
+        Eigen::Map<const Mat> Bk(B + k * m * p, m, p);
+        Eigen::Map<Mat> Ck(C + k * n * p, n, p);
+        Ck.noalias() = Ak * Bk;
+    });
+    return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(MatmulC128, MatmulC128Impl,
+                              ffi::Ffi::Bind()
+                                  .Arg<ffi::Buffer<ffi::C128>>()
+                                  .Arg<ffi::Buffer<ffi::C128>>()
+                                  .Ret<ffi::Buffer<ffi::C128>>());
 
 }  // namespace xla_ffi
 }  // namespace cpp_hf

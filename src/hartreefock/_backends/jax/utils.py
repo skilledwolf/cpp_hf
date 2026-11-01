@@ -10,7 +10,7 @@ import numpy as np
 from jax.numpy.fft import fftn, ifftn, ifftshift
 from jax.scipy.special import expit
 
-from .linalg import eigh, normalize_block_specs
+from .linalg import adjoint, bmm, eigh, normalize_block_specs
 
 
 def device_args(kernel) -> dict:
@@ -529,7 +529,7 @@ def density_matrix_from_fock(
     )
     mu = find_chemical_potential(eps, jnp.asarray(weights), n_electrons=float(n_electrons), T=float(T))
     occ = fermidirac(eps - mu, float(T))
-    P = jnp.einsum("...in,...n,...jn->...ij", U, occ, jnp.conj(U))
+    P = bmm(U * occ[..., None, :].astype(U.dtype), adjoint(U))
     return hermitize(P), mu
 
 

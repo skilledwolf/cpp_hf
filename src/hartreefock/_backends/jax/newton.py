@@ -9,7 +9,7 @@ from jax import lax
 
 from ...config import SolveResult
 from .fock import build_fock, free_energy, hf_energy
-from .linalg import hermitian_eigh
+from .linalg import adjoint, bmm, hermitian_eigh
 from .occupations import (
     _active_occupations,
     _logit_clip_eps,
@@ -66,14 +66,14 @@ def _joint_hvp(Q, p, Ft, X, dp, T, w2d, response_fn, project_fn=None):
     offdiag = 1.0 - jnp.eye(p.shape[-1], dtype=p.dtype)
     diff_p = p[..., None, :] - p[..., :, None]
     M = X * diff_p + dp[..., :, None] * eye
-    dP = _herm(project(Q @ M @ jnp.conj(jnp.swapaxes(Q, -1, -2))))
+    dP = _herm(project(bmm(bmm(Q, M), adjoint(Q))))
     St = _fock_in_orbital_basis(Q, _herm(project(response_fn(dP))))
-    A = Ft @ X - X @ Ft + St
+    A = bmm(Ft, X) - bmm(X, Ft) + St
     G = diff_p * Ft
     C = (dp[..., None, :] - dp[..., :, None]) * Ft + diff_p * A
     # Parallel transport from Q exp(tX) back to Q contributes 1/2 [X,G].
     # Without this connection the operator is not self-adjoint off stationarity.
-    C = C + 0.5 * (X @ G - G @ X)
+    C = C + 0.5 * (bmm(X, G) - bmm(G, X))
     HX = _skew_hermitian(C) * offdiag
     clip = _logit_clip_eps(p.dtype)
     pc = jnp.clip(p, clip, 1.0 - clip)
@@ -415,7 +415,7 @@ def _solve_newton_impl(
         U = _cayley_unitary_from_spectrum(
             V_v, lam_v, jnp.asarray(-1.0, dtype=real_dtype),
         )
-        Qt = Q @ U
+        Qt = bmm(Q, U)
 
         # Predicted reduction m(0) - m(v) in TRUE energy units: the orbital
         # gradient/Hessian action are per-k (unweighted) but the energy carries

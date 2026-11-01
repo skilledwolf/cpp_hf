@@ -43,6 +43,47 @@ def hermitian_eigh(array: jax.Array) -> tuple[jax.Array, jax.Array]:
     return w, v
 
 
+
+def _native_matmul(a, b):
+    out = jax.ShapeDtypeStruct(a.shape[:-1] + b.shape[-1:], jnp.complex128)
+    return jax.ffi.ffi_call(ffi.MATMUL, out, vmap_method="broadcast_all")(a, b)
+
+
+@jax.custom_jvp
+def _matmul_c128(a, b):
+    return lax.platform_dependent(a, b, cpu=_native_matmul, default=jnp.matmul)
+
+
+@_matmul_c128.defjvp
+def _matmul_c128_jvp(primals, tangents):
+    (a, b), (da, db) = primals, tangents
+    return _matmul_c128(a, b), _matmul_c128(da, b) + _matmul_c128(a, db)
+
+
+def adjoint(a: jax.Array) -> jax.Array:
+    """Conjugate transpose over the last two axes."""
+    return jnp.conj(jnp.swapaxes(a, -1, -2))
+
+
+def bmm(a: jax.Array, b: jax.Array) -> jax.Array:
+    """Batched ``a @ b`` over the last two axes.
+
+    On CPU a complex128 product of stacked matrices goes to the native
+    OpenMP kernel through ``jax.ffi`` (XLA CPU runs a batched dot serially);
+    otherwise it is ``jnp.matmul``.  Forward-mode differentiable.
+    """
+    a, b = jnp.asarray(a), jnp.asarray(b)
+    if (
+        a.dtype != jnp.complex128 or b.dtype != jnp.complex128
+        or max(a.ndim, b.ndim) < 3 or min(a.ndim, b.ndim) < 2
+        or not ffi.available(ffi.MATMUL)
+    ):
+        return jnp.matmul(a, b)
+    batch = jnp.broadcast_shapes(a.shape[:-2], b.shape[:-2])
+    a = jnp.broadcast_to(a, batch + a.shape[-2:])
+    b = jnp.broadcast_to(b, batch + b.shape[-2:])
+    return _matmul_c128(a, b)
+
 # Canonical, JIT-friendly block spec representation:
 #   ("sizes",   (n1, n2, ...)) or
 #   ("indices", ((i1, i2, ...), (j1, j2, ...), ...))
