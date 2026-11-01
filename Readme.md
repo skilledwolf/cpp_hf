@@ -81,7 +81,11 @@ energies against `tests/data/bilayer_reference.npz`.
 
 ## License
 
-GPLv2+ — see `LICENSE`.
+MIT, see `LICENSE`.
+
+The native backend links FFTW, which is GPLv2+. Binary wheels that bundle
+FFTW are therefore distributed under the GPL as a whole; the source code and
+the JAX backend alone are MIT.
 
 ## Acknowledgments
 
