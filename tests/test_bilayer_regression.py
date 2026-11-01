@@ -1,6 +1,6 @@
 """Bilayer graphene density scan against the saved SCF reference, per backend.
 
-Needs contimod and contimod_graphene.  Reference data come from
+Needs contimod.  Reference data come from
 ``tests/generate_bilayer_reference.py``.
 """
 
@@ -12,11 +12,11 @@ import numpy as np
 import pytest
 
 contimod = pytest.importorskip("contimod")
-cg_symmetry = pytest.importorskip("contimod_graphene.symmetry")
+cg_symmetry = pytest.importorskip("contimod.materials.graphene.symmetry")
 
 import contimod as cm  # noqa: E402
 from contimod.kdiscrete import kMeshgrid2D  # noqa: E402
-from contimod.meanfield.init_guess import init_to_density_matrix  # noqa: E402
+from contimod.meanfield import SelfEnergySeed  # noqa: E402
 from contimod.utils.spectrum_fermi import FermiParams  # noqa: E402
 
 import hartreefock as hf  # noqa: E402
@@ -49,7 +49,7 @@ def bilayer_setup():
         h.kmesh.distance_grid, epsilon_r=float(ref["epsilon_r"]), d_gate=float(ref["d_gate"])
     )
     kernel = hf.HartreeFockKernel(
-        np.asarray(h.kmesh.weights), np.asarray(h.hs), np.asarray(Vq.magnitude)[..., None, None],
+        np.asarray(h.kmesh.weights), np.asarray(h.hs), np.asarray(Vq)[..., None, None],
         T=temperature,
     )
 
@@ -82,7 +82,10 @@ def _initial_state(setup, branch, n_cm12):
     h_run.fermi = FermiParams(T=temperature, mu=0.0)
     h_run.compute_chemicalpotential(density=float(ne_cn + n_cm12 * 1e12 * PER_CM**2))
     n_e = float(h_run.state.compute_density() / float(h_run.degeneracy))
-    P0 = init_to_density_matrix(h_run, seeds[branch], density=None, T=temperature, init_kind="auto")
+    if branch == "PM":  # the zero seed is the empty density
+        P0 = np.zeros_like(np.asarray(h_run.hs))
+    else:
+        P0 = SelfEnergySeed(seeds[branch]).to_density(h_run, h_run.state.compute_density(), T=temperature)
     return np.asarray(P0), n_e
 
 

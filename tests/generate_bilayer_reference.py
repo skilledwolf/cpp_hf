@@ -24,8 +24,8 @@ import jax
 import jax.numpy as jnp
 
 import contimod as cm
-import contimod_graphene.symmetry as cg_symmetry
-from contimod.meanfield.init_guess import init_to_density_matrix
+import contimod.materials.graphene.symmetry as cg_symmetry
+from contimod.meanfield import SelfEnergySeed
 from contimod.utils.spectrum_fermi import FermiParams
 
 import hartreefock
@@ -67,7 +67,7 @@ def build_problem():
         epsilon_r=EPSILON_R,
         d_gate=D_GATE,
     )
-    Vq = np.asarray(Vq.magnitude)[..., None, None]
+    Vq = np.asarray(Vq)[..., None, None]
 
     # Symmetry operators
     identity_op = np.asarray(model.identity)
@@ -104,14 +104,10 @@ def build_problem():
 
 
 def init_density_from_seed(h_run, seed_op):
-    P0 = init_to_density_matrix(
-        h_run,
-        seed_op,
-        density=None,
-        T=float(h_run.fermi.T),
-        init_kind="auto",
-    )
-    return np.asarray(P0)
+    seed_op = np.asarray(seed_op)
+    if not np.any(seed_op):  # the zero (PM) seed is the empty density
+        return np.zeros_like(np.asarray(h_run.hs))
+    return SelfEnergySeed(seed_op).to_density(h_run, h_run.state.compute_density(), T=float(h_run.fermi.T))
 
 
 def solve_scf_point(h_template, weights, Vq, n_electrons, P0, project_fn):
