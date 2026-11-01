@@ -33,6 +33,15 @@ classifiers = [
 [project.optional-dependencies]
 jax = ["jax>=0.5.3"]
 dev = ["pytest", "pytest-xdist", "jax>=0.5.3"]
+docs = [
+    "sphinx>=8",
+    "pydata-sphinx-theme>=0.16",
+    "myst-nb",
+    "sphinx-design",
+    "sphinx-copybutton",
+    "sphinx-autoapi>=3.4",
+    "linkify-it-py",
+]
 
 [project.urls]
 Homepage = "https://github.com/skilledwolf/cpp_hf"

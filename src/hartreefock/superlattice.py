@@ -3,7 +3,7 @@
 The Hamiltonian is written in a basis ``|k, G_a, α⟩`` with ``G_a`` from a
 discrete reciprocal-lattice basis and ``α`` an orbital index, so
 ``D = n_G · dim_orb``.  The basis state carries absolute momentum
-``p = k - G_a`` and the Fock self-energy
+``p = k - G_a`` and the Fock self-energy::
 
     Σ_F[(G_a α), (G_b β)](k) = -Σ_{q, G_0} V(|k - q + G_0|) w ρ[(G_a+G_0) α, (G_b+G_0) β](q)
 

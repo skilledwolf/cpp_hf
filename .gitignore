@@ -22,3 +22,5 @@ quick_sanity_check.py
 
 # Local solver-study benchmarks and raw results (not yet published)
 benchmarks/
+docs/_build/
+docs/reference/python/

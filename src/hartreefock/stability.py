@@ -22,6 +22,31 @@ from .config import SCFConfig, SCFResult
 
 @dataclass(frozen=True)
 class StabilityResult:
+    """Outcome of :func:`stability_analysis`.
+
+    Attributes
+    ----------
+    lowest_eigenvalue : float
+        Lowest eigenvalue of the free-energy Hessian; negative means unstable.
+        ``inf`` when the test was skipped, ``nan`` when the solve failed.
+    eigen_residual : float
+        Residual norm of the eigenpair.
+    eigen_converged : bool
+        Whether the eigenvalue solve converged and passed its residual check.
+    stationary : bool
+        Whether the density meets the stationarity tolerance.
+    stable : bool or None
+        ``True`` for stationary with no negative curvature, ``False`` for a
+        resolved negative mode, ``None`` when the test is inconclusive.
+    density_residual, commutator_residual : float
+        Stationarity residuals of the input density.
+    response_builds : int
+        Linear-response Fock builds the test used.
+    direction : ndarray or None
+        The lowest mode as a Hermitian, particle-conserving density
+        perturbation, or ``None`` when there is none.
+    """
+
     lowest_eigenvalue: float
     eigen_residual: float
     eigen_converged: bool
@@ -35,6 +60,30 @@ class StabilityResult:
 
 @dataclass(frozen=True)
 class MinimumResult:
+    """Outcome of :func:`solve_minimum`.
+
+    Attributes
+    ----------
+    solution : SCFResult
+        The last local solve, with its density and Fock matrix.
+    stability : StabilityResult or None
+        The stability test of ``solution``, or ``None`` when none ran.
+    converged : bool
+        Whether the local solve converged and the stability test found no
+        negative curvature.
+    escapes : int
+        Descent steps taken along unstable modes.
+    total_iterations : int
+        Iterations summed over all local solves.
+    fock_builds : int
+        All Fock builds, including the stability tests and trial steps; -1
+        when the SCF method does not count them.
+    free_energies : tuple of float
+        Free energy after each local solve.
+    message : str
+        Why the search stopped.
+    """
+
     solution: SCFResult
     stability: StabilityResult | None
     converged: bool

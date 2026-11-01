@@ -29,6 +29,14 @@ Solvers, all available on both backends unless noted:
 * `solve_continuation` (coarse to fine) and `solve_deflated` (several distinct
   minima).
 
+## Documentation
+
+The Sphinx site in `docs/` has install notes, a quickstart, guides to the
+kernel, the solvers, superlattices and the backends, and the full API
+reference. It is published at https://skilledwolf.github.io/cpp_hf/ from
+`main`; build it locally with `pip install -e ".[docs]"` and
+`sphinx-build -W -b html docs docs/_build/html`.
+
 ## Install
 
 Requires FFTW (double precision: `fftw3`) and a C++17 compiler.
