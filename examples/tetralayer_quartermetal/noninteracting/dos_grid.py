@@ -17,7 +17,7 @@ Conventions:
   - x-axis is the per-flavor electron density n_e in 10¹² cm⁻².  The
     paper projects onto a single conduction band, so its n_e is per
     spin-valley flavor.  Internally we still pass total density (= 4·n_e)
-    to ``compute_chemicalpotential`` since the contimod Hamiltonian is
+    to ``h.state.chemical_potential`` since the contimod Hamiltonian is
     spinful and valleyful at the SCF level.  Defaults span n_e ∈
     [0.25, 1.2].
 

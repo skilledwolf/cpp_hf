@@ -6,7 +6,7 @@ Self-contained: no dependency on ``examples/tetralayer_quartermetal/_common.py``
 The model, the rhombic Brillouin-zone patch, the layer-resolved Coulomb
 interaction, the dual-gate Hartree matrix, the symmetry projectors
 (PM_C3 / C3 via ``contimod.meanfield.symmetry.build_graphene_projections``),
-and the SCF itself (``MeshgridHamiltonian.solve_meanfield(..., backend="cpp_hf")``)
+and the SCF itself (``contimod.meanfield.solve(..., backend="native")``)
 are all built directly from the contimod public API.
 
 This script uses the new ``embed_reference_potential=True`` kernel
@@ -48,12 +48,14 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 import contimod as cm
-from contimod.meanfield.api import DensitySeed, SelfEnergySeed
+import hartreefock as hf
+
+from contimod import meanfield as mf
 from contimod.meanfield.coulomb import (
     dualgate_hartree_q0_matrix,
     layer_coulomb_kernel,
 )
-from contimod.meanfield.symmetry import build_graphene_projections
+from contimod.materials.graphene.symmetry import build_graphene_projections
 from contimod.utils.spectrum_fermi import FermiParams
 
 from hartreefock._backends.native import find_chemical_potential
@@ -174,7 +176,7 @@ def _build_setup(D_Vnm: float, *, hartree_kind: str = "dualgate_eps2") -> dict:
     }
 
     # Per-flavor charge-neutrality density.
-    ne_cn = float(h.state.compute_density_from_filling(0.5 - 1e-6))
+    ne_cn = float(h.state.density_from_filling(0.5 - 1e-6))
 
     return dict(
         model=model, h=h, Vq=Vq, HH=HH,
@@ -195,7 +197,7 @@ def _noninteracting_cn_density(setup: dict) -> np.ndarray:
     )
     h_u0 = m_u0.discretize(nk=NK, bz=bz)
     h_u0.fermi = FermiParams(T=T, mu=0.0)
-    P, _ = h_u0.state.compute_densitymatrix_for_density(setup["ne_cn"], T=T)
+    P = h_u0.state.density_matrix(density=setup["ne_cn"], T=T)
     return np.ascontiguousarray(np.asarray(P), dtype=np.complex128)
 
 
@@ -210,28 +212,24 @@ def _pm_c3_cn_reference(setup: dict) -> np.ndarray:
     """
     refP_init = _noninteracting_cn_density(setup)
     h_cn = setup["h"].copy()
-    h_cn.compute_chemicalpotential(density=setup["ne_cn"])
-    res = h_cn.solve_meanfield(
-        setup["Vq"],
-        backend="cpp_hf", solver="dm",
-        seed=DensitySeed(refP_init),
-        include_hartree=True, include_exchange=True,
-        reference_density=refP_init,
-        hartree_matrix_override=setup["HH"],
-        embed_reference_potential=True,
-        center_embedded_hartree=True,
-        config={
-            "max_iter": MAX_ITER_REF, "tol_E": TOL_E, "max_step": 0.6,
-            "block_sizes": (8, 8, 8, 8),
-            "project_fn": setup["project_fns"]["PM_C3"],
-        },
+    h_cn = h_cn.with_chemical_potential(density=setup["ne_cn"])
+    res = mf.solve(
+        h_cn,
+        _interaction(setup, refP_init),
+        target=mf.Density(setup["ne_cn"]),
+        config=hf.SolverConfig(
+            max_iter=MAX_ITER_REF, tol_E=TOL_E, max_step=0.6, block_sizes=(8, 8, 8, 8),
+            project_fn=setup["project_fns"]["PM_C3"],
+        ),
+        seed=mf.DensitySeed(refP_init),
+        backend="native",
     )
     if not res.converged:
         raise RuntimeError(
             f"PM_C3 CN reference SCF did not converge ({res.n_iter} iters)"
         )
     return np.ascontiguousarray(
-        np.asarray(res.density), dtype=np.complex128,
+        np.asarray(res.density_matrix), dtype=np.complex128,
     )
 
 
@@ -239,8 +237,8 @@ def _h_run_at_density(setup: dict, n_cm12: float):
     """Copy ``setup['h']`` and set μ for the requested doping above CN."""
     dd = float(n_cm12) * 1e12 * (PER_CM ** 2)
     h_run = setup["h"].copy()
-    h_run.compute_chemicalpotential(density=setup["ne_cn"] + dd)
-    n_e = float(h_run.state.compute_density() / float(h_run.degeneracy))
+    h_run = h_run.with_chemical_potential(density=setup["ne_cn"] + dd)
+    n_e = float(h_run.state.density() / float(h_run.degeneracy))
     return n_e, h_run
 
 
@@ -252,20 +250,25 @@ def _solve_meanfield_phase(setup: dict, h_run, *, seed_op, project_fn,
     ``result.hmf.hs`` is the *standard* HF Fock — no post-processing
     required to recover bands / DOS / Δ_tb.
     """
-    return h_run.solve_meanfield(
+    return mf.solve(
+        h_run,
+        _interaction(setup, refP),
+        target=mf.Density(h_run.state.density()),
+        config=hf.SolverConfig(
+            max_iter=int(max_iter), tol_E=TOL_E, max_step=0.6, block_sizes=(8, 8, 8, 8),
+            project_fn=project_fn,
+        ),
+        seed=mf.SelfEnergySeed(seed_op),
+        backend="native",
+    )
+
+
+def _interaction(setup: dict, refP) -> mf.Interaction:
+    return mf.Interaction(
         setup["Vq"],
-        backend="cpp_hf", solver="dm",
-        seed=SelfEnergySeed(seed_op),
-        include_hartree=True, include_exchange=True,
-        reference_density=refP,
-        hartree_matrix_override=setup["HH"],
-        embed_reference_potential=True,
-        center_embedded_hartree=True,
-        config={
-            "max_iter": int(max_iter), "tol_E": TOL_E, "max_step": 0.6,
-            "block_sizes": (8, 8, 8, 8),
-            "project_fn": project_fn,
-        },
+        hartree=True,
+        reference=mf.Reference(refP, embed=True),
+        hartree_matrix=setup["HH"],
     )
 
 

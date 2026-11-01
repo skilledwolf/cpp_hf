@@ -72,7 +72,7 @@ def bilayer_setup():
             s3=s3, v3=v3, n_orb=4, outlier_sv=(+1, +1), k_convention="flip", k_flip_axes=(0,)
         ),
     }
-    ne_cn = float(h.state.compute_density_from_filling(0.5 - 1e-6))
+    ne_cn = float(h.state.density_from_filling(0.5 - 1e-6))
     return ref, h, kernel, ne_cn, seeds, project_fns, temperature
 
 
@@ -80,12 +80,12 @@ def _initial_state(setup, branch, n_cm12):
     _, h, _, ne_cn, seeds, _, temperature = setup
     h_run = h.copy()
     h_run.fermi = FermiParams(T=temperature, mu=0.0)
-    h_run.compute_chemicalpotential(density=float(ne_cn + n_cm12 * 1e12 * PER_CM**2))
-    n_e = float(h_run.state.compute_density() / float(h_run.degeneracy))
+    h_run = h_run.with_chemical_potential(density=float(ne_cn + n_cm12 * 1e12 * PER_CM**2))
+    n_e = float(h_run.state.density() / float(h_run.degeneracy))
     if branch == "PM":  # the zero seed is the empty density
         P0 = np.zeros_like(np.asarray(h_run.hs))
     else:
-        P0 = SelfEnergySeed(seeds[branch]).to_density(h_run, h_run.state.compute_density(), T=temperature)
+        P0 = SelfEnergySeed(seeds[branch]).to_density(h_run, h_run.state.density(), T=temperature)
     return np.asarray(P0), n_e
 
 

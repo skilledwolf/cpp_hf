@@ -190,7 +190,7 @@ def build_bilayer(
     h_template = model.discretize(nk=int(nk), kmax=float(kmax))
     h_template.fermi = FermiParams(T=float(temperature), mu=0.0)
 
-    ne_cn = float(h_template.state.compute_density_from_filling(0.5 - 1e-6))
+    ne_cn = float(h_template.state.density_from_filling(0.5 - 1e-6))
     weights = np.asarray(h_template.kmesh.weights)
 
     Vq = cm.coulomb.dualgate_coulomb(
@@ -296,7 +296,7 @@ def build_bilayer_layer_resolved(
     h_template = model.discretize(nk=int(nk), kmax=float(kmax))
     h_template.fermi = FermiParams(T=float(temperature), mu=0.0)
 
-    ne_cn = float(h_template.state.compute_density_from_filling(0.5 - 1e-6))
+    ne_cn = float(h_template.state.density_from_filling(0.5 - 1e-6))
     weights = np.asarray(h_template.kmesh.weights)
 
     # Layer-resolved Coulomb: z_coords length = nb (per-orbital layer coord)
@@ -385,7 +385,7 @@ def bootstrap_cn_reference_density(
     if setup.hartree_matrix is None:
         raise ValueError("setup must include hartree_matrix (use build_bilayer_layer_resolved).")
 
-    cn_nonint, _ = setup.h_template.state.compute_densitymatrix_for_density(setup.ne_cn)
+    cn_nonint = setup.h_template.state.density_matrix(density=setup.ne_cn)
     cn_nonint = np.asarray(cn_nonint)
 
     kernel = hartreefock.HartreeFockKernel(
@@ -418,16 +418,16 @@ def n_electrons_for_density(setup: BilayerSetup, n_cm12: float, temperature: flo
     dd = n_cm12 * 1e12 * (PER_CM ** 2)
     h_run = setup.h_template.copy()
     h_run.fermi = FermiParams(T=float(temperature), mu=0.0)
-    h_run.compute_chemicalpotential(density=float(setup.ne_cn + dd))
-    n_e = float(h_run.state.compute_density() / float(h_run.degeneracy))
+    h_run = h_run.with_chemical_potential(density=float(setup.ne_cn + dd))
+    n_e = float(h_run.state.density() / float(h_run.degeneracy))
     return n_e, h_run
 
 
 def initial_density_from_seed(h_run, seed_op, temperature: float) -> np.ndarray:
     """Cold-seed density matrix for a given branch operator."""
-    from contimod.meanfield.init_guess import init_to_density_matrix
+    from contimod.meanfield import SelfEnergySeed
 
-    P0 = init_to_density_matrix(h_run, seed_op, density=None, T=float(temperature), init_kind="auto")
+    P0 = SelfEnergySeed(seed_op).to_density(h_run, h_run.state.density(), float(temperature))
     return np.asarray(P0)
 
 

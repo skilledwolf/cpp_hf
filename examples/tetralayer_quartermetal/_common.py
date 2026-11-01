@@ -258,7 +258,7 @@ def build_setup(*, D_Vnm: float, nk: int = NK_DEFAULT, kmax: float = KMAX,
         raise ValueError(f"unknown bz_kind: {bz_kind}")
     h.fermi = FermiParams(T=float(T), mu=0.0)
 
-    ne_cn = float(h.state.compute_density_from_filling(0.5 - 1e-6))
+    ne_cn = float(h.state.density_from_filling(0.5 - 1e-6))
     weights = np.ascontiguousarray(np.asarray(h.kmesh.weights),
                                     dtype=np.float64)
     vq_epsilon_perp = EPSILON_PERP
@@ -604,24 +604,22 @@ def n_electrons_for_density(setup: QMSetup, n_cm12: float, T: float):
     dd = n_cm12 * 1e12 * (PER_CM ** 2)
     h_run = setup.h_template.copy()
     h_run.fermi = FermiParams(T=float(T), mu=0.0)
-    h_run.compute_chemicalpotential(density=float(setup.ne_cn + dd))
-    n_e = float(h_run.state.compute_density() / float(h_run.degeneracy))
+    h_run = h_run.with_chemical_potential(density=float(setup.ne_cn + dd))
+    n_e = float(h_run.state.density() / float(h_run.degeneracy))
     return n_e, h_run
 
 
 def initial_density_from_seed(h_run, seed_op, T: float,
                               density: float | None = None) -> np.ndarray:
     """Cold-seed density matrix: diagonalize h_run + seed_op and Fermi-fill."""
-    from contimod.meanfield.init_guess import init_to_density_matrix
+    from contimod.meanfield import SelfEnergySeed
     if density is None:
-        density = float(h_run.state.compute_density() / float(h_run.degeneracy))
+        density = float(h_run.state.density() / float(h_run.degeneracy))
     seed_arr = np.asarray(seed_op)
     if np.max(np.abs(seed_arr)) == 0.0:
-        P0, _ = h_run.state.compute_densitymatrix_for_density(float(density),
-                                                              T=float(T))
+        P0 = h_run.state.density_matrix(density=float(density), T=float(T))
         return np.ascontiguousarray(np.asarray(P0), dtype=np.complex128)
-    P0 = init_to_density_matrix(h_run, seed_op, density=float(density),
-                                 T=float(T), init_kind="auto")
+    P0 = SelfEnergySeed(seed_op).to_density(h_run, float(density), float(T))
     return np.ascontiguousarray(np.asarray(P0), dtype=np.complex128)
 
 
@@ -677,7 +675,7 @@ def noninteracting_cn_reference(setup: QMSetup, T: float | None = None,
     else:
         h = m.discretize(nk=nk, kmax=KMAX)
     h.fermi = FermiParams(T=float(T), mu=0.0)
-    P, _ = h.state.compute_densitymatrix_for_density(setup.ne_cn)
+    P = h.state.density_matrix(density=setup.ne_cn)
     return np.ascontiguousarray(np.asarray(P), dtype=np.complex128)
 
 

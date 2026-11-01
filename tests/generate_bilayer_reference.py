@@ -59,7 +59,7 @@ def build_problem():
         nk=NK, kmax=KMAX, fermi=FermiParams(T=TEMPERATURE, mu=0.0),
     )
 
-    ne_cn = float(h_template.state.compute_density_from_filling(0.5 - 1e-6))
+    ne_cn = float(h_template.state.density_from_filling(0.5 - 1e-6))
     weights = np.asarray(h_template.kmesh.weights)
 
     Vq = cm.coulomb.dualgate_coulomb(
@@ -107,7 +107,7 @@ def init_density_from_seed(h_run, seed_op):
     seed_op = np.asarray(seed_op)
     if not np.any(seed_op):  # the zero (PM) seed is the empty density
         return np.zeros_like(np.asarray(h_run.hs))
-    return SelfEnergySeed(seed_op).to_density(h_run, h_run.state.compute_density(), T=float(h_run.fermi.T))
+    return SelfEnergySeed(seed_op).to_density(h_run, h_run.state.density(), T=float(h_run.fermi.T))
 
 
 def solve_scf_point(h_template, weights, Vq, n_electrons, P0, project_fn):
@@ -144,8 +144,8 @@ def main():
             dd = n_cm12 * 1e12 * (PER_CM ** 2)
             h_run = h_template.copy()
             h_run.fermi = FermiParams(T=TEMPERATURE, mu=0.0)
-            h_run.compute_chemicalpotential(density=float(ne_cn + dd))
-            n_e = float(h_run.state.compute_density() / float(h_run.degeneracy))
+            h_run = h_run.with_chemical_potential(density=float(ne_cn + dd))
+            n_e = float(h_run.state.density() / float(h_run.degeneracy))
 
             P0 = init_density_from_seed(h_run, seeds[branch])
             result = solve_scf_point(

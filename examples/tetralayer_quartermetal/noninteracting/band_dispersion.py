@@ -14,7 +14,7 @@ Conventions:
     V_z parameterises a per-step layer increment, so paper V_z = Δ_tb / 3.
     Default Δ_tb = 123 meV ≡ V_z = 41 meV.
   - n_e (10¹² cm⁻²) is the per-flavor electron density.  Total density
-    = 4 × n_e is what's passed to ``compute_chemicalpotential``.
+    = 4 × n_e is what's passed to ``h.state.chemical_potential``.
 
 Self-contained: only imports _common (sibling) for the SWMcC model
 setup.  No SCF, no Hartree, no Fock — pure single-particle h(k)
