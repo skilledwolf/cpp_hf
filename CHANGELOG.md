@@ -52,9 +52,9 @@ This project adheres to [Semantic Versioning](https://semver.org).
   serialized, and FFTs inside OpenMP superlattice channels run single-threaded.
 
 ### Breaking changes
-- macOS arm64 wheels now require macOS 15 (GitHub retired the macOS 14
-  runner). On older Apple-silicon macOS, pip falls back to the sdist, which
-  needs FFTW.
+- macOS wheels (arm64 and x86_64) now require macOS 15: GitHub retired the
+  macOS 14 runner, and the bundled Homebrew `libomp` targets macOS 15. On
+  older macOS, pip falls back to the sdist, which needs FFTW.
 - `SCFConfig` fields were reordered (`project_fn` and `block_sizes` now follow
   `trust_radius`). Positional construction breaks; keyword construction is
   unaffected.
