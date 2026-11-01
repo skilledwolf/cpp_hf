@@ -128,21 +128,45 @@ def stability_analysis(
     seed=0,
     backend: str = "native",
 ) -> StabilityResult:
-    """Check an unconstrained finite-T density for negative local curvature.
+    """Test a converged finite-temperature density for negative free-energy curvature.
 
-    ``stable=True`` requires stationarity and a verified eigenvalue solve;
-    it is a local test in the supplied basis, not a global minimum guarantee.
-    ``stable=None`` is inconclusive. The returned direction is Hermitian and
-    conserves particle number in the quadrature metric. Imposed symmetry
-    callbacks are intentionally unsupported: the test allows symmetry breaking.
+    Computes the lowest eigenvalue of the free-energy Hessian at ``density``
+    over all Hermitian, particle-conserving perturbations, spin and orbital
+    mixing included: the test allows symmetry breaking, so symmetry
+    callbacks are not supported. The response is the linear part of the
+    kernel's Fock build (dense, contact or superlattice), and its adjoint
+    consistency is checked before an eigenvalue is accepted. It is a local
+    test in the basis supplied, not a proof of a global minimum.
 
-    The response is the linear part of the backend's Fock build (dense,
-    contact or superlattice); adjoint consistency is checked before an
-    eigenvalue is accepted.
+    Parameters
+    ----------
+    kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+        The problem; needs ``T > 0`` and positive weights.
+    density : (nk1, nk2, nb, nb) array
+        A Hermitian density with eigenvalues in [0, 1], such as a solver's
+        ``result.density``.
+    n_electrons : float
+        Its particle number, counted with the weights.
+    stationarity_tol : float
+        Largest residual (density and commutator) for which the density counts
+        as stationary.
+    eigen_tol : float
+        Tolerance of the eigenvalue solve.
+    maxiter : int
+        Iterations of the eigenvalue solve.
+    seed : int
+        Seed of the random starting vector.
+    backend : {"native", "jax"}
+        Which Fock builder to linearize. With ``"jax"``, enable
+        ``jax_enable_x64`` before building the kernel; tolerances below ten
+        times the kernel dtype's epsilon are rejected.
 
-    With ``backend="jax"``, enable ``jax_enable_x64`` before constructing the
-    kernel for the default tolerances. Requests below ten times the kernel dtype epsilon are rejected
-    instead of issuing a precision-limited stability certificate.
+    Returns
+    -------
+    StabilityResult
+        ``lowest_eigenvalue``, its direction, and ``stable``: ``True`` for a
+        stationary density with no negative curvature, ``False`` for negative
+        curvature, ``None`` when the test is inconclusive.
     """
     if not np.isfinite(kernel.T) or kernel.T <= 0:
         raise ValueError("stability_analysis requires positive temperature")
@@ -365,30 +389,44 @@ def solve_minimum(
     stability_maxiter=200,
     backend: str = "native",
 ) -> MinimumResult:
-    """Find a stationary density with no resolved negative curvature.
+    """Solve, test the stability of the solution, and step downhill until it is a local minimum.
 
-    Each local solve has ``config.max_iter`` iterations; at most
-    ``max_escapes + 1`` local solves are performed. All additional Fock builds,
-    including the stability test and trial perturbations, are counted for
-    RDIIS/Anderson. A legacy SCF method without a counter returns -1 for the
-    total build count. The default is safeguarded RDIIS at 1e-8 residuals
-    with 500 iterations.
-    ``converged`` requires both a converged local solve and a conclusive stable
-    Hessian test. This is a local minimum check within the supplied basis, not
-    a global ground-state certificate or a test of omitted spin/valley sectors.
+    Each round runs a local SCF solve and :func:`stability_analysis`. On
+    negative curvature it refills a Fock field perturbed along the unstable
+    direction at fixed particle number (falling back to a spectral projection
+    of the density perturbation), accepts the step only if it lowers the free
+    energy by more than the kernel precision, and solves again. Symmetry
+    callbacks are not supported, since the escape must be allowed to break
+    symmetry. ``converged`` is a local statement within the basis supplied, not
+    a proof of the ground state or a test of sectors left out of it.
 
-    Negative-curvature recovery first re-occupies a perturbed Fock field at
-    fixed particle number. This retains the unstable tangent while respecting
-    saturated occupation bounds. Spectral projection of a density perturbation
-    is retained as a fallback. Every accepted trial must lower the actual
-    free energy by more than the kernel precision threshold.
+    Parameters
+    ----------
+    kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+        The problem; needs ``T > 0`` and positive weights.
+    P0 : (nk1, nk2, nb, nb) array
+        Starting density.
+    n_electrons : float
+        Particle number, counted with the weights.
+    config : SCFConfig, optional
+        Configuration of each local solve. The default is safeguarded RDIIS
+        with 1e-8 residuals and 500 iterations.
+    max_escapes : int
+        Most descent steps; at most ``max_escapes + 1`` local solves run.
+    eigen_tol : float
+        Tolerance of each stability test.
+    stability_maxiter : int
+        Iterations of each stability test.
+    backend : {"native", "jax"}
+        Which implementation runs. With ``"jax"``, enable ``jax_enable_x64``
+        before building the kernel for the default tolerances.
 
-    Extra symmetry callbacks are not supported: recovery must be allowed to
-    break symmetry. The kernel's Fock builder is used consistently in SCF,
-    curvature, and finite-step energy checks. The host
-    driver uses NumPy/SciPy orchestration and is not itself JIT-compatible.
-    With ``backend="jax"``, enable JAX double precision before constructing
-    the kernel for the default tolerances. The returned SCF solution contains its density and Fock matrix.
+    Returns
+    -------
+    MinimumResult
+        The last local solve (``solution``), its stability test, the number of
+        escapes, the free energy after each solve, and the Fock builds spent
+        (``-1`` when the SCF method does not count them).
     """
     if (
         not isinstance(max_escapes, (int, np.integer))

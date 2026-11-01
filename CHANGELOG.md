@@ -27,6 +27,11 @@ This project adheres to [Semantic Versioning](https://semver.org).
   `preconditioner="hartree"` (the last two native only) from `cpp_hf` 1.2.0,
   on the merged API; the JAX backend raises `NotImplementedError` for the
   native-only options.
+- The documentation is rebuilt as executed pages: a three-step tutorial on
+  the electron gas (exchange, Bloch ferromagnetism, the Stoner instability)
+  and guides to the kernel, the solvers, superlattices and the backends.
+  Each page checks its result against a closed form, and the build fails
+  when a check does. The solver and result docstrings have NumPy sections.
 
 ### Fixed
 - `SuperlatticeHartreeFockKernel` with `center_embedded_hartree=True` now

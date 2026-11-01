@@ -34,30 +34,45 @@ def _check_blocks(block_sizes):
 
 @dataclass(frozen=True, kw_only=True)
 class SolverConfig:
-    """Direct minimization (Riemannian CG or trust-region Newton).
+    """Options of :func:`hartreefock.solve`: the optimizer and its stopping rule.
 
-    Stopping: with ``tol_grad > 0`` the stationarity norm logged in
-    ``history["grad_norm"]`` is the sole and sufficient stop and ``tol_E`` is
-    inactive. With ``tol_grad == 0`` CG stops when the free energy improves
-    by less than ``tol_E`` over ``plateau_window`` iterations (0 = per
-    iteration), and Newton uses an internal 1e-6 stationarity tolerance.
+    With ``tol_grad > 0`` the stationarity norm logged in
+    ``history["grad_norm"]`` is the stopping test and ``tol_E`` is inactive.
+    With ``tol_grad == 0`` CG stops when the free energy improves by less than
+    ``tol_E`` over ``plateau_window`` iterations, and Newton uses an internal
+    1e-6 stationarity tolerance.
 
-    ``optimizer="auto"`` (native only) starts with CG and hands over to
-    Newton once the iterate is in the local quadratic regime.
-    ``optimizer="newton"`` is a Steihaug truncated-CG trust region on the
-    joint (Q, p) response Hessian; it ignores the CG-only knobs ``max_step``,
-    ``cg_restart``, ``bt_shrink`` and ``bt_max`` and needs float64.
-
-    Deflation (Newton only) adds a Gaussian bias of height
-    ``deflation_sigma`` and width ``deflation_length`` around each density
-    in ``deflation_targets`` (shape ``(n, nk1, nk2, nb, nb)``); it is
-    normally driven by :func:`hartreefock.solve_deflated`.
-
-    ``block_sizes`` enables a checked block-diagonal eigensolver path.
-    ``project_fn`` must be a linear, orthogonal, trace-preserving projection
-    onto a matrix algebra (see :mod:`hartreefock.symmetry`).
-    ``return_Q``, ``return_density`` and ``return_fock`` set to False drop the
-    large arrays from the result (they come back as None).
+    Attributes
+    ----------
+    optimizer : {"cg", "newton", "auto"}
+        ``"cg"``: Riemannian conjugate gradients. ``"newton"``: a Steihaug
+        truncated-CG trust region on the exact (Q, p) Hessian; needs float64
+        and ignores ``max_step``, ``cg_restart``, ``bt_shrink`` and ``bt_max``.
+        ``"auto"`` (native only): CG, then Newton once the iterate is in the
+        quadratic regime.
+    max_iter : int
+        Iteration limit.
+    tol_E, tol_grad, plateau_window : float, float, int
+        The stopping rule above.
+    denom_scale, max_step, cg_restart, bt_shrink, bt_max : float, float, int, float, int
+        CG step control: occupation-denominator regularization, the largest
+        step, the restart period, and the backtracking factor and count.
+    mu_maxiter : int
+        Iterations of the chemical-potential bisection.
+    tr_delta0, tr_cg_max : float, int
+        Newton's initial trust radius and inner CG iterations.
+    deflation_targets, deflation_sigma, deflation_length : array, float, float
+        A Gaussian bias of height ``deflation_sigma`` and width
+        ``deflation_length`` around each density in ``deflation_targets``
+        (shape ``(n, nk1, nk2, nb, nb)``), Newton only; normally set by
+        :func:`hartreefock.solve_deflated`.
+    block_sizes : tuple of int, optional
+        Block sizes of a block-diagonal Fock matrix, for a faster eigensolver.
+    project_fn : callable, optional
+        A linear, orthogonal, trace-preserving projection onto a matrix algebra,
+        applied to every density and Fock matrix (see :mod:`hartreefock.symmetry`).
+    return_Q, return_density, return_fock : bool
+        ``False`` drops that array from the result (it comes back as ``None``).
     """
 
     max_iter: int = 200
@@ -118,19 +133,45 @@ class SolverConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class SCFConfig:
-    """Roothaan SCF iteration.
+    """Options of :func:`hartreefock.solve_scf`: the acceleration and its tolerances.
 
-    ``acceleration``: ``"linear"`` mixing, ``"diis"`` (Pulay commutator DIIS
-    on the Fock), ``"oda"`` (optimal damping: exact line search at T = 0,
-    free-energy backtracking at T > 0), or the full-residual,
-    free-energy-safeguarded ``"rdiis"`` (Fock) and ``"anderson"`` (density)
-    schemes. ``diis_damping`` blends the extrapolated and current Fock;
-    ``trust_radius`` (weighted Frobenius norm, 0 = off) clips each density
-    step. ``safeguard`` lets RDIIS/Anderson accept free-energy descent within
-    floating-point objective noise. ``preconditioner="hartree"`` applies the
-    Hartree response to the RDIIS/Anderson residual (native only).
-    ``return_density`` / ``return_fock`` set
-    to False drop those arrays from the result.
+    The iteration stops when the density change is below ``density_tol`` and
+    the commutator ``[F, P]`` below ``comm_tol``.
+
+    Attributes
+    ----------
+    acceleration : {"linear", "diis", "oda", "rdiis", "anderson"}
+        ``"linear"`` mixing; ``"diis"``, Pulay commutator DIIS on the Fock;
+        ``"oda"``, optimal damping (exact line search at T = 0, free-energy
+        backtracking at T > 0; the start must hold the particle number);
+        ``"rdiis"`` (Fock) and ``"anderson"`` (density), full-residual schemes
+        with a free-energy safeguard. ``"rdiis"`` is the recommended default at
+        finite temperature.
+    max_iter : int
+        Iteration limit.
+    density_tol, comm_tol : float
+        The stopping tolerances above, in the weighted Frobenius norm.
+    mixing : float
+        Fraction of the new density taken per step with ``"linear"``.
+    level_shift : float
+        Shift of the virtual levels, which damps charge sloshing.
+    diis_size, diis_start, diis_damping : int, int, float
+        DIIS history length, the iteration it starts at, and the blend of the
+        extrapolated and current Fock matrices.
+    trust_radius : float
+        Largest density step in the weighted Frobenius norm; 0 turns it off.
+    safeguard : bool
+        Let RDIIS and Anderson accept a free-energy rise within floating-point
+        noise of the objective.
+    preconditioner : {"none", "hartree"}
+        ``"hartree"`` applies the Hartree response to the RDIIS or Anderson
+        residual (native only).
+    block_sizes : tuple of int, optional
+        Block sizes of a block-diagonal Fock matrix.
+    project_fn : callable, optional
+        Symmetry projection, as in :class:`SolverConfig`.
+    return_density, return_fock : bool
+        ``False`` drops that array from the result.
     """
 
     max_iter: int = 200
@@ -181,12 +222,32 @@ class SCFConfig:
 
 
 class SolveResult(NamedTuple):
-    """Direct-minimization result.
+    """Result of :func:`hartreefock.solve`.
 
-    ``history["E"]`` is the HF energy (without -T*S) at each iteration's
-    pre-step density and ``history["grad_norm"]`` the stationarity norm the
-    ``tol_grad`` stop tests. ``energy`` is recomputed after finalisation, so
-    compare ``energy`` (not history tails) across runs and optimizers.
+    Compare ``energy``, which is recomputed after the last step, across runs
+    and optimizers, not the tail of ``history["E"]``.
+
+    Attributes
+    ----------
+    Q : (nk1, nk2, nb, nb) array or None
+        Orbitals of the final density.
+    p : (nk1, nk2, nb) array
+        Their occupations.
+    mu : float
+        Chemical potential.
+    density : (nk1, nk2, nb, nb) array or None
+        The density matrix.
+    fock : (nk1, nk2, nb, nb) array or None
+        The Fock matrix at the density.
+    energy : float
+        Hartree-Fock energy, summed with the weights (without ``-TS``).
+    n_iter : int
+        Iterations taken.
+    converged : bool
+        Whether the stopping rule was met.
+    history : dict
+        Per iteration: ``"E"``, the energy at the pre-step density, and
+        ``"grad_norm"``, the stationarity norm that ``tol_grad`` tests.
     """
 
     Q: Any
@@ -202,7 +263,29 @@ class SolveResult(NamedTuple):
 
 @dataclass(frozen=True)
 class SCFResult:
-    """SCF result; ``history`` holds per-iteration residuals and energies."""
+    """Result of :func:`hartreefock.solve_scf`.
+
+    Attributes
+    ----------
+    density : (nk1, nk2, nb, nb) array or None
+        The density matrix.
+    fock : (nk1, nk2, nb, nb) array or None
+        The Fock matrix at the density.
+    energy : float
+        Hartree-Fock energy per unit of the weights,
+        ``Tr(hP) + ½ Tr(V_HF[P - P_ref] (P - P_ref))``.
+    mu : float
+        Chemical potential.
+    n_iter : int
+        Iterations taken.
+    converged : bool
+        Whether both tolerances were met.
+    message : str
+        Why the iteration stopped, with the final residuals.
+    history : dict
+        Per iteration: ``"E"``, ``"free_energy"``, ``"density_residual"``,
+        ``"commutator_residual"`` and ``"fock_builds"``.
+    """
 
     density: Any
     fock: Any
@@ -226,7 +309,17 @@ def drop_unrequested(result, config):
 
 
 class ContinuationResult(NamedTuple):
-    """Coarse and fine stage results plus the resampled fine-grid seed."""
+    """Result of :func:`hartreefock.solve_continuation`.
+
+    Attributes
+    ----------
+    coarse : SolveResult or SCFResult
+        The coarse-mesh solve.
+    fine : SolveResult or SCFResult
+        The fine-mesh solve, the answer.
+    P0_fine : (nk1, nk2, nb, nb) array or None
+        The coarse density resampled to the fine mesh, the seed of ``fine``.
+    """
 
     coarse: SolveResult | SCFResult
     fine: SolveResult | SCFResult
@@ -234,7 +327,19 @@ class ContinuationResult(NamedTuple):
 
 
 class DeflatedResult(NamedTuple):
-    """Distinct HF solutions found by :func:`hartreefock.solve_deflated`."""
+    """Result of :func:`hartreefock.solve_deflated`.
+
+    Attributes
+    ----------
+    solutions : list of SolveResult
+        The distinct solutions found, lowest energy first.
+    energies : (n_found,) array
+        Their energies.
+    best : SolveResult
+        The lowest, ``solutions[0]``.
+    n_found : int
+        How many were found.
+    """
 
     solutions: list
     energies: Any

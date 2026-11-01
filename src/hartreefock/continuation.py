@@ -52,13 +52,33 @@ def solve_continuation(
     backend: str = "native",
     retain_P0_fine: bool = True,
 ) -> ContinuationResult:
-    """Run a coarse → fine continuation.
+    """Solve on a coarse mesh, resample the result to a fine mesh, and solve there.
 
-    Each stage runs ``solve_scf`` when its config is an :class:`SCFConfig`
-    and direct minimization otherwise, so stages can mix (robust SCF on the
-    coarse grid, fast minimization on the fine one).  ``P0_fine`` in the
-    result is the resampled seed of the fine solve (None when
-    ``retain_P0_fine=False``).
+    Each stage runs :func:`~hartreefock.solve_scf` when its config is an
+    :class:`~hartreefock.SCFConfig` and :func:`~hartreefock.solve` otherwise,
+    so the stages can mix. The driver does not reinterpret the particle number
+    or the reference densities between meshes; build both kernels consistently.
+
+    Parameters
+    ----------
+    coarse_kernel, fine_kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+        The same problem on two meshes.
+    P0_coarse : (nk1, nk2, nb, nb) array
+        Starting density on the coarse mesh.
+    n_electrons_coarse, n_electrons_fine : float
+        Particle numbers on each mesh, counted with its weights.
+    coarse_config, fine_config : SCFConfig or SolverConfig, optional
+        Solver and options of each stage; ``None`` is direct minimization with
+        the defaults.
+    backend : {"native", "jax"}
+        Which implementation runs both stages.
+    retain_P0_fine : bool
+        Keep the resampled seed in the result.
+
+    Returns
+    -------
+    ContinuationResult
+        Both stage results and the resampled seed.
     """
     _validate_kernels(coarse_kernel, fine_kernel)
     engine = get_backend(backend)

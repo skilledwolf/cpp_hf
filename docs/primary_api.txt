@@ -1,0 +1,21 @@
+# Public names the pages link to. Each needs a NumPy docstring with a
+# Parameters, Returns or Attributes section; conf.py checks it at build time.
+hartreefock.HartreeFockKernel
+hartreefock.SuperlatticeHartreeFockKernel
+hartreefock.SCFConfig
+hartreefock.SolverConfig
+hartreefock.SCFResult
+hartreefock.SolveResult
+hartreefock.StabilityResult
+hartreefock.MinimumResult
+hartreefock.ContinuationResult
+hartreefock.DeflatedResult
+hartreefock.solve_scf
+hartreefock.solve
+hartreefock.solve_minimum
+hartreefock.stability_analysis
+hartreefock.solve_continuation
+hartreefock.solve_deflated
+hartreefock.available_backends
+hartreefock.get_backend
+hartreefock.symmetry.make_project_fn

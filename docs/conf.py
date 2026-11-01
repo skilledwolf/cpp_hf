@@ -1,11 +1,15 @@
 """Sphinx configuration for the hartreefock documentation."""
 from pathlib import Path
+import os
 import re
 import sys
 
 DOCS = Path(__file__).resolve().parent
 REPO = DOCS.parent
 sys.path[:0] = [str(DOCS), str(DOCS / "theme")]
+# The executed pages draw with docs/theme/matplotlibrc and run single-threaded BLAS.
+os.environ["MATPLOTLIBRC"] = str(DOCS / "theme")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
 project = "hartreefock"
 author = "Tobias Wolf"
@@ -14,15 +18,24 @@ html_title = "hartreefock documentation"
 extensions = [
     "myst_nb", "sphinx_design", "sphinx_copybutton",
     "sphinx.ext.autodoc", "sphinx.ext.napoleon", "sphinx.ext.doctest",
-    "autoapi.extension", "contimod_theme",
+    "sphinxcontrib.bibtex", "autoapi.extension", "contimod_theme",
 ]
 master_doc = "index"
 exclude_patterns = ["README.md", "theme", "_build", "**/__pycache__", "**/.ipynb_checkpoints"]
 myst_enable_extensions = ["colon_fence", "deflist", "dollarmath", "linkify"]
 myst_heading_anchors = 3
 myst_linkify_fuzzy_links = False
-# The notebooks are shown with the outputs they were saved with.
-nb_execution_mode = "off"
+# Every page with code cells is executed by the build: each printed number and
+# figure comes from the code above it. A failing cell fails the build.
+nb_execution_mode = "cache"
+nb_execution_cache_path = str(DOCS / "_build" / ".jupyter_cache")
+nb_execution_raise_on_error = True
+nb_execution_show_tb = True
+nb_execution_timeout = 600
+nb_merge_streams = True
+bibtex_bibfiles = ["refs.bib"]
+bibtex_default_style = "unsrt"
+bibtex_reference_style = "author_year"
 
 autoapi_dirs = [str(REPO / "src/hartreefock")]
 autoapi_generate_api_docs = False
@@ -35,8 +48,7 @@ napoleon_use_ivar = True
 napoleon_google_docstring = False
 templates_path = ["_templates"]
 theme_repository = "https://github.com/skilledwolf/cpp_hf"
-# contimod has no public site yet; set its (name, url) here once it does.
-theme_sister_site = None
+theme_sister_site = ("contimod", "https://skilledwolf.github.io/contimod/")
 html_theme_options = {"logo": {"text": "hartreefock"}, "footer_end": ["contributing"]}
 html_context = {
     "github_user": "skilledwolf", "github_repo": "cpp_hf",
@@ -164,9 +176,49 @@ def banned_words(app, docname, source):
                 location=(docname, number), type="hartreefock", subtype="style")
 
 
+SECTIONS = ("Parameters\n", "Returns\n", "Attributes\n")
+
+
+def primary_docstrings(app):
+    """Warn when a name in ``primary_api.txt`` lacks a NumPy docstring section."""
+    import importlib
+    import inspect
+    from pathlib import Path
+
+    from sphinx.util import logging
+
+    log = logging.getLogger(__name__)
+    for line in (Path(app.confdir) / "primary_api.txt").read_text().splitlines():
+        name = line.strip()
+        if not name or name.startswith("#"):
+            continue
+        parts = name.split(".")
+        obj = None
+        for i in range(len(parts), 0, -1):
+            try:
+                obj = importlib.import_module(".".join(parts[:i]))
+            except ImportError:
+                continue
+            try:
+                for attr in parts[i:]:
+                    obj = getattr(obj, attr)
+            except AttributeError:
+                obj = None
+            break
+        if obj is None:
+            log.warning("primary_api.txt names %s, which does not exist", name,
+                        type="hartreefock", subtype="primary")
+            continue
+        doc = inspect.getdoc(obj) or ""
+        if not any(section in doc for section in SECTIONS):
+            log.warning("%s needs a Parameters, Returns or Attributes section", name,
+                        type="hartreefock", subtype="primary")
+
+
 def setup(app):
     from _reference import generate
     app.connect("builder-inited", generate)
+    app.connect("builder-inited", primary_docstrings)
     app.connect("source-read", banned_words)
     app.connect("autodoc-skip-member", public_api_member)
     app.connect("missing-reference", public_name)

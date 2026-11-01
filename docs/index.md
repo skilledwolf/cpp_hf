@@ -1,22 +1,59 @@
+---
+file_format: mystnb
+kernelspec:
+  name: python3
+---
+
 # hartreefock
 
 hartreefock solves the finite-temperature Hartree-Fock problem on uniform 2D
 k-meshes. You describe the problem once as a kernel (the single-particle
-Hamiltonian, the interaction and the quadrature weights) and solve it with one
-of two interchangeable backends: a C++ extension on FFTW and Eigen, or jitted
-JAX.
-
-```python
-import hartreefock as hf
-
-kernel = hf.HartreeFockKernel(weights, h, coulomb_q, T=0.005)
-result = hf.solve_scf(kernel, P0, n_electrons, config=hf.SCFConfig(acceleration="rdiis"))
-check = hf.stability_analysis(kernel, result.density, n_electrons)
-```
-
-It is the engine behind the mean-field solvers of
+Hamiltonian, the interaction and the quadrature weights) and solve it with
+one of two interchangeable backends: a C++ extension on FFTW and Eigen, or
+jitted JAX. It is the engine behind the mean-field solvers of
 [contimod](https://github.com/skilledwolf/contimod), and works on any
 Hamiltonian you can put on a k-mesh.
+
+Here is the exchange self-energy of the two-dimensional electron gas at
+$r_s = 1$, against its closed form in elliptic integrals
+{cite}`Giuliani2005` ([tutorial step 1](tutorial/01-exchange.md)). The code
+is under the figure.
+
+```{code-cell} ipython3
+:tags: [hide-input]
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.special import ellipe, ellipk
+import hartreefock as hf
+
+nk, kmax, rs = 64, 2.1, 1.0                      # units of k_F and E_F
+k = np.linspace(-kmax, kmax, nk, endpoint=False) + kmax / nk
+kx, ky = np.meshgrid(k, k, indexing="ij")
+dk = k[1] - k[0]
+weights = np.full((nk, nk), dk**2 / (2 * np.pi) ** 2)
+eps = kx**2 + ky**2
+h = eps[..., None, None] * np.eye(2)
+q1 = dk * (np.arange(nk) - nk // 2)
+q = np.hypot(*np.meshgrid(q1, q1, indexing="ij"))
+V = 2 * np.pi * np.sqrt(2) * rs * np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
+
+kernel = hf.HartreeFockKernel(weights, h, V[..., None, None], T=0.002)
+result = hf.solve_scf(kernel, (eps < 1)[..., None, None] * np.eye(2), 1 / (2 * np.pi),
+                      config=hf.SCFConfig(acceleration="rdiis"))
+sigma = (np.asarray(result.fock) - h)[:, nk // 2, 0, 0].real
+
+kk = np.linspace(0, 2.1, 400)
+x = np.where(kk > 1, 1 / np.where(kk > 1, kk, 1), 0.5)
+exact = -2 * np.sqrt(2) * rs / np.pi * np.where(
+    kk < 1, ellipe(np.minimum(kk, 1) ** 2), kk * (ellipe(x**2) - (1 - x**2) * ellipk(x**2)))
+
+fig, ax = plt.subplots()
+ax.plot(np.abs(k), sigma, "o", ms=3, label="hartreefock, 64 × 64 mesh")
+ax.plot(kk, exact, color="C1", label="closed form")
+ax.set(xlabel="$k / k_F$", ylabel=r"$\Sigma_x / E_F$", xlim=(0, 1.8))
+ax.legend();
+```
 
 ::::{grid} 1 1 2 2
 :gutter: 3
@@ -25,21 +62,23 @@ Hamiltonian you can put on a k-mesh.
 :link: get-started/quickstart
 :link-type: doc
 
-Install it, then find the spin-polarized ground state of a dilute electron gas.
+Install it, then find the spin-polarized ground state of a gated electron gas.
 :::
 
-:::{grid-item-card} The kernel
-:link: guides/kernel
+:::{grid-item-card} Tutorial
+:link: tutorial/index
 :link-type: doc
 
-Hamiltonian, interaction, reference density, embedding, and what the energy means.
+Three steps on the electron gas: exchange, Bloch ferromagnetism, the
+Stoner instability. Each checks its result against a closed form.
 :::
 
-:::{grid-item-card} Solvers
-:link: guides/solvers
+:::{grid-item-card} Guides
+:link: guides/index
 :link-type: doc
 
-Direct minimization, SCF, stability, continuation and deflation: which to use when.
+The kernel, the solvers, superlattices and the two backends, each with a
+check.
 :::
 
 :::{grid-item-card} Python API
@@ -54,7 +93,9 @@ Every public name, generated from the docstrings.
 :hidden:
 
 get-started/index
+tutorial/index
 guides/index
 reference/python/index
 development/index
+project/index
 ```

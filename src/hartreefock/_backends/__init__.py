@@ -13,7 +13,23 @@ BACKENDS = ("native", "jax")
 
 
 def get_backend(name: str) -> ModuleType:
-    """Import and return backend ``name`` (``"native"`` or ``"jax"``)."""
+    """Import and return a backend module.
+
+    Parameters
+    ----------
+    name : {"native", "jax"}
+        The backend.
+
+    Returns
+    -------
+    types.ModuleType
+        The backend, with the solver entry points the top-level functions call.
+
+    Raises
+    ------
+    RuntimeError
+        For ``"native"`` when the compiled extension did not build.
+    """
     if name not in BACKENDS:
         raise ValueError(f"Unknown backend {name!r}; choose one of {BACKENDS}.")
     module = importlib.import_module(f"{__name__}.{name}")
@@ -25,7 +41,13 @@ def get_backend(name: str) -> ModuleType:
 
 
 def available_backends() -> tuple[str, ...]:
-    """Backends whose runtime dependencies import."""
+    """List the backends whose runtime dependencies import.
+
+    Returns
+    -------
+    tuple of str
+        A subset of ``("native", "jax")``.
+    """
     found = []
     for name in BACKENDS:
         try:

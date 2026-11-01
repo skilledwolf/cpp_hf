@@ -40,7 +40,10 @@ docs = [
     "sphinx-design",
     "sphinx-copybutton",
     "sphinx-autoapi>=3.4",
+    "sphinxcontrib-bibtex",
     "linkify-it-py",
+    "matplotlib",
+    "jax>=0.5.3",
 ]
 
 [project.urls]

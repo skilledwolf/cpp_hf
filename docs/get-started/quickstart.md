@@ -1,65 +1,91 @@
+---
+file_format: mystnb
+kernelspec:
+  name: python3
+---
+
 # Quickstart
 
-A dilute two-dimensional electron gas with a strong Coulomb repulsion lowers
-its exchange energy by polarizing its spin. This page builds that problem,
-solves it from a spin-balanced and a polarized start, and asks which solution
-is stable. The script is
-[`docs/examples/quickstart.py`](https://github.com/skilledwolf/cpp_hf/blob/main/docs/examples/quickstart.py)
-and takes a few seconds.
+A dilute two-dimensional electron gas between metal gates lowers its
+exchange energy by polarizing its spin. This page builds that problem,
+solves it from a spin-balanced and a polarized start, and asks which
+solution is a local minimum. It runs in a few seconds.
 
-## The mesh and the Hamiltonian
+## The problem
 
-```{literalinclude} ../examples/quickstart.py
-:language: python
-:start-at: "# A square"
-:end-at: h = eps
+Three arrays define it, all on an `nk × nk` k-mesh: quadrature `weights`
+of shape `(nk, nk)`, the Hamiltonian `h` of shape `(nk, nk, nb, nb)`, and
+the interaction `V(q)` on the grid of momentum transfers. The units are
+yours; the solver assumes none. Here $\hbar = m = 1$, two spin bands with
+dispersion $k^2/2$, and a dual-gate interaction
+$V(q) = 2\pi g \tanh(qd)/q$.
+
+```{code-cell} ipython3
+import numpy as np
+import hartreefock as hf
+
+nk, kmax = 48, 1.2
+k = np.linspace(-kmax, kmax, nk, endpoint=False) + kmax / nk
+kx, ky = np.meshgrid(k, k, indexing="ij")
+weights = np.full((nk, nk), (2 * kmax / nk) ** 2 / (2 * np.pi) ** 2)   # Σ_k w f = ∫ d²k/(2π)² f
+eps = 0.5 * (kx**2 + ky**2)
+h = eps[..., None, None] * np.eye(2)
+
+# V(q) on the transfer grid: the k-mesh spacing, with q = 0 at index nk // 2.
+dk = k[1] - k[0]
+q1 = dk * (np.arange(nk) - nk // 2)
+q = np.hypot(*np.meshgrid(q1, q1, indexing="ij"))
+d, g = 10.0, 5.0
+V = g * 2 * np.pi * np.where(q > 0, np.tanh(q * d) / np.where(q > 0, q, 1.0), d)
+
+kernel = hf.HartreeFockKernel(weights, h, V[..., None, None], T=0.005)
+n_electrons = 0.02          # per unit area, counted with the weights
 ```
 
-Everything lives on an `nk × nk` mesh: the Hamiltonian `h` has shape
-`(nk, nk, nb, nb)`, and `weights` are the quadrature weights, so a k-sum
-`Σ_k w(k) f(k)` is an integral. Densities and particle numbers are counted
-with the same weights. The units are yours; the solver never assumes any.
-
-## The interaction
-
-```{literalinclude} ../examples/quickstart.py
-:language: python
-:start-at: "# The interaction"
-:end-at: coulomb_q =
-```
-
-`V(q)` is given on the grid of momentum transfers, with the same spacing as
-the k-mesh and `q = 0` at index `nk // 2`. Shape `(nk, nk, 1, 1)` is the same
-interaction between all orbitals; `(nk, nk, nb, nb)` resolves it.
-
-## The kernel
-
-```{literalinclude} ../examples/quickstart.py
-:language: python
-:start-at: kernel = hf
-:end-at: n_electrons =
-```
-
-{class}`~hartreefock.HartreeFockKernel` precomputes everything the solvers
-need. By default it keeps the exchange term only; Hartree, a reference
-density and contact terms are options (see [The kernel](../guides/kernel.md)).
+{class}`~hartreefock.HartreeFockKernel` holds what does not change during
+a solve. By default it keeps the exchange term only; Hartree terms, a
+reference density and contact couplings are options
+([The kernel](../guides/kernel.md)).
 
 ## Solving and checking
 
-```{literalinclude} ../examples/quickstart.py
-:language: python
-:start-at: "# Two starting"
-```
-
-```text
- balanced: E = -0.011321, spin up/down = 0.0100/0.0100, stable = False (lowest curvature -1.5e+00)
-polarized: E = -0.016818, spin up/down = 0.0200/0.0000, stable = True (lowest curvature -7.6e-11)
+```{code-cell} ipython3
+# Filled Fermi discs with the right particle number: for k²/2, n_σ = ε_F / 2π.
+starts = {
+    "balanced": (eps < np.pi * n_electrons)[..., None, None] * np.eye(2),
+    "polarized": (eps < 2 * np.pi * n_electrons)[..., None, None] * np.diag([1.0, 0.0]),
+}
+results = {}
+for name, P0 in starts.items():
+    r = hf.solve_scf(kernel, P0, n_electrons, config=hf.SCFConfig(acceleration="rdiis"))
+    s = hf.stability_analysis(kernel, r.density, n_electrons)
+    up, down = np.einsum("ij,ijaa->a", weights, r.density).real
+    results[name] = (r, s)
+    print(f"{name:>9}: E = {r.energy:.6f}, spin up/down = {up:.4f}/{down:.4f}, "
+          f"stable = {s.stable} (lowest curvature {s.lowest_eigenvalue:+.1e})")
 ```
 
 Both starts converge, to different solutions. The spin-balanced one is a
-saddle point: {func}`~hartreefock.stability_analysis` finds a direction of
-negative free-energy curvature. The polarized one is lower in energy and
-stable; its lowest curvature is zero within precision, the Goldstone mode of
-rotating the spin. A converged residual does not tell these apart, which is
-why the check exists; {func}`~hartreefock.solve_minimum` runs it for you and
-follows the unstable direction downhill.
+saddle: {func}`~hartreefock.stability_analysis` finds a direction of
+negative free-energy curvature. The polarized one is lower and stable; its
+lowest curvature is zero within precision, the Goldstone mode of rotating
+the spin. A converged residual does not tell the two apart.
+{func}`~hartreefock.solve_minimum` runs the test for you and follows an
+unstable direction downhill:
+
+```{code-cell} ipython3
+m = hf.solve_minimum(kernel, starts["balanced"], n_electrons)
+print(f"from the balanced start: {m.escapes} escape, E = {m.solution.energy:.6f}, stable = {m.stability.stable}")
+```
+
+```{code-cell} ipython3
+:tags: [remove-cell]
+(rb, sb), (rp, sp) = results["balanced"], results["polarized"]
+assert sb.stable is False and sp.stable is True and rp.energy < rb.energy
+assert m.stability.stable and abs(m.solution.energy - rp.energy) < 1e-6
+```
+
+## Next
+
+The [tutorial](../tutorial/index.md) builds up the electron gas with the
+Coulomb interaction and checks each result against a closed form.

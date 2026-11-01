@@ -38,12 +38,57 @@ except metadata.PackageNotFoundError:  # pragma: no cover
 
 
 def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None, backend: str = "native"):
-    """Direct minimization (Riemannian CG or trust-region Newton)."""
+    """Minimize the free energy directly, with Riemannian CG or a Newton trust region.
+
+    Parameters
+    ----------
+    kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+        The problem.
+    P0 : (nk1, nk2, nb, nb) array
+        Starting density. Its occupations seed the iteration; the particle
+        number is imposed through the chemical potential.
+    n_electrons : float
+        Particle number, counted with the kernel weights, ``Σ_k w_k Tr P_k``.
+    config : SolverConfig, optional
+        Optimizer and stopping rule; ``None`` uses the defaults (CG).
+    backend : {"native", "jax"}
+        Which implementation runs the solve.
+
+    Returns
+    -------
+    SolveResult
+        The density, Fock matrix, energy, chemical potential, iteration count,
+        convergence flag and per-iteration history.
+    """
     return get_backend(backend).solve(kernel, P0, n_electrons, config=config)
 
 
 def solve_scf(kernel, P0, n_electrons, *, config: SCFConfig | None = None, backend: str = "native"):
-    """Roothaan SCF iteration (linear, DIIS, ODA, RDIIS or Anderson acceleration)."""
+    """Solve by Roothaan iteration: diagonalize the Fock matrix, refill, repeat.
+
+    Parameters
+    ----------
+    kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+        The problem.
+    P0 : (nk1, nk2, nb, nb) array
+        Starting density. Every acceleration except ``"oda"`` refills it at
+        ``n_electrons`` on the first step; ``"oda"`` starts from it as given,
+        so it must already hold ``n_electrons``.
+    n_electrons : float
+        Particle number, counted with the kernel weights, ``Σ_k w_k Tr P_k``.
+    config : SCFConfig, optional
+        Acceleration and tolerances; ``None`` uses plain linear mixing.
+        ``SCFConfig(acceleration="rdiis")`` is the recommended choice at finite
+        temperature.
+    backend : {"native", "jax"}
+        Which implementation runs the solve.
+
+    Returns
+    -------
+    SCFResult
+        The density, Fock matrix, energy, chemical potential, iteration count,
+        convergence flag, a message and the per-iteration history.
+    """
     return get_backend(backend).solve_scf(kernel, P0, n_electrons, config=config)
 
 
