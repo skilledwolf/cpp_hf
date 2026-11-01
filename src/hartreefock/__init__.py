@@ -71,9 +71,8 @@ def solve_scf(kernel, P0, n_electrons, *, config: SCFConfig | None = None, backe
     kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
         The problem.
     P0 : (nk1, nk2, nb, nb) array
-        Starting density. Every acceleration except ``"oda"`` refills it at
-        ``n_electrons`` on the first step; ``"oda"`` starts from it as given,
-        so it must already hold ``n_electrons``.
+        Starting density; its particle number is corrected to
+        ``n_electrons`` before the first step.
     n_electrons : float
         Particle number, counted with the kernel weights, ``Σ_k w_k Tr P_k``.
     config : SCFConfig, optional

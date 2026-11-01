@@ -20,6 +20,11 @@ on every solver picks one.
 backends that import, and {func}`~hartreefock.get_backend` returns one as a
 module.
 
+On the CPU, in double precision, the JAX backend calls three native kernels
+through `jax.ffi` when the extension was built with them: the batched
+eigensolver, a batched matrix product and the superlattice Fock build. Set
+the environment variable `HF_JAX_FFI=0` to run plain JAX instead.
+
 ## The same answer
 
 For JAX in double precision, enable `jax_enable_x64` before building the
@@ -75,8 +80,8 @@ every problem class.
 ## Speed
 
 Measured on 2026-11-01 on a 4-core Xeon cloud machine without a GPU
-(JAX 0.12, hartreefock at commit `9f82a69`), with contimod's bilayer and
-twisted-bilayer problems:
+(JAX 0.12, hartreefock at commit `9f82a69`, before the `jax.ffi` kernels),
+with contimod's bilayer and twisted-bilayer problems:
 
 | | JAX time relative to native |
 | --- | --- |

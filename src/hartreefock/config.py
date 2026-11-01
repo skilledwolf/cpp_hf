@@ -143,7 +143,7 @@ class SCFConfig:
     acceleration : {"linear", "diis", "oda", "rdiis", "anderson"}
         ``"linear"`` mixing; ``"diis"``, Pulay commutator DIIS on the Fock;
         ``"oda"``, optimal damping (exact line search at T = 0, free-energy
-        backtracking at T > 0; the start must hold the particle number);
+        backtracking at T > 0);
         ``"rdiis"`` (Fock) and ``"anderson"`` (density), full-residual schemes
         with a free-energy safeguard. ``"rdiis"`` is the recommended default at
         finite temperature.

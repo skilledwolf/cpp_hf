@@ -36,7 +36,9 @@ import hartreefock as hf
 print(hf.__version__, hf.available_backends())
 ```
 
-The package imports even when the extension failed to build; a native solve
+A source build compiles for the CPU it runs on (`-march=native`); pass
+`-C cmake.define.HF_NATIVE_ARCH=OFF` to `pip` for a build that runs on other
+machines. The package imports even when the extension failed to build; a native solve
 then raises a `RuntimeError` that says so.
 
 ## Precision

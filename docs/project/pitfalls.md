@@ -22,14 +22,6 @@ The same cell couples each k-point to itself, which at low temperature
 makes {func}`~hartreefock.stability_analysis` report mesh modes as
 unstable ([Solvers](../guides/solvers.md)).
 
-## The start of an ODA solve must hold the particle number
-
-`SCFConfig(acceleration="oda")` line-searches from `P0` as given. A `P0`
-with the wrong particle number stalls there for `max_iter` iterations and
-reports that density's energy. The other accelerations refill the
-density and recover. Build starts as filled Fermi discs with
-`n_electrons` in them.
-
 ## JAX in single precision
 
 The JAX backend computes in the dtype of the kernel's arrays, which is

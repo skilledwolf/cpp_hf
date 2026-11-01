@@ -102,8 +102,7 @@ ax.legend();
 - `"linear"`: plain mixing with `mixing`.
 - `"diis"`: Pulay DIIS on the Fock commutator.
 - `"oda"`: optimal damping, an exact line search at $T = 0$ and free-energy
-  backtracking at $T > 0$. It moves from `P0` by line searches and never
-  refills it, so `P0` must hold `n_electrons`.
+  backtracking at $T > 0$.
 - `"rdiis"` (Fock) and `"anderson"` (density): full-residual schemes with a
   free-energy safeguard. RDIIS is the recommended default at finite
   temperature; the native backend adds `preconditioner="hartree"` for
