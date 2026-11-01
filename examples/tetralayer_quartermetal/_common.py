@@ -84,7 +84,7 @@ def build_layer_Vq(model, h_template, *,
                    lat_nm: float = LAT_NM) -> np.ndarray:
     """Layer-resolved 2D Coulomb on the (nk1, nk2, nb, nb) grid (ungated)."""
     from contimod.coulomb import layer_coulomb_kernel
-    distances = np.asarray(h_template.kmesh.distance_grid)
+    distances = np.asarray(h_template.kmesh.transfer_distance_grid)
     Vq = layer_coulomb_kernel(
         distances, _z_aG(model),
         epsilon_zz=float(epsilon_zz), epsilon_perp=float(epsilon_perp),

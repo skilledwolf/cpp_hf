@@ -51,7 +51,7 @@ def bilayer_setup():
     h = model.discretize(mesh, fermi=FermiParams(T=temperature, mu=0.0))
 
     Vq = cm.coulomb.dualgate_coulomb(
-        h.kmesh.distance_grid, epsilon_r=float(ref["epsilon_r"]), d_gate=float(ref["d_gate"])
+        h.kmesh.transfer_distance_grid, epsilon_r=float(ref["epsilon_r"]), d_gate=float(ref["d_gate"])
     )
     kernel = hf.HartreeFockKernel(
         np.asarray(h.kmesh.weights), np.asarray(h.hs), np.asarray(Vq)[..., None, None],

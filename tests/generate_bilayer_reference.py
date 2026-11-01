@@ -63,7 +63,7 @@ def build_problem():
     weights = np.asarray(h_template.kmesh.weights)
 
     Vq = cm.coulomb.dualgate_coulomb(
-        h_template.kmesh.distance_grid,
+        h_template.kmesh.transfer_distance_grid,
         epsilon_r=EPSILON_R,
         d_gate=D_GATE,
     )

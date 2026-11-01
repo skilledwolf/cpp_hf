@@ -191,7 +191,7 @@ def build_bilayer(
     weights = np.asarray(h_template.kmesh.weights)
 
     Vq = cm.coulomb.dualgate_coulomb(
-        h_template.kmesh.distance_grid,
+        h_template.kmesh.transfer_distance_grid,
         epsilon_r=float(epsilon_r),
         d_gate=float(d_gate),
     )
@@ -299,14 +299,14 @@ def build_bilayer_layer_resolved(
     # Layer-resolved Coulomb: z_coords length = nb (per-orbital layer coord)
     z_coords = np.asarray(model.layer) * (layer_spacing_nm / lat_nm)
     Vq = layer_coulomb_kernel(
-        h_template.kmesh.distance_grid, z_coords,
+        h_template.kmesh.transfer_distance_grid, z_coords,
         epsilon_zz=float(epsilon_zz), epsilon_perp=float(epsilon_perp),
         a_nm=float(lat_nm),
     )
     Vq = np.asarray(Vq, dtype=np.float64)  # shape (nk, nk, nb, nb)
 
     # Extract hartree_matrix from Vq at q=0
-    distances = np.asarray(h_template.kmesh.distance_grid)
+    distances = np.asarray(h_template.kmesh.transfer_distance_grid)
     k0 = np.unravel_index(np.argmin(distances), distances.shape)
     hartree_matrix = np.asarray(Vq[k0], dtype=np.float64)
 

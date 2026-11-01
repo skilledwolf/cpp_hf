@@ -143,7 +143,7 @@ def _build_setup(D_Vnm: float, *, hartree_kind: str = "dualgate_eps2") -> dict:
 
     # Layer-resolved Coulomb V(q).
     Vq = layer_coulomb_kernel(
-        np.asarray(h.kmesh.distance_grid), _z_aG(model),
+        np.asarray(h.kmesh.transfer_distance_grid), _z_aG(model),
         epsilon_zz=eps_zz, epsilon_perp=eps_perp, a_nm=LAT_NM,
     )
     Vq = np.ascontiguousarray(np.asarray(Vq), dtype=np.float64)
