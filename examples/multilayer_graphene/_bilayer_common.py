@@ -22,12 +22,9 @@ os.environ.setdefault("MPLCONFIGDIR", str(_CACHE_ROOT / "matplotlib"))
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-for optional_src in (
-    REPO_ROOT.parent / "contimod" / "src",
-    REPO_ROOT.parent / "contimod_graphene" / "src",
-):
-    if optional_src.exists() and str(optional_src) not in sys.path:
-        sys.path.insert(0, str(optional_src))
+_CONTIMOD_SRC = REPO_ROOT.parent / "contimod" / "src"
+if _CONTIMOD_SRC.exists() and str(_CONTIMOD_SRC) not in sys.path:
+    sys.path.insert(0, str(_CONTIMOD_SRC))
 
 # -------- Physical parameters --------
 NK = 49
@@ -198,7 +195,7 @@ def build_bilayer(
         epsilon_r=float(epsilon_r),
         d_gate=float(d_gate),
     )
-    Vq = np.asarray(Vq.magnitude)[..., None, None]
+    Vq = np.asarray(Vq)[..., None, None]
 
     identity_op = np.asarray(model.identity)
     s1, s2, s3 = [np.asarray(model.spin_op(i)) for i in (1, 2, 3)]
@@ -278,7 +275,7 @@ def build_bilayer_layer_resolved(
 ) -> BilayerSetup:
     """Like ``build_bilayer`` but with a layer-resolved Coulomb kernel.
 
-    Uses ``contimod.meanfield.coulomb.layer_coulomb_kernel`` with per-orbital
+    Uses ``contimod.coulomb.layer_coulomb_kernel`` with per-orbital
     z-coordinates derived from ``model.layer``, giving a (nk, nk, nb, nb)
     kernel that supports both layer-resolved exchange AND Hartree.
 
@@ -287,7 +284,7 @@ def build_bilayer_layer_resolved(
     this builder leaves ``reference_density=None`` in the returned tuple.
     """
     import contimod as cm
-    from contimod.meanfield.coulomb import layer_coulomb_kernel
+    from contimod.coulomb import layer_coulomb_kernel
     from contimod.utils.spectrum_fermi import FermiParams
 
     from hartreefock.symmetry import make_project_fn

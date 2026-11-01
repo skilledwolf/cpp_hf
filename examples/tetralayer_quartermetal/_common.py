@@ -35,10 +35,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
-for opt in (REPO_ROOT.parent / "contimod" / "src",
-            REPO_ROOT.parent / "contimod_graphene" / "src"):
-    if opt.exists() and str(opt) not in sys.path:
-        sys.path.insert(0, str(opt))
+_CONTIMOD_SRC = REPO_ROOT.parent / "contimod" / "src"
+if _CONTIMOD_SRC.exists() and str(_CONTIMOD_SRC) not in sys.path:
+    sys.path.insert(0, str(_CONTIMOD_SRC))
 
 _CACHE_ROOT = Path(tempfile.gettempdir()) / "cpp_hf_optional_cache"
 os.environ.setdefault("NUMBA_CACHE_DIR", str(_CACHE_ROOT / "numba"))
@@ -84,7 +83,7 @@ def build_layer_Vq(model, h_template, *,
                    epsilon_zz: float = EPSILON_ZZ,
                    lat_nm: float = LAT_NM) -> np.ndarray:
     """Layer-resolved 2D Coulomb on the (nk1, nk2, nb, nb) grid (ungated)."""
-    from contimod.meanfield.coulomb import layer_coulomb_kernel
+    from contimod.coulomb import layer_coulomb_kernel
     distances = np.asarray(h_template.kmesh.distance_grid)
     Vq = layer_coulomb_kernel(
         distances, _z_aG(model),
@@ -99,7 +98,7 @@ def hartree_matrix_ungated(model, *,
                            epsilon_zz: float = EPSILON_ZZ,
                            lat_nm: float = LAT_NM) -> np.ndarray:
     """q=0 layer-Coulomb HH from ``layer_coulomb_kernel`` (ungated)."""
-    from contimod.meanfield.coulomb import layer_coulomb_kernel
+    from contimod.coulomb import layer_coulomb_kernel
     HH = layer_coulomb_kernel(
         np.array([[0.0]]), _z_aG(model),
         epsilon_zz=float(epsilon_zz), epsilon_perp=float(epsilon_perp),
@@ -114,7 +113,7 @@ def hartree_matrix_dualgate(model, *,
                             epsilon_zz: float = EPSILON_ZZ,
                             lat_nm: float = LAT_NM) -> np.ndarray:
     """q=0 dual-gate HH from ``dualgate_hartree_q0_matrix`` (literal spec)."""
-    from contimod.meanfield.coulomb import dualgate_hartree_q0_matrix
+    from contimod.coulomb import dualgate_hartree_q0_matrix
     HH = dualgate_hartree_q0_matrix(
         _z_aG(model), d_gate=gate_nm / lat_nm,
         epsilon_r=epsilon_perp, epsilon_r_perp=epsilon_zz, a=lat_nm,

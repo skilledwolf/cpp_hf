@@ -5,7 +5,7 @@ through ``contimod`` end-to-end.
 Self-contained: no dependency on ``examples/tetralayer_quartermetal/_common.py``.
 The model, the rhombic Brillouin-zone patch, the layer-resolved Coulomb
 interaction, the dual-gate Hartree matrix, the symmetry projectors
-(PM_C3 / C3 via ``contimod.meanfield.symmetry.build_graphene_projections``),
+(PM_C3 / C3 via ``contimod.materials.graphene.symmetry.build_graphene_projections``),
 and the SCF itself (``contimod.meanfield.solve(..., backend="native")``)
 are all built directly from the contimod public API.
 
@@ -51,7 +51,7 @@ import contimod as cm
 import hartreefock as hf
 
 from contimod import meanfield as mf
-from contimod.meanfield.coulomb import (
+from contimod.coulomb import (
     dualgate_hartree_q0_matrix,
     layer_coulomb_kernel,
 )
