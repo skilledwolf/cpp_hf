@@ -132,6 +132,23 @@ target_link_libraries(_native PRIVATE
 )
 target_compile_options(_native PRIVATE -fvisibility=hidden -O3)
 
+# XLA FFI handlers for the JAX backend: the headers ship with jaxlib.  Without
+# jaxlib at build time the module still builds and the JAX backend falls back
+# to XLA's own kernels.
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -c "import jax.ffi; print(jax.ffi.include_dir())"
+    OUTPUT_VARIABLE HF_XLA_FFI_INCLUDE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(HF_XLA_FFI_INCLUDE AND EXISTS "${HF_XLA_FFI_INCLUDE}/xla/ffi/api/ffi.h")
+    target_include_directories(_native PRIVATE "${HF_XLA_FFI_INCLUDE}")
+    target_compile_definitions(_native PRIVATE HF_HAVE_XLA_FFI=1)
+    message(STATUS "hartreefock: XLA FFI kernels enabled (${HF_XLA_FFI_INCLUDE})")
+else()
+    message(STATUS "hartreefock: jaxlib not found at build time; no XLA FFI kernels")
+endif()
+
 # Apple Accelerate: EIGEN_USE_BLAS routes Eigen's dynamic-size complex matrix
 # products (the per-k Q·diag·Q†, Q†FQ, V†FV, retraction gemms that dominate
 # the DM solver's non-Fock time) to Accelerate's AMX-backed zgemm — measured

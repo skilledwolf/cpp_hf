@@ -16,6 +16,7 @@ import jax
 import jax.numpy as jnp
 
 from .fock import hf_energy, occupation_entropy
+from .linalg import hermitian_eigh
 from .scf import _herm, _weighted_matrix_norm
 from .utils import fermidirac, find_chemical_potential
 
@@ -94,7 +95,7 @@ def _run_accelerated_scf(
 
     def entropy_and_repair(P):
         P = project(P)
-        p, Q = jnp.linalg.eigh(P)
+        p, Q = hermitian_eigh(P)
         count = jnp.sum(w2d[..., None] * p) / ws
         bad = ((jnp.min(p) < -8.0 * eps) | (jnp.max(p) > 1.0 + 8.0 * eps)
                | (jnp.abs(count - normalized_count) > 8.0 * eps * max(1, h.shape[-1])))
@@ -108,7 +109,7 @@ def _run_accelerated_scf(
         return P, occupation_entropy(p, w2d)
 
     def fermi_density(F, shift=0.0):
-        bands, Q = jnp.linalg.eigh(_herm(F))
+        bands, Q = hermitian_eigh(_herm(F))
         mu = find_chemical_potential(bands, w2d, n_electrons, T)
         p = fermidirac(bands - mu, T)
 

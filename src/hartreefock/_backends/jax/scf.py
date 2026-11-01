@@ -27,6 +27,7 @@ import jax.numpy as jnp
 
 from ...config import SCFConfig, SCFResult, drop_unrequested
 from .fock import fock_builder, free_energy, hf_energy
+from .linalg import hermitian_eigh
 from .utils import (
     device_args,
     fermidirac,
@@ -47,7 +48,7 @@ def _weighted_matrix_norm(matrix, weights, weight_sum):
 
 def _density_from_fock(fock, *, weights, n_electrons, temperature, level_shift):
     """Diagonalize Fock, find mu, build P = V diag(f) V†."""
-    eigenvalues, orbitals = jnp.linalg.eigh(_herm(fock))
+    eigenvalues, orbitals = hermitian_eigh(_herm(fock))
     mu_raw = find_chemical_potential(eigenvalues, weights, n_electrons, temperature)
     occ_raw = fermidirac(eigenvalues - mu_raw, temperature)
     level_shift = jnp.asarray(level_shift, dtype=eigenvalues.dtype)

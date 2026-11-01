@@ -15,10 +15,9 @@ from __future__ import annotations
 import weakref
 from typing import Callable
 
-import numpy as np
-
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ...superlattice import ExtendedGridLayout, superlattice_hartree
 

@@ -21,6 +21,7 @@ from jax import lax
 
 from ...config import SolveResult
 from .fock import build_fock, free_energy, hf_energy
+from .linalg import hermitian_eigh
 from .occupations import (
     _occupation_gradient,
     _project_capped_occupations,
@@ -59,7 +60,7 @@ def _project_density_eigensystem(Q, p, project_fn):
     changed = jnp.max(jnp.abs(P - raw)) > roundoff
 
     def repair(_):
-        p_new, Q_new = jnp.linalg.eigh(P)
+        p_new, Q_new = hermitian_eigh(P)
         return Q_new.astype(Q.dtype), p_new.astype(p.dtype)
 
     Q, p = lax.cond(changed, repair, lambda _: (Q, p), operand=None)
@@ -132,7 +133,7 @@ def _cayley_spectral_setup(d: jax.Array) -> tuple[jax.Array, jax.Array]:
     """Eigendecompose i*d for a skew-Hermitian d.  Returns (V, lam)."""
     iA = (1j * d).astype(d.dtype)
     iA = 0.5 * (iA + jnp.conj(jnp.swapaxes(iA, -1, -2)))  # exact Hermitisation
-    lam, V = jnp.linalg.eigh(iA)
+    lam, V = hermitian_eigh(iA)
     return V, lam.astype(jnp.real(d).dtype)
 
 
@@ -280,7 +281,7 @@ def _solve_impl(
         exchange_block_specs=block_specs,
         project_fn=project_fn,
     )
-    eps0, Q0 = jnp.linalg.eigh(F0)
+    eps0, Q0 = hermitian_eigh(F0)
     eps0 = eps0.astype(real_dtype)
     Q0 = Q0.astype(target_dtype)
     mu0 = _solve_mu(eps0, w_norm, n_target_norm,
@@ -400,7 +401,7 @@ def _solve_impl(
         # A Fermi-Dirac fixed-point residual remains well-defined at saturated
         # occupations, where the logit gradient is numerically singular.  Both
         # orbital and occupation stationarity are required for convergence.
-        eps_fd, Q_fd = jnp.linalg.eigh(F)
+        eps_fd, Q_fd = hermitian_eigh(F)
         mu_fd = _solve_mu(
             eps_fd.astype(real_dtype), w_norm, n_target_norm, mu, T_r,
             maxiter=mu_maxiter,
@@ -547,7 +548,7 @@ def _solve_impl(
             P_mix = _herm(
                 _project(P_cur + lam_fb.astype(target_dtype) * (P_fd - P_cur))
             )
-            p_mix, Q_mix = jnp.linalg.eigh(P_mix)
+            p_mix, Q_mix = hermitian_eigh(P_mix)
             p_mix = _project_capped_occupations(
                 p_mix.astype(real_dtype), w_norm, n_target_norm,
             )
@@ -626,7 +627,7 @@ def _solve_impl(
     )
 
     # Recheck the full self-consistency residual at the exact returned state.
-    eps_check, Q_check = jnp.linalg.eigh(F_fin)
+    eps_check, Q_check = hermitian_eigh(F_fin)
     mu_check = _solve_mu(
         eps_check.astype(real_dtype), w_norm, n_target_norm, mu_fin, T_r,
         maxiter=mu_maxiter,
@@ -647,7 +648,7 @@ def _solve_impl(
             contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
             exchange_block_specs=block_specs, project_fn=None,
         )
-        eps_next, Q_next = jnp.linalg.eigh(F_polish)
+        eps_next, Q_next = hermitian_eigh(F_polish)
         mu_next = _solve_mu(
             eps_next.astype(real_dtype), w_norm, n_target_norm, mu_check, T_r,
             maxiter=mu_maxiter,
