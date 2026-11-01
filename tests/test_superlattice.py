@@ -214,3 +214,35 @@ def test_sparse_channels_preserve_exact_convolution(hermitian, kind):
     scale = np.max(np.abs(expected))
     assert scale > 0
     assert np.max(np.abs(actual - expected)) / scale < 1e-12
+
+
+@pytest.mark.parametrize("orb", [False, True], ids=["scalar", "orbital"])
+def test_native_ffi_exchange_matches_pure_jax(x64, orb):
+    pytest.importorskip("jax")
+    import jax
+    import jax.numpy as jnp
+
+    from hartreefock._backends.jax import ffi
+    from hartreefock._backends.jax import superlattice as sl
+
+    if not ffi.available(ffi.SUPERLATTICE_FOCK):
+        pytest.skip("built without the XLA FFI headers")
+    rng = np.random.default_rng(11)
+    D = len(G) * NO
+    kernel = make_kernel(hermitian(rng, (NX, NY, D, D)), coulomb_V_orbital=orbital if orb else None)
+    layout = kernel.layout
+    native = sl._make_native_superlattice_fock_fn(layout, len(G), NO, NX, NY)
+    if orb:
+        pure = sl._make_orbital_superlattice_fock_fn(
+            layout, len(G), NO, NX, NY, layout.V_lag_fft_orbital
+        )
+    else:
+        pure = sl._make_scalar_superlattice_fock_fn(layout, len(G), NO, NX, NY)
+    rho = jnp.asarray(hermitian(rng, (NX, NY, D, D)))
+    np.testing.assert_allclose(native(rho), pure(rho), atol=1e-13)
+    # Non-Hermitian tangents go through the kernel without the ΔG halving.
+    drho = jnp.asarray(rng.normal(size=rho.shape) + 1j * rng.normal(size=rho.shape))
+    _, t_native = jax.jvp(native, (rho,), (drho,))
+    np.testing.assert_allclose(t_native, pure(drho), atol=1e-13)
+    batch = jnp.stack([rho, 2.0 * rho])
+    np.testing.assert_allclose(jax.vmap(native)(batch)[1], 2.0 * pure(rho), atol=1e-13)

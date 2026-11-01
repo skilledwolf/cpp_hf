@@ -2,36 +2,15 @@
 
 from __future__ import annotations
 
-import os
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import lax
 
-_FFI_EIGH = "hartreefock_eigh_c128"
-_ffi_ready: bool | None = None
-
-
-def _ffi_eigh_ready() -> bool:
-    """Register the native batched eigh with XLA once; ``False`` if unavailable.
-
-    ``HF_JAX_FFI=0`` turns the native kernels off (XLA's own eigh is used).
-    """
-    global _ffi_ready
-    if _ffi_ready is None:
-        _ffi_ready = False
-        if os.environ.get("HF_JAX_FFI", "1") != "0":
-            try:
-                from hartreefock._backends.native import _native
-            except ImportError:
-                return False
-            targets = _native.xla_ffi_targets()
-            if _FFI_EIGH in targets:
-                jax.ffi.register_ffi_target(_FFI_EIGH, targets[_FFI_EIGH], platform="cpu")
-                _ffi_ready = True
-    return _ffi_ready
+from . import ffi
 
 
 def hermitian_eigh(array: jax.Array) -> tuple[jax.Array, jax.Array]:
@@ -42,11 +21,11 @@ def hermitian_eigh(array: jax.Array) -> tuple[jax.Array, jax.Array]:
     other dtypes, it is ``jnp.linalg.eigh``.  Not differentiable.
     """
     array = jnp.asarray(array)
-    if array.dtype != jnp.complex128 or array.ndim < 3 or not _ffi_eigh_ready():
+    if array.dtype != jnp.complex128 or array.ndim < 3 or not ffi.available(ffi.EIGH):
         w, v = jnp.linalg.eigh(array)
         return w, v
     call = jax.ffi.ffi_call(
-        _FFI_EIGH,
+        ffi.EIGH,
         (
             jax.ShapeDtypeStruct(array.shape[:-1], jnp.float64),
             jax.ShapeDtypeStruct(array.shape, jnp.complex128),
@@ -312,7 +291,7 @@ def _eigh_block_indices(
     v_full = jnp.zeros(array.shape, dtype=array.dtype)
     col_start = 0
     for idx, v in zip(blocks, eigenvecs):
-        size = int(len(idx))
+        size = len(idx)
         idx_j = jnp.asarray(idx, dtype=jnp.int32)
         v_full = v_full.at[..., idx_j, col_start : col_start + size].set(v)
         col_start += size

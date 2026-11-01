@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from hartreefock._backends.jax import linalg
+from hartreefock._backends.jax import ffi, linalg
 
 
 def _hermitian(shape, seed=0):
@@ -14,7 +14,7 @@ def _hermitian(shape, seed=0):
     return jnp.asarray(a + np.conj(np.swapaxes(a, -1, -2)))
 
 
-@pytest.mark.skipif(not linalg._ffi_eigh_ready(), reason="built without the XLA FFI headers")
+@pytest.mark.skipif(not ffi.available(ffi.EIGH), reason="built without the XLA FFI headers")
 def test_ffi_eigh_matches_xla_under_jit_and_vmap():
     h = _hermitian((3, 4, 6, 6))
     w_ref, v_ref = jnp.linalg.eigh(h)
