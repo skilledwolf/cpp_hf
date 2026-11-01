@@ -2,13 +2,67 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Sequence
-
-import numpy as np
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import lax
+
+_FFI_EIGH = "hartreefock_eigh_c128"
+_ffi_ready: bool | None = None
+
+
+def _ffi_eigh_ready() -> bool:
+    """Register the native batched eigh with XLA once; ``False`` if unavailable.
+
+    ``HF_JAX_FFI=0`` turns the native kernels off (XLA's own eigh is used).
+    """
+    global _ffi_ready
+    if _ffi_ready is None:
+        _ffi_ready = False
+        if os.environ.get("HF_JAX_FFI", "1") != "0":
+            try:
+                from hartreefock._backends.native import _native
+            except ImportError:
+                return False
+            targets = _native.xla_ffi_targets()
+            if _FFI_EIGH in targets:
+                jax.ffi.register_ffi_target(_FFI_EIGH, targets[_FFI_EIGH], platform="cpu")
+                _ffi_ready = True
+    return _ffi_ready
+
+
+def hermitian_eigh(array: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """Batched Hermitian eigh over the last two axes: ascending ``w`` and column eigenvectors.
+
+    On CPU a complex128 batch goes to the native OpenMP kernel through
+    ``jax.ffi`` (XLA CPU loops over the batch serially); elsewhere, and for
+    other dtypes, it is ``jnp.linalg.eigh``.  Not differentiable.
+    """
+    array = jnp.asarray(array)
+    if array.dtype != jnp.complex128 or array.ndim < 3 or not _ffi_eigh_ready():
+        w, v = jnp.linalg.eigh(array)
+        return w, v
+    call = jax.ffi.ffi_call(
+        _FFI_EIGH,
+        (
+            jax.ShapeDtypeStruct(array.shape[:-1], jnp.float64),
+            jax.ShapeDtypeStruct(array.shape, jnp.complex128),
+        ),
+        vmap_method="broadcast_all",
+    )
+
+    def native(a):
+        return tuple(call(a))
+
+    def xla(a):
+        return tuple(jnp.linalg.eigh(a))
+
+    w, v = lax.platform_dependent(array, cpu=native, default=xla)
+    return w, v
+
 
 # Canonical, JIT-friendly block spec representation:
 #   ("sizes",   (n1, n2, ...)) or
@@ -103,7 +157,6 @@ def eigh(
     check_offdiag: bool | None = None,
     offdiag_atol: float = 1e-12,
     offdiag_rtol: float = 0.0,
-    **kwargs,
 ) -> tuple[jax.Array, jax.Array]:
     """Eigen-decomposition of a Hermitian matrix with optional block structure.
 
@@ -125,9 +178,8 @@ def eigh(
                 check_offdiag=check,
                 offdiag_atol=float(offdiag_atol),
                 offdiag_rtol=float(offdiag_rtol),
-                **kwargs,
             )
-        w, v = jnp.linalg.eigh(array, **kwargs)
+        w, v = hermitian_eigh(array)
         return w, v
 
     if block_sizes is not None:
@@ -140,7 +192,6 @@ def eigh(
             check_offdiag=check,
             offdiag_atol=float(offdiag_atol),
             offdiag_rtol=float(offdiag_rtol),
-            **kwargs,
         )
 
     if block_indices is not None:
@@ -153,10 +204,9 @@ def eigh(
             check_offdiag=check,
             offdiag_atol=float(offdiag_atol),
             offdiag_rtol=float(offdiag_rtol),
-            **kwargs,
         )
 
-    w, v = jnp.linalg.eigh(array, **kwargs)
+    w, v = hermitian_eigh(array)
     return w, v
 
 
@@ -212,7 +262,7 @@ def _mask_from_block_indices(block_indices: tuple[tuple[int, ...], ...], n: int)
 
 
 def _eigh_block_sizes(
-    array: jax.Array, block_sizes: tuple[int, ...], *, sort: bool, **kwargs
+    array: jax.Array, block_sizes: tuple[int, ...], *, sort: bool
 ) -> tuple[jax.Array, jax.Array]:
     n = int(array.shape[-1])
     sizes = _validate_block_sizes(block_sizes, n)
@@ -221,7 +271,7 @@ def _eigh_block_sizes(
     eigenvals = []
     eigenvecs = []
     for s in blocks:
-        w, v = jnp.linalg.eigh(array[..., s, s], **kwargs)
+        w, v = hermitian_eigh(array[..., s, s])
         eigenvals.append(w)
         eigenvecs.append(v)
 
@@ -243,7 +293,7 @@ def _eigh_block_sizes(
 
 
 def _eigh_block_indices(
-    array: jax.Array, block_indices: tuple[tuple[int, ...], ...], *, sort: bool, **kwargs
+    array: jax.Array, block_indices: tuple[tuple[int, ...], ...], *, sort: bool
 ) -> tuple[jax.Array, jax.Array]:
     n = int(array.shape[-1])
     blocks = _validate_block_indices(block_indices, n)
@@ -253,7 +303,7 @@ def _eigh_block_indices(
     for idx in blocks:
         idx_j = jnp.asarray(idx, dtype=jnp.int32)
         sub = jnp.take(jnp.take(array, idx_j, axis=-2), idx_j, axis=-1)
-        w, v = jnp.linalg.eigh(sub, **kwargs)
+        w, v = hermitian_eigh(sub)
         eigenvals.append(w)
         eigenvecs.append(v)
 
@@ -283,7 +333,6 @@ def _eigh_block_specs(
     check_offdiag: bool,
     offdiag_atol: float,
     offdiag_rtol: float,
-    **kwargs,
 ) -> tuple[jax.Array, jax.Array]:
     n = int(array.shape[-1])
 
@@ -293,7 +342,7 @@ def _eigh_block_specs(
         tol = jnp.asarray(offdiag_atol, dtype=abs_array.dtype) + jnp.asarray(offdiag_rtol, dtype=abs_array.dtype) * scale
 
     def do_full(_):
-        w, v = jnp.linalg.eigh(array, **kwargs)
+        w, v = hermitian_eigh(array)
         return w, v
 
     fn = do_full
@@ -312,7 +361,7 @@ def _eigh_block_specs(
             )
 
             def do_block(_, *, _sizes=sizes):
-                return _eigh_block_sizes(array, _sizes, sort=sort, **kwargs)
+                return _eigh_block_sizes(array, _sizes, sort=sort)
 
         elif kind == "indices":
             blocks = _validate_block_indices(
@@ -327,7 +376,7 @@ def _eigh_block_specs(
             )
 
             def do_block(_, *, _blocks=blocks):
-                return _eigh_block_indices(array, _blocks, sort=sort, **kwargs)
+                return _eigh_block_indices(array, _blocks, sort=sort)
 
         else:
             raise ValueError("block_specs kind must be 'sizes' or 'indices'.")

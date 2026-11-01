@@ -9,6 +9,7 @@ from jax import lax
 
 from ...config import SolveResult
 from .fock import build_fock, free_energy, hf_energy
+from .linalg import hermitian_eigh
 from .occupations import (
     _active_occupations,
     _logit_clip_eps,
@@ -259,7 +260,7 @@ def _solve_newton_impl(
         Ft = _fock_in_orbital_basis(Q, _herm(_project(F)))
         diff_p = p[..., None, :] - p[..., :, None]
         G = _skew_hermitian(diff_p * Ft) * offdiag
-        eps, V_fd = jnp.linalg.eigh(Ft)
+        eps, V_fd = hermitian_eigh(Ft)
         eps = eps.astype(real_dtype)
         mu_fd = _solve_mu(
             eps, w_norm, n_target_norm, jnp.asarray(0.0, dtype=real_dtype),
@@ -278,7 +279,7 @@ def _solve_newton_impl(
     P0_h = _herm(_project(jnp.asarray(P0, dtype=target_dtype)))
     _, _, F0 = _fock_full(P0_h)
     F0 = _herm(_project(F0))
-    eps0, Q0 = jnp.linalg.eigh(F0)
+    eps0, Q0 = hermitian_eigh(F0)
     eps0 = eps0.astype(real_dtype)
     Q0 = Q0.astype(target_dtype)
     mu0 = _solve_mu(eps0, w_norm, n_target_norm,
@@ -467,7 +468,7 @@ def _solve_newton_impl(
         # preserves the particle count (convex density mixing), is represented
         # by a consistent eigendecomposition (Q,p), and is accepted only on
         # true free-energy descent.
-        eps_fd, V_fd = jnp.linalg.eigh(Ft)
+        eps_fd, V_fd = hermitian_eigh(Ft)
         mu_fd = _solve_mu(
             eps_fd.astype(real_dtype), w_norm, n_target_norm, mu, T_r,
             maxiter=mu_maxiter,
@@ -484,7 +485,7 @@ def _solve_newton_impl(
         def fb_body(state):
             i, lam_fb, _accepted_fb, *_rest = state
             P_mix = _herm(_project(P_cur + lam_fb.astype(target_dtype) * (P_fd - P_cur)))
-            p_mix, Q_mix = jnp.linalg.eigh(P_mix)
+            p_mix, Q_mix = hermitian_eigh(P_mix)
             p_mix = _project_capped_occupations(
                 p_mix.astype(real_dtype), w2d, n_target,
             )
@@ -566,7 +567,7 @@ def _solve_newton_impl(
         P_fin, h=h, Sigma=Sigma_fin, H=H_fin, weights_b=weights_b, refP=refP,
     )
     F_fin = _herm(_project(F_fin))
-    eps_check, Q_check = jnp.linalg.eigh(F_fin)
+    eps_check, Q_check = hermitian_eigh(F_fin)
     mu_check = _solve_mu(
         eps_check.astype(real_dtype), w_norm, n_target_norm, mu_fin, T_r,
         maxiter=mu_maxiter,

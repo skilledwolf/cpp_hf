@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax.numpy.fft import fftn, ifftn, ifftshift
 from jax.scipy.special import expit
 

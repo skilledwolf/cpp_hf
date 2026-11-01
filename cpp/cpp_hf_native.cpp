@@ -18,6 +18,9 @@
 #include "cpp_hf/superlattice.hpp"
 #include "cpp_hf/types.hpp"
 #include "cpp_hf/utils.hpp"
+#ifdef HF_HAVE_XLA_FFI
+#include "cpp_hf/xla_ffi.hpp"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -541,6 +544,16 @@ PYBIND11_MODULE(_native, m) {
               py::gil_scoped_release release;
               FftPlanCache::instance().clear();
           });
+
+    // --- XLA FFI targets for the JAX backend (empty without the headers) ---
+    m.def("xla_ffi_targets", []() {
+        py::dict targets;
+#ifdef HF_HAVE_XLA_FFI
+        targets["hartreefock_eigh_c128"] =
+            py::capsule(reinterpret_cast<void*>(cpp_hf::xla_ffi::EighC128));
+#endif
+        return targets;
+    });
 
     // --- Hermitian eigh (batched + block-sizes) ---
     m.def("eigh_batched",

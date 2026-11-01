@@ -4,6 +4,8 @@ requires = [
     "pybind11>=2.11",
     "numpy",
     "setuptools_scm[toml]>=8",
+    # jaxlib ships the XLA FFI headers the JAX backend's C++ kernels compile against.
+    "jax>=0.5.3",
 ]
 build-backend = "scikit_build_core.build"
 
