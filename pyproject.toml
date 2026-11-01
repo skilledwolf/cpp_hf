@@ -69,10 +69,8 @@ addopts = "--import-mode=importlib"
 [tool.cibuildwheel]
 build = "cp311-* cp312-* cp313-*"
 skip = "pp* *-musllinux_*"
-# API-agnostic load test: confirms the native extension (FFTW/OpenMP linked)
-# imports from the repaired wheel.  (The old ci/smoke_test.py used a since-
-# renamed API.)
-test-command = 'python -c "import cpp_hf"'
+# Load test: the native extension (FFTW/OpenMP linked) imports from the repaired wheel.
+test-command = 'python -c "import hartreefock.backends.native"'
 
 [tool.cibuildwheel.linux]
 before-all = "bash ci/linux_before_all.sh"
@@ -88,7 +86,7 @@ archs = ["native"]
 # One script handles both archs: arm64 builds FFTW from source, x86_64 uses brew.
 before-all = "bash ci/macos_arm_fftw.sh"
 repair-wheel-command = """
-delocate-wheel -L cpp_hf/.dylibs --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
+delocate-wheel -L hartreefock/.dylibs --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
 """
 
 # Teach CMake/pkg-config where the cached FFTW (and vendored Boost headers) live.

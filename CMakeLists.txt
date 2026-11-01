@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(cpp_hf LANGUAGES CXX)
+project(hartreefock LANGUAGES CXX)
 
 # -----------------------------
 # Options
@@ -111,9 +111,9 @@ if(HF_USE_OPENMP)
     endif()
     if(OpenMP_CXX_FOUND)
         set(HF_OPENMP_LIB OpenMP::OpenMP_CXX)
-        message(STATUS "cpp_hf: OpenMP enabled (${OpenMP_CXX_FLAGS})")
+        message(STATUS "hartreefock: OpenMP enabled (${OpenMP_CXX_FLAGS})")
     else()
-        message(STATUS "cpp_hf: OpenMP NOT found — building serial kernels")
+        message(STATUS "hartreefock: OpenMP NOT found — building serial kernels")
     endif()
 endif()
 
