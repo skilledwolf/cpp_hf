@@ -52,8 +52,8 @@ def _run_d_row(args: tuple) -> list[dict]:
     import _common as qm
     import hartreefock
     from hartreefock import SolverConfig
-    from hartreefock.backends.native import solve
-    from hartreefock.backends.native import build_fock
+    from hartreefock._backends.native import solve
+    from hartreefock._backends.native import build_fock
     from hartreefock.kernel import exchange_self_energy
 
     setup = qm.build_setup(
@@ -152,7 +152,7 @@ def _run_d_row(args: tuple) -> list[dict]:
         eigs = np.linalg.eigvalsh(fock.reshape(-1, fock.shape[-2],
                                                  fock.shape[-1]))
         eigs = eigs.reshape(*fock.shape[:2], -1)
-        from hartreefock.backends.native import find_chemical_potential
+        from hartreefock._backends.native import find_chemical_potential
         E_F = float(find_chemical_potential(eigs, w, n_e, T))
         import bztetra.twod as twod
         s = 2.0 * kmax

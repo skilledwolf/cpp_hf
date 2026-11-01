@@ -70,7 +70,7 @@ addopts = "--import-mode=importlib"
 build = "cp311-* cp312-* cp313-*"
 skip = "pp* *-musllinux_*"
 # Load test: the native extension (FFTW/OpenMP linked) imports from the repaired wheel.
-test-command = 'python -c "import hartreefock.backends.native"'
+test-command = "python -c \"import hartreefock; hartreefock.get_backend('native')\""
 
 [tool.cibuildwheel.linux]
 before-all = "bash ci/linux_before_all.sh"

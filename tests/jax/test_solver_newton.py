@@ -28,9 +28,9 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig
-from hartreefock.backends.jax import solve, solve_scf
-from hartreefock.backends.jax.fock import build_fock
-from hartreefock.backends.jax.utils import density_matrix_from_fock
+from hartreefock._backends.jax import solve, solve_scf
+from hartreefock._backends.jax.fock import build_fock
+from hartreefock._backends.jax.utils import density_matrix_from_fock
 
 
 # --------------------------------------------------------------------------
@@ -119,7 +119,7 @@ class TestNewtonHvp:
         from jax.scipy.linalg import expm
 
         K = _multiband(5, 5, 0.05, 0.4, 4)
-        a = K.as_args()
+        a = K._as_args()
         h = a["h"]
         T = float(K.T)
         nb = h.shape[-1]
@@ -193,7 +193,7 @@ class TestNewtonHvp:
         assert errs_p[1] < 0.2 * errs_p[0] + 1e-12
 
     def test_predicted_reduction_includes_occupation_linear_term(self):
-        from hartreefock.backends.jax.solver import _joint_predicted_reduction
+        from hartreefock._backends.jax.newton import _joint_predicted_reduction
 
         weights = jnp.ones((1, 1), dtype=jnp.float64)
         zeros_Q = jnp.zeros((1, 1, 2, 2), dtype=jnp.complex128)

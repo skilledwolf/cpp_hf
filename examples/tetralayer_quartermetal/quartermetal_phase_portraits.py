@@ -42,9 +42,9 @@ for p in (str(SRC_DIR), str(EXAMPLES_DIR)):
 import hartreefock
 
 from hartreefock import SolverConfig
-from hartreefock.backends.native import solve
-from hartreefock.backends.native import build_fock
-from hartreefock.backends.native import find_chemical_potential
+from hartreefock._backends.native import solve
+from hartreefock._backends.native import build_fock
+from hartreefock._backends.native import find_chemical_potential
 from hartreefock.kernel import exchange_self_energy
 import _common as qm
 

@@ -2,8 +2,8 @@ import numpy as np
 
 import jax.numpy as jnp
 
-from hartreefock.backends.jax.linalg import eigh
-from hartreefock.backends.jax.utils import selfenergy_fft
+from hartreefock._backends.jax.linalg import eigh
+from hartreefock._backends.jax.utils import selfenergy_fft
 
 
 def test_block_eigh_falls_back_to_full_when_coupled():

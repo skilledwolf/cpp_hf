@@ -2,7 +2,7 @@
 
 :func:`superlattice_build_fock` turns a
 :class:`~hartreefock.superlattice.SuperlatticeHartreeFockKernel` into a Fock
-builder with the signature of :func:`~hartreefock.backends.jax.fock.build_fock`,
+builder with the signature of :func:`~hartreefock._backends.jax.fock.build_fock`,
 so the jitted SCF, direct-minimization and stability loops run on it
 unchanged.  Exchange streams one ``ΔG`` channel (or one ``(ΔG, α, β)``
 channel with an orbital interaction) through a single extended-grid scratch
@@ -164,7 +164,7 @@ def superlattice_build_fock(kernel) -> Callable:
 
     Exchange is the streaming convolution above; the k-independent Hartree
     term is folded into ``Sigma`` and the returned ``H`` is zero, so
-    :func:`~hartreefock.backends.jax.fock.hf_energy` is unchanged.
+    :func:`~hartreefock._backends.jax.fock.hf_energy` is unchanged.
     """
     cached = _BUILDERS.get(kernel)
     if cached is not None:

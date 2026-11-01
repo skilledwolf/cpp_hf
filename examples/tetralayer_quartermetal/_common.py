@@ -703,7 +703,7 @@ def pm_c3_cn_reference_density(setup: QMSetup, *,
 
 def hf_energy_for_density(kernel, P: np.ndarray) -> float:
     """Evaluate the current referenced HF functional for ``P``."""
-    from hartreefock.backends.native import build_fock
+    from hartreefock._backends.native import build_fock
     return float(build_fock(kernel, P)[3])
 
 
@@ -728,7 +728,7 @@ def _bootstrap_cn_sc_reference(setup: QMSetup, *,
     """
     import hartreefock
     from hartreefock import SolverConfig
-    from hartreefock.backends.native import solve
+    from hartreefock._backends.native import solve
     if T is None:
         T = float(setup.h_template.fermi.T)
     if projector_key not in setup.project_fns:

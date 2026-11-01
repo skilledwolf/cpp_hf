@@ -37,7 +37,7 @@ if str(EXAMPLES_DIR) not in sys.path:
 
 import hartreefock
 
-import hartreefock.backends.native as cpp_hf
+import hartreefock._backends.native as cpp_hf
 import _bilayer_common as common
 
 

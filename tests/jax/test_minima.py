@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from hartreefock import HartreeFockKernel, SCFConfig
-from hartreefock.backends.jax import solve_minimum
+from hartreefock import solve_minimum
 
 jax.config.update("jax_enable_x64", True)
 
@@ -47,7 +47,7 @@ def test_nonstationary_iterate_is_not_reported_as_a_minimum():
 
 def test_near_saddle_local_stall_can_propose_a_validated_escape(monkeypatch):
     from dataclasses import replace
-    import hartreefock.backends.jax.minima as module
+    import hartreefock._backends.jax.minima as module
     actual_solve = module.solve_scf
     calls = []
     def first_local_budget_is_short(*args, config, **kwargs):
@@ -67,9 +67,9 @@ def test_near_saddle_local_stall_can_propose_a_validated_escape(monkeypatch):
 
 
 def test_float32_escape_requires_descent_above_kernel_precision(monkeypatch):
-    from hartreefock.backends.jax.reference_scf import SCFResult
-    from hartreefock.backends.jax.stability import StabilityResult
-    import hartreefock.backends.jax.minima as module
+    from hartreefock._backends.jax.scf import SCFResult
+    from hartreefock._backends.jax.stability import StabilityResult
+    import hartreefock._backends.jax.minima as module
 
     h = np.zeros((1, 1, 2, 2), np.complex64)
     kernel = HartreeFockKernel(np.ones((1, 1), np.float32), h,
@@ -101,10 +101,10 @@ def test_float32_escape_requires_descent_above_kernel_precision(monkeypatch):
 
 def test_fermi_escape_preserves_saturated_coupled_tangent_and_energy_curvature(monkeypatch):
     from scipy.special import expit, xlogy
-    from hartreefock.backends.jax import stability_analysis
-    from hartreefock.backends.jax.minima import _fermi_escape_density
-    from hartreefock.backends.jax import stability as stability_module
-    from hartreefock.backends.jax.stability import (
+    from hartreefock import stability_analysis
+    from hartreefock._backends.jax.minima import _fermi_escape_density
+    from hartreefock._backends.jax import stability as stability_module
+    from hartreefock._backends.jax.stability import (
         _evaluate_fock, _fock_kwargs, _host_fermi_density, _response_fock,
     )
 
@@ -164,7 +164,7 @@ def test_fermi_escape_preserves_saturated_coupled_tangent_and_energy_curvature(m
 
 
 def test_fermi_retraction_escapes_without_using_density_projection(monkeypatch):
-    import hartreefock.backends.jax.minima as module
+    import hartreefock._backends.jax.minima as module
     def forbidden_projection(*args, **kwargs):
         raise AssertionError("Fermi trials already provide a feasible descent")
     monkeypatch.setattr(module, "_feasible_density", forbidden_projection)
@@ -181,7 +181,7 @@ def test_fermi_retraction_escapes_without_using_density_projection(monkeypatch):
 
 
 def test_projected_density_fallback_remains_available_when_fermi_trials_stall(monkeypatch):
-    import hartreefock.backends.jax.minima as module
+    import hartreefock._backends.jax.minima as module
     P = np.eye(2)[None, None]/2
     fermi_calls = []
     def unresolved_fermi_step(*args, **kwargs):
@@ -197,7 +197,7 @@ def test_projected_density_fallback_remains_available_when_fermi_trials_stall(mo
 def test_stale_legacy_history_cannot_make_an_unchanged_trial_look_like_descent(monkeypatch):
     from dataclasses import replace
     from scipy.special import xlogy
-    import hartreefock.backends.jax.minima as module
+    import hartreefock._backends.jax.minima as module
     kernel = saddle_kernel()
     P = np.eye(2)[None, None]/2
     actual_solve = module.solve_scf

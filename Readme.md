@@ -7,8 +7,8 @@ backends solve it:
 * `backend="native"` (default): a pybind11 extension on FFTW + Eigen, double
   precision, GIL released for every solver call.
 * `backend="jax"` (extra `hartreefock[jax]`): jitted JAX solvers. It adds the
-  RDIIS / Anderson SCF schemes, stability analysis and checked minimization
-  (`hartreefock.backends.jax`).
+  RDIIS / Anderson SCF schemes, and JAX powers `hf.stability_analysis` and
+  `hf.solve_minimum`.
 
 Two kernel types cover the problems:
 
@@ -62,6 +62,10 @@ result = hf.solve_continuation(
     fine_config=hf.SolverConfig(max_iter=200, tol_E=1e-8),
 )
 ```
+
+Both kernels expose the interaction as NumPy linear maps, `kernel.exchange(rho)`,
+`kernel.hartree(rho)` and `kernel.potential(rho)`; the solvers' Fock matrix is
+`h + kernel.potential(P - refP)`. `hartreefock._backends` is private.
 
 Energies are the variational functional
 `E_var = Tr(h P) + 1/2 Tr(V_HF[P - P_ref] (P - P_ref))`; an embedded kernel

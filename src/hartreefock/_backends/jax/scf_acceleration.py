@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 
 from .fock import hf_energy, occupation_entropy
-from .reference_scf import _herm, _weighted_matrix_norm
+from .scf import _herm, _weighted_matrix_norm
 from .utils import fermidirac, find_chemical_potential
 
 

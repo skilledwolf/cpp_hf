@@ -14,7 +14,7 @@ import pytest
 import jax.numpy as jnp
 
 from hartreefock import HartreeFockKernel, SCFConfig
-from hartreefock.backends.jax import solve_scf
+from hartreefock._backends.jax import solve_scf
 
 
 def _comm_rms(F, P, w2d):
@@ -179,7 +179,7 @@ def test_density_from_fock_only_resolves_mu_for_nonzero_shift(
     monkeypatch, level_shift, expected_solves,
 ):
     import jax
-    import hartreefock.backends.jax.reference_scf as scf
+    import hartreefock._backends.jax.scf as scf
 
     calls = []
     original = scf.find_chemical_potential

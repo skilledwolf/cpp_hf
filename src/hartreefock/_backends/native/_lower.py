@@ -17,7 +17,7 @@ def kernel_args(kernel) -> dict:
     For a :class:`SuperlatticeHartreeFockKernel` the ``superlattice_*`` flags
     route ``build_fock_compact`` to the streaming Fock and the ΔG Hartree.
     """
-    a = kernel.as_args()
+    a = kernel._as_args()
     has_refP = bool(kernel.has_reference_density)
     args = dict(
         h=_c(a["h"], np.complex128),

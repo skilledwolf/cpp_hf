@@ -8,13 +8,10 @@ import jax.numpy as jnp
 from scipy.linalg import expm
 
 from hartreefock import HartreeFockKernel, SolverConfig
-from hartreefock.backends.jax import solve
-from hartreefock.backends.jax.solver import (
-    _deflation_bias, _deflation_response, _density_from_Qp,
-    _fock_in_orbital_basis, _herm, _joint_hvp, _joint_inner_product,
-    _occupation_gradient, _project_occ, _scale_joint_step_to_bounds,
-    _skew_hermitian,
-)
+from hartreefock._backends.jax import solve
+from hartreefock._backends.jax.newton import _deflation_bias, _deflation_response, _joint_hvp, _joint_inner_product, _scale_joint_step_to_bounds
+from hartreefock._backends.jax.riemannian import _density_from_Qp, _fock_in_orbital_basis, _herm, _skew_hermitian
+from hartreefock._backends.jax.occupations import _occupation_gradient, _project_occ
 
 
 def _random_geometry(seed=12):

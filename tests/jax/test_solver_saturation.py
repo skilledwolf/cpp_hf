@@ -27,9 +27,10 @@ import jax
 import jax.numpy as jnp
 
 from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig
-from hartreefock.backends.jax import solve, solve_scf
-from hartreefock.backends.jax.fock import build_fock, free_energy, hf_energy
-import hartreefock.backends.jax.solver as S
+from hartreefock._backends.jax import solve, solve_scf
+from hartreefock._backends.jax.fock import build_fock, free_energy, hf_energy
+import hartreefock._backends.jax.occupations as O
+import hartreefock._backends.jax.riemannian as R
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +57,7 @@ def _wide_band_kernel(nk=6, nb=4, T=0.01, ex=0.3, seed=0):
 
 
 def _fock(kernel, P):
-    a = kernel.as_args()
+    a = kernel._as_args()
     return build_fock(
         P, h=a["h"], VR=a["VR"], refP=a["refP"], HH=a["HH"], w2d=kernel.w2d,
         include_exchange=a["include_exchange"], include_hartree=a["include_hartree"],
@@ -71,14 +72,14 @@ def _initial_state(kernel, n_electrons):
     eps0, Q = jnp.linalg.eigh(F0)
     w_norm = kernel.w2d / kernel.weight_sum
     ntn = n_electrons / float(kernel.weight_sum)
-    mu = S._solve_mu(eps0, w_norm, ntn, 0.0, kernel.T, maxiter=50)
+    mu = O._solve_mu(eps0, w_norm, ntn, 0.0, kernel.T, maxiter=50)
     p = jax.nn.sigmoid((mu - eps0) / kernel.T)
     return Q, p, mu, w_norm, ntn
 
 
 def _free_energy(kernel, Q, p):
-    a = kernel.as_args()
-    P = S._herm(S._density_from_Qp(Q, p))
+    a = kernel._as_args()
+    P = R._herm(R._density_from_Qp(Q, p))
     Sigma, H, _ = _fock(kernel, P)
     E = hf_energy(P, h=a["h"], Sigma=Sigma, H=H, weights_b=kernel.weights_b, refP=a["refP"])
     return free_energy(E, p, kernel.w2d, kernel.T)
@@ -90,9 +91,9 @@ class TestSaturatedOccupationGradient:
         n_e = 1.5 * float(kernel.weight_sum)          # metallic: band 2 partially filled
         Q, p, mu, w_norm, _ = _initial_state(kernel, n_e)
         _, _, F0 = _fock(kernel, jnp.zeros_like(kernel.h))
-        eps = jnp.real(jnp.diagonal(S._fock_in_orbital_basis(Q, F0), axis1=-2, axis2=-1))
+        eps = jnp.real(jnp.diagonal(R._fock_in_orbital_basis(Q, F0), axis1=-2, axis2=-1))
 
-        g, h, curv, active = S._occupation_gradient(eps, p, kernel.T, w_norm)
+        g, h, curv, active = O._occupation_gradient(eps, p, kernel.T, w_norm)
         frac_saturated = 1.0 - float(jnp.mean(active))
         assert frac_saturated > 0.5, "fixture should saturate most occupations"
         assert bool(jnp.any(active)), "fixture should keep some bands partially filled"
@@ -101,26 +102,26 @@ class TestSaturatedOccupationGradient:
         # preconditioned form must vanish relative to the band scale.  The only
         # residue is the logit round trip of nearly saturated active bands
         # (relative error ~eps/(1-p) in logit, damped by curv ~ (1-p) in h).
-        scale = float(S._norm_vec(eps, w_norm))
-        assert float(S._norm_vec(g, w_norm)) < 1e-7 * scale
-        assert float(S._norm_vec(h, w_norm)) < 1e-10 * scale
+        scale = float(R._norm_vec(eps, w_norm))
+        assert float(R._norm_vec(g, w_norm)) < 1e-7 * scale
+        assert float(R._norm_vec(h, w_norm)) < 1e-10 * scale
         assert bool(jnp.all(curv[~active] == 0.0))
 
         # The unmasked formula this replaces is not small: the clipped logit of
         # the saturated bands leaks through the uniform particle shift.
-        g_unmasked = S._project_occ(eps + kernel.T * S._logit(p), w_norm)
-        assert float(S._norm_vec(g_unmasked, w_norm)) > 1e-2 * scale
+        g_unmasked = O._project_occ(eps + kernel.T * O._logit(p), w_norm)
+        assert float(R._norm_vec(g_unmasked, w_norm)) > 1e-2 * scale
 
     def test_preconditioned_direction_is_descent(self):
         kernel = _wide_band_kernel()
         n_e = 1.5 * float(kernel.weight_sum)
         Q, p, mu, w_norm, ntn = _initial_state(kernel, n_e)
         # Interacting Fock at the initial density: not stationary in p.
-        P = S._herm(S._density_from_Qp(Q, p))
+        P = R._herm(R._density_from_Qp(Q, p))
         _, _, F = _fock(kernel, P)
-        eps = jnp.real(jnp.diagonal(S._fock_in_orbital_basis(Q, F), axis1=-2, axis2=-1))
-        g_raw = eps + kernel.T * S._logit(p)
-        _, h, curv, _ = S._occupation_gradient(eps, p, kernel.T, w_norm)
+        eps = jnp.real(jnp.diagonal(R._fock_in_orbital_basis(Q, F), axis1=-2, axis2=-1))
+        g_raw = eps + kernel.T * O._logit(p)
+        _, h, curv, _ = O._occupation_gradient(eps, p, kernel.T, w_norm)
 
         # Analytic directional derivative along p -> p - tau h, in the same
         # (unnormalised) k-weights the free energy uses.
@@ -128,12 +129,12 @@ class TestSaturatedOccupationGradient:
         assert slope < 0.0
         Om0 = float(_free_energy(kernel, Q, p))
         tau = 1e-4
-        p_t = S._project_capped_occupations(p - tau * h, w_norm, ntn)
+        p_t = O._project_capped_occupations(p - tau * h, w_norm, ntn)
         fd_slope = (float(_free_energy(kernel, Q, p_t)) - Om0) / tau
         np.testing.assert_allclose(fd_slope, slope, rtol=2e-2)
         # Particle number is preserved by the direction itself, up to the
         # rounding of the band-scale shift that was subtracted to form h.
-        scale = float(S._norm_vec(eps, w_norm))
+        scale = float(R._norm_vec(eps, w_norm))
         assert abs(float(jnp.sum(w_norm[..., None] * h))) < 1e-13 * scale
 
     def test_masked_projection_reduces_to_uniform_when_all_active(self):
@@ -142,11 +143,11 @@ class TestSaturatedOccupationGradient:
         w2d = jnp.asarray(rng.uniform(0.5, 1.5, size=(3, 3)))
         active = jnp.ones(dp.shape, dtype=bool)
         np.testing.assert_allclose(
-            np.asarray(S._project_occ_masked(dp, w2d, active)),
-            np.asarray(S._project_occ(dp, w2d)), atol=1e-14,
+            np.asarray(O._project_occ_masked(dp, w2d, active)),
+            np.asarray(O._project_occ(dp, w2d)), atol=1e-14,
         )
         curv = jnp.asarray(rng.uniform(0.1, 1.0, size=dp.shape))
-        proj = S._project_occ_curvature(dp, w2d, curv)
+        proj = O._project_occ_curvature(dp, w2d, curv)
         assert abs(float(jnp.sum(w2d[..., None] * proj))) < 1e-13
 
 
@@ -175,22 +176,22 @@ class TestFrozenFockOccupationStep:
 
     @staticmethod
     def _frozen_fock_occupations(kernel, Q, p, w_norm, ntn):
-        P = S._herm(S._density_from_Qp(Q, p))
+        P = R._herm(R._density_from_Qp(Q, p))
         _, _, F = _fock(kernel, P)
-        eps = jnp.real(jnp.diagonal(S._fock_in_orbital_basis(Q, F), axis1=-2, axis2=-1))
-        mu = S._solve_mu(eps, w_norm, ntn, 0.0, kernel.T, maxiter=50)
+        eps = jnp.real(jnp.diagonal(R._fock_in_orbital_basis(Q, F), axis1=-2, axis2=-1))
+        mu = O._solve_mu(eps, w_norm, ntn, 0.0, kernel.T, maxiter=50)
         return eps, mu, jax.nn.sigmoid((mu - eps) / kernel.T)
 
     def test_direction_descends_and_conserves_particles(self):
         kernel = _wide_band_kernel()
         n_e = 1.5 * float(kernel.weight_sum)
         Q, p, w_norm, ntn = self._integer_occupations(kernel, n_e)
-        assert float(jnp.mean(S._active_occupations(p))) == 0.0, "fixture must be fully saturated"
+        assert float(jnp.mean(O._active_occupations(p))) == 0.0, "fixture must be fully saturated"
         np.testing.assert_allclose(float(jnp.sum(w_norm[..., None] * p)), ntn, atol=1e-14)
 
         eps, mu, p_fd = self._frozen_fock_occupations(kernel, Q, p, w_norm, ntn)
         d = p_fd - p
-        assert float(S._norm_vec(d, w_norm)) > 1e-3, "fixture must be off the FD manifold"
+        assert float(R._norm_vec(d, w_norm)) > 1e-3, "fixture must be off the FD manifold"
         # Particle-conserving to the accuracy of the chemical-potential solve.
         assert abs(float(jnp.sum(w_norm[..., None] * d))) < 1e-12
 
@@ -201,12 +202,12 @@ class TestFrozenFockOccupationStep:
         # descends whatever the clipping does to the logit of a saturated band.
         # (Clipping can only flip a term for a band more than |log eps| * T
         # above mu, where p_FD_i itself is below machine epsilon.)
-        integrand = (eps + kernel.T * S._logit(p) - mu) * d
+        integrand = (eps + kernel.T * O._logit(p) - mu) * d
         assert float(jnp.max(integrand)) < 1e-15
         slope = float(jnp.sum(kernel.w2d[..., None] * integrand))
         np.testing.assert_allclose(
             slope,
-            float(jnp.sum(kernel.w2d[..., None] * (eps + kernel.T * S._logit(p)) * d)),
+            float(jnp.sum(kernel.w2d[..., None] * (eps + kernel.T * O._logit(p)) * d)),
             atol=1e-10,
         )
         assert slope < 0.0
@@ -225,17 +226,17 @@ class TestFrozenFockOccupationStep:
         kernel = _wide_band_kernel(T=5.0)
         n_e = 1.5 * float(kernel.weight_sum)
         Q, p_start, _mu0, w_norm, ntn = _initial_state(kernel, n_e)
-        assert bool(jnp.all(S._active_occupations(p_start)))
+        assert bool(jnp.all(O._active_occupations(p_start)))
         # Perturb off the Fermi-Dirac manifold, conserving the particle count.
         rng = np.random.default_rng(11)
         noise = jnp.asarray(rng.normal(scale=0.05, size=p_start.shape))
-        p = jnp.clip(p_start + S._project_occ(noise, w_norm), 0.02, 0.98)
-        p = S._project_capped_occupations(p, w_norm, ntn)
+        p = jnp.clip(p_start + O._project_occ(noise, w_norm), 0.02, 0.98)
+        p = O._project_capped_occupations(p, w_norm, ntn)
 
         eps, mu, p_fd = self._frozen_fock_occupations(kernel, Q, p, w_norm, ntn)
         d = p_fd - p
         assert abs(float(jnp.sum(w_norm[..., None] * d))) < 1e-12
-        slope = float(jnp.sum(kernel.w2d[..., None] * (eps + kernel.T * S._logit(p) - mu) * d))
+        slope = float(jnp.sum(kernel.w2d[..., None] * (eps + kernel.T * O._logit(p) - mu) * d))
         assert slope < 0.0
         Om0 = float(_free_energy(kernel, Q, p))
         step = 1e-6
@@ -249,7 +250,7 @@ class TestFrozenFockOccupationStep:
         Q, p, w_norm, ntn = self._integer_occupations(kernel, n_e)
         eps, mu, p_fd = self._frozen_fock_occupations(kernel, Q, p, w_norm, ntn)
 
-        _g, h, curv, active = S._occupation_gradient(eps, p, kernel.T, w_norm)
+        _g, h, curv, active = O._occupation_gradient(eps, p, kernel.T, w_norm)
         assert not bool(jnp.any(active))
         assert float(jnp.max(jnp.abs(curv))) == 0.0
         assert float(jnp.max(jnp.abs(h))) == 0.0          # gradient step: no motion
@@ -260,7 +261,7 @@ class TestFrozenFockOccupationStep:
         kernel = _wide_band_kernel()
         n_e = 1.5 * float(kernel.weight_sum)
         Q, p, _w_norm, _ntn = self._integer_occupations(kernel, n_e)
-        P0 = S._herm(S._density_from_Qp(Q, p))
+        P0 = R._herm(R._density_from_Qp(Q, p))
         cg = solve(kernel, P0, n_e, config=SolverConfig(max_iter=300, tol_E=1e-10))
         scf = solve_scf(
             kernel, P0, n_e,
@@ -278,9 +279,9 @@ class TestLineSearchAcceptsWhenSaturated:
     def _cg_state(kernel, n_electrons):
         """(Q, p, Omega, Ft, eps) exactly as the solver's first iteration sees them."""
         Q, p, _mu, w_norm, ntn = _initial_state(kernel, n_electrons)
-        P = S._herm(S._density_from_Qp(Q, p))
+        P = R._herm(R._density_from_Qp(Q, p))
         _, _, F = _fock(kernel, P)
-        Ft = S._fock_in_orbital_basis(Q, F)
+        Ft = R._fock_in_orbital_basis(Q, F)
         eps = jnp.real(jnp.diagonal(Ft, axis1=-2, axis2=-1))
         return Q, p, float(_free_energy(kernel, Q, p)), Ft, eps, w_norm, ntn
 
@@ -290,26 +291,26 @@ class TestLineSearchAcceptsWhenSaturated:
         nb = p.shape[-1]
         offdiag = 1.0 - jnp.eye(nb)
         diff_p = p[..., None, :] - p[..., :, None]
-        G_Q = S._skew_hermitian(diff_p * Ft) * offdiag
+        G_Q = R._skew_hermitian(diff_p * Ft) * offdiag
         gap = eps[..., :, None] - eps[..., None, :]
         lam = jnp.maximum(kernel.T, 1e-3 * jnp.sqrt(jnp.mean(eps ** 2)))
         d_Q = G_Q / jnp.sqrt(gap ** 2 + lam ** 2)
         if masked:
-            _g, d_p, _c, _a = S._occupation_gradient(eps, p, kernel.T, w_norm)
+            _g, d_p, _c, _a = O._occupation_gradient(eps, p, kernel.T, w_norm)
         else:
-            g_p = S._project_occ(eps + kernel.T * S._logit(p), w_norm)
+            g_p = O._project_occ(eps + kernel.T * O._logit(p), w_norm)
             p_safe = jnp.clip(p, 1e-8, 1.0 - 1e-8)
-            d_p = S._project_occ(g_p * p_safe * (1.0 - p_safe) / kernel.T, w_norm)
+            d_p = O._project_occ(g_p * p_safe * (1.0 - p_safe) / kernel.T, w_norm)
         return d_Q, d_p
 
     def _best_trial(self, kernel, Q, p, d_Q, d_p, Omega, w_norm, ntn, bt_max=8):
         """Lowest free energy over the solver's backtracking sequence."""
-        V_d, lam_d = S._cayley_spectral_setup(d_Q)
-        tau = float(jnp.minimum(1.0, 0.6 / jnp.maximum(S._norm_matrix(d_Q, w_norm), 1e-30)))
+        V_d, lam_d = R._cayley_spectral_setup(d_Q)
+        tau = float(jnp.minimum(1.0, 0.6 / jnp.maximum(R._norm_matrix(d_Q, w_norm), 1e-30)))
         best = Omega
         for _ in range(bt_max):
-            U = S._cayley_unitary_from_spectrum(V_d, lam_d, tau)
-            p_t = S._project_capped_occupations(p - tau * d_p, w_norm, ntn)
+            U = R._cayley_unitary_from_spectrum(V_d, lam_d, tau)
+            p_t = O._project_capped_occupations(p - tau * d_p, w_norm, ntn)
             best = min(best, float(_free_energy(kernel, Q @ U, p_t)))
             tau *= 0.5
         return best
@@ -318,7 +319,7 @@ class TestLineSearchAcceptsWhenSaturated:
         kernel = _wide_band_kernel()
         n_e = 1.5 * float(kernel.weight_sum)
         Q, p, Omega, Ft, eps, w_norm, ntn = self._cg_state(kernel, n_e)
-        assert float(jnp.mean(S._active_occupations(p))) < 0.5, "fixture must saturate"
+        assert float(jnp.mean(O._active_occupations(p))) < 0.5, "fixture must saturate"
 
         dq_m, dp_m = self._directions(kernel, p, eps, Ft, w_norm, masked=True)
         dq_u, dp_u = self._directions(kernel, p, eps, Ft, w_norm, masked=False)
@@ -353,7 +354,7 @@ class TestLineSearchAcceptsWhenSaturated:
             return build_fock(*args, **kwargs)
 
         cfg = SolverConfig(max_iter=200, tol_E=1e-9)
-        from hartreefock.backends.jax import solver as solver_module
+        from hartreefock._backends.jax import solver as solver_module
 
         monkeypatch.setattr(solver_module, "fock_builder", lambda _: fock_fn)
         result = solve(kernel, P0, n_e, config=cfg)
@@ -392,11 +393,11 @@ class TestSolveMuEarlyStop:
         rng = np.random.default_rng(7)
         eps = jnp.asarray(rng.uniform(-20.0, 20.0, size=(6, 6, 4)))
         w_norm = jnp.ones((6, 6)) / 36.0
-        mu = S._solve_mu(eps, w_norm, target, 0.0, T, maxiter=50)
+        mu = O._solve_mu(eps, w_norm, target, 0.0, T, maxiter=50)
         count = float(jnp.sum(w_norm[..., None] * jax.nn.sigmoid((mu - eps) / T)))
         assert abs(count - target) < 1e-10
         # Warm start from a perturbed guess reaches the same mu.
-        mu_warm = S._solve_mu(eps, w_norm, target, mu + 3.0 * T, T, maxiter=50)
+        mu_warm = O._solve_mu(eps, w_norm, target, mu + 3.0 * T, T, maxiter=50)
         np.testing.assert_allclose(float(mu_warm), float(mu), atol=1e-9 * max(1.0, abs(float(mu))))
 
     def test_float32_low_filling_conserves_particles(self):
@@ -470,7 +471,7 @@ class TestSolveMuEarlyStop:
             nk, nb, T, mu0 = 8, 6, 0.1, 25.0
             eps, w_norm, capacity = self._float32_bands(nk=nk, nb=nb, seed=8)
             target = np.float32(0.0005 * capacity)
-            mu = S._solve_mu(
+            mu = O._solve_mu(
                 eps, w_norm, target, np.float32(mu0), np.float32(T), maxiter=60,
             )
             count = float(jnp.sum(w_norm[..., None] * jax.nn.sigmoid((mu - eps) / T)))
@@ -494,7 +495,7 @@ class TestSolveMuEarlyStop:
             T = 0.1
             eps, w_norm, capacity = self._float32_bands()
             target = np.float32(filling * capacity)
-            mu = S._solve_mu(eps, w_norm, target, np.float32(0.0), np.float32(T), maxiter=60)
+            mu = O._solve_mu(eps, w_norm, target, np.float32(0.0), np.float32(T), maxiter=60)
             count = float(jnp.sum(w_norm[..., None] * jax.nn.sigmoid((mu - eps) / T)))
             assert abs(count - float(target)) < 8 * np.finfo(np.float32).eps * capacity
         finally:
@@ -503,8 +504,8 @@ class TestSolveMuEarlyStop:
     def test_endpoints_are_infinite(self):
         eps = jnp.asarray(np.linspace(-1.0, 1.0, 8).reshape(2, 2, 2))
         w_norm = jnp.ones((2, 2)) / 4.0
-        assert float(S._solve_mu(eps, w_norm, 0.0, 0.0, 0.1, maxiter=50)) == -np.inf
-        assert float(S._solve_mu(eps, w_norm, 2.0, 0.0, 0.1, maxiter=50)) == np.inf
+        assert float(O._solve_mu(eps, w_norm, 0.0, 0.0, 0.1, maxiter=50)) == -np.inf
+        assert float(O._solve_mu(eps, w_norm, 2.0, 0.0, 0.1, maxiter=50)) == np.inf
 
     def test_converged_warm_start_is_kept(self):
         """A warm start already at the solution must come back unchanged.
@@ -514,16 +515,16 @@ class TestSolveMuEarlyStop:
         bisecting from it throws the solution away, after which the iterate
         cycles through bisection midpoints for the rest of the budget and the
         returned mu depends on where the budget happens to run out.  (Ported
-        from hartreefock.backends.native, where the unguarded solver showed exactly that.)
+        from hartreefock._backends.native, where the unguarded solver showed exactly that.)
         """
         rng = np.random.default_rng(3)
         eps = jnp.asarray(rng.uniform(-20.0, 20.0, size=(6, 6, 4)))
         w_norm = jnp.ones((6, 6)) / 36.0
         T, target = 0.01, 1.5
-        mu = float(S._solve_mu(eps, w_norm, target, 0.0, T, maxiter=50))
+        mu = float(O._solve_mu(eps, w_norm, target, 0.0, T, maxiter=50))
         tol = 4.0 * np.finfo(np.float64).eps * max(1.0, abs(mu))
         for maxiter in (1, 2, 3, 5, 8, 13, 25, 50):
-            mu_warm = float(S._solve_mu(eps, w_norm, target, mu, T, maxiter=maxiter))
+            mu_warm = float(O._solve_mu(eps, w_norm, target, mu, T, maxiter=maxiter))
             assert abs(mu_warm - mu) <= tol, (maxiter, mu_warm, mu)
 
     def test_result_is_independent_of_the_iteration_budget(self):
@@ -532,7 +533,7 @@ class TestSolveMuEarlyStop:
         eps = jnp.asarray(rng.uniform(-20.0, 20.0, size=(6, 6, 4)))
         w_norm = jnp.ones((6, 6)) / 36.0
         T, target = 0.05, 1.5
-        mus = [float(S._solve_mu(eps, w_norm, target, 0.0, T, maxiter=m)) for m in (25, 50, 200)]
+        mus = [float(O._solve_mu(eps, w_norm, target, 0.0, T, maxiter=m)) for m in (25, 50, 200)]
         tol = 8.0 * np.finfo(np.float64).eps * max(1.0, abs(mus[0]))
         for m in mus[1:]:
             assert abs(m - mus[0]) <= tol, mus
@@ -545,7 +546,7 @@ def test_chemical_potential_resolves_low_temperature_despite_remote_bands(dtype,
     weights = jnp.ones((1, 1), dtype=dtype)
     target = jnp.asarray(0.1, dtype=dtype)
     temperature = jnp.asarray(1e-12, dtype=dtype)
-    mu = S._solve_mu(eps, weights, target, 0.0, temperature, maxiter=50)
+    mu = O._solve_mu(eps, weights, target, 0.0, temperature, maxiter=50)
     count = jnp.sum(jax.nn.sigmoid((mu - eps) / temperature))
     assert mu.dtype == dtype
     np.testing.assert_allclose(count, target, rtol=16 * np.finfo(dtype).eps, atol=0.0)
@@ -557,7 +558,7 @@ def test_chemical_potential_bracket_reaches_dilute_filling(dtype):
     weights = jnp.ones((1, 1), dtype=dtype)
     target = jnp.asarray(1e-25, dtype=dtype)
     temperature = jnp.asarray(0.1, dtype=dtype)
-    mu = S._solve_mu(eps, weights, target, 0.0, temperature, maxiter=50)
+    mu = O._solve_mu(eps, weights, target, 0.0, temperature, maxiter=50)
     count = jnp.sum(jax.nn.sigmoid((mu - eps) / temperature))
     assert mu.dtype == dtype
     np.testing.assert_allclose(count, target, rtol=64 * np.finfo(dtype).eps, atol=0.0)

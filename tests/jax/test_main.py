@@ -4,7 +4,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from hartreefock.backends.jax.utils import density_matrix_from_fock, fermidirac, find_chemical_potential, selfenergy_fft
+from hartreefock._backends.jax.utils import density_matrix_from_fock, fermidirac, find_chemical_potential, selfenergy_fft
 
 
 def test_find_chemical_potential_hits_target_density():

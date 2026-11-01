@@ -27,7 +27,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from .backends import get_backend
+from ._backends import get_backend
 from .config import DeflatedResult, SolverConfig
 
 

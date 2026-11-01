@@ -5,8 +5,9 @@ import pytest
 from scipy.special import xlogy
 
 from hartreefock import HartreeFockKernel, SCFConfig
-from hartreefock.backends.jax import solve_scf, stability_analysis
-from hartreefock.backends.jax.stability import _evaluate_fock, _fock_kwargs
+from hartreefock import stability_analysis
+from hartreefock._backends.jax import solve_scf
+from hartreefock._backends.jax.stability import _evaluate_fock, _fock_kwargs
 
 jax.config.update("jax_enable_x64", True)
 
@@ -80,7 +81,7 @@ def test_precision_limited_kernel_is_not_given_a_tight_certificate():
 
 def test_failed_iterative_eigenvalue_solve_has_no_certificate(monkeypatch):
     from scipy.sparse.linalg import ArpackNoConvergence
-    import hartreefock.backends.jax.stability as module
+    import hartreefock._backends.jax.stability as module
     h = np.zeros((1, 1, 9, 9), complex)
     kernel = HartreeFockKernel(np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=.1)
     def fail(*args, **kwargs):
@@ -91,7 +92,7 @@ def test_failed_iterative_eigenvalue_solve_has_no_certificate(monkeypatch):
 
 
 def test_eigenvalue_requires_an_independently_verified_residual(monkeypatch):
-    import hartreefock.backends.jax.stability as module
+    import hartreefock._backends.jax.stability as module
     h = np.zeros((1, 1, 9, 9), complex)
     kernel = HartreeFockKernel(np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=.1)
     def wrong_eigenpair(operator, **kwargs):
@@ -105,7 +106,7 @@ def test_eigenvalue_requires_an_independently_verified_residual(monkeypatch):
 
 @pytest.mark.parametrize("number", [1e-60, 1e-6, 2.0 - 1e-6])
 def test_host_fermi_density_preserves_particle_count_in_extreme_tails(number):
-    from hartreefock.backends.jax.stability import _host_fermi_density
+    from hartreefock._backends.jax.stability import _host_fermi_density
     fock = np.zeros((1, 1, 2, 2), complex)
     weights = np.ones((1, 1))
     density, _, _, occupations = _host_fermi_density(fock, weights, number, 0.1)

@@ -15,10 +15,10 @@ from .linalg import eigh, normalize_block_specs
 
 
 def device_args(kernel) -> dict:
-    """``kernel.as_args()`` with arrays on the JAX device in canonical dtypes."""
+    """``kernel._as_args()`` with arrays on the JAX device in canonical dtypes."""
     return {
         k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
-        for k, v in kernel.as_args().items()
+        for k, v in kernel._as_args().items()
     }
 
 

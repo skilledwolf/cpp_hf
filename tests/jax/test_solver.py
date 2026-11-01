@@ -6,7 +6,7 @@ import pytest
 import jax.numpy as jnp
 
 from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig, SolveResult
-from hartreefock.backends.jax import solve, solve_scf
+from hartreefock._backends.jax import solve, solve_scf
 
 
 def _comm_rms(F, P, weights_2d):
@@ -386,11 +386,7 @@ class TestSpectralCayley:
 
     def test_spectral_unitary_matches_cayley_lu(self):
         """U(τ) from spectral form must match U(τ) from Cayley LU to roundoff."""
-        from hartreefock.backends.jax.solver import (
-            _cayley_retract,
-            _cayley_spectral_setup,
-            _cayley_unitary_from_spectrum,
-        )
+        from hartreefock._backends.jax.riemannian import _cayley_retract, _cayley_spectral_setup, _cayley_unitary_from_spectrum
         rng = np.random.default_rng(0)
         d = self._make_skew(rng, (3, 3, 6, 6))
         V_d, lam_d = _cayley_spectral_setup(d)
@@ -407,11 +403,7 @@ class TestSpectralCayley:
 
     def test_spectral_diag_matches_lu_diag(self):
         """diag(U(τ)†·Ft·U(τ)) from spectral form must match LU-built form."""
-        from hartreefock.backends.jax.solver import (
-            _cayley_retract,
-            _cayley_spectral_setup,
-            _diag_UFU_from_spectrum,
-        )
+        from hartreefock._backends.jax.riemannian import _cayley_retract, _cayley_spectral_setup, _diag_UFU_from_spectrum
         rng = np.random.default_rng(1)
         d = self._make_skew(rng, (3, 3, 6, 6))
         Ft = self._make_herm(rng, (3, 3, 6, 6))
@@ -433,10 +425,7 @@ class TestSpectralCayley:
 
     def test_spectral_unitary_is_unitary(self):
         """Even for τ=0 (eigh roundoff worst case), U†U must equal I."""
-        from hartreefock.backends.jax.solver import (
-            _cayley_spectral_setup,
-            _cayley_unitary_from_spectrum,
-        )
+        from hartreefock._backends.jax.riemannian import _cayley_spectral_setup, _cayley_unitary_from_spectrum
         rng = np.random.default_rng(2)
         d = self._make_skew(rng, (2, 2, 8, 8))
         V_d, lam_d = _cayley_spectral_setup(d)

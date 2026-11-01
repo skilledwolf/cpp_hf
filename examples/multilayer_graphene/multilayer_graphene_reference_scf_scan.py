@@ -32,7 +32,7 @@ if str(EXAMPLES_DIR) not in sys.path:
 import hartreefock
 
 from hartreefock import SCFConfig
-from hartreefock.backends.native import solve_scf
+from hartreefock._backends.native import solve_scf
 import _bilayer_common as common
 
 

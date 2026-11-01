@@ -7,7 +7,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from hartreefock.backends.jax.fock import build_fock, hf_energy, occupation_entropy
+from hartreefock._backends.jax.fock import build_fock, hf_energy, occupation_entropy
 from hartreefock.kernel import HartreeFockKernel
 
 

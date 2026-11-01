@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from hartreefock import HartreeFockKernel, SolverConfig, solve_deflated
-from hartreefock.backends.native import solve
+from hartreefock._backends.native import solve
 
 
 def _comm_rms(F, P, w2d):
@@ -108,7 +108,7 @@ class TestDeflationNoOp:
 # --- 3. deflation-bias math (native helper, finite differences) -------------
 class TestDeflationBiasMath:
     def test_gradient_identity_phi_and_diag(self):
-        from hartreefock.backends.native import _native
+        from hartreefock._backends.native import _native
 
         rng = np.random.default_rng(0)
         nk, nb = 2, 2
@@ -151,7 +151,7 @@ class TestDeflationBiasMath:
         assert abs(float(diag) - 2.0 * float(np.sum(phip))) < 1e-6 * (2 * abs(float(np.sum(phip))) + 1.0)
 
     def test_empty_targets_is_zero(self):
-        from hartreefock.backends.native import _native
+        from hartreefock._backends.native import _native
         nk, nb = 2, 2
         w2d = np.ones((nk, nk), np.float64)
         P = np.zeros((nk, nk, nb, nb), np.complex128)

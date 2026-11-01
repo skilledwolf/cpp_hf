@@ -380,7 +380,7 @@ def bootstrap_cn_reference_density(
     """
     import hartreefock
     from hartreefock import SCFConfig
-    from hartreefock.backends.native import solve_scf
+    from hartreefock._backends.native import solve_scf
 
     if setup.hartree_matrix is None:
         raise ValueError("setup must include hartree_matrix (use build_bilayer_layer_resolved).")

@@ -6,7 +6,7 @@ Works in double precision throughout and needs no JAX.
 from __future__ import annotations
 
 from .fock import build_fock, superlattice_exchange
-from .reference_scf import solve_scf
+from .scf import solve_scf
 from .solver import solve
 from .utils import find_chemical_potential, resample_kgrid
 

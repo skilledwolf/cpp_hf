@@ -112,8 +112,8 @@ def test_jax_fock_matches_native(x64, case):
     import jax
     import jax.numpy as jnp
 
-    from hartreefock.backends.jax.fock import fock_builder, hf_energy
-    from hartreefock.backends.native import build_fock
+    from hartreefock._backends.jax.fock import fock_builder, hf_energy
+    from hartreefock._backends.native import build_fock
 
     rng = np.random.default_rng(5)
     D = len(G) * NO
@@ -126,7 +126,7 @@ def test_jax_fock_matches_native(x64, case):
     _, _, F, E = build_fock(kernel, P)
     np.testing.assert_allclose(F, kernel.h + kernel.potential(P - kernel.refP), atol=1e-13)
 
-    args = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in kernel.as_args().items()}
+    args = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in kernel._as_args().items()}
     build = fock_builder(kernel)
     fock_args = dict(
         h=args["h"], VR=args["VR"], refP=args["refP"], HH=args["HH"], w2d=jnp.asarray(kernel.w2d),

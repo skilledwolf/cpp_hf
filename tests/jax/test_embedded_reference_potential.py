@@ -12,7 +12,7 @@ import pytest
 import jax.numpy as jnp
 
 from hartreefock import HartreeFockKernel
-from hartreefock.backends.jax.fock import build_fock, hf_energy
+from hartreefock._backends.jax.fock import build_fock, hf_energy
 
 
 def _setup(nk=4, n_orb=2, T=0.05, seed=0):

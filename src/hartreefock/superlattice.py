@@ -365,7 +365,7 @@ class SuperlatticeHartreeFockKernel:
         """Fock self-energy ``Σ_F[rho]`` on the BZ mesh."""
         if not self.include_exchange:
             return np.zeros(self.h.shape, dtype=np.complex128)
-        from .backends.native.fock import superlattice_exchange
+        from ._backends.native.fock import superlattice_exchange
 
         return superlattice_exchange(rho, self.layout, self.n_G)
 
@@ -394,8 +394,8 @@ class SuperlatticeHartreeFockKernel:
         offset = 0.5 * float(np.einsum("ij,ijab,ijba->", self.w2d, V, ref).real)
         return V, offset
 
-    def as_args(self) -> dict:
-        """Dense-kernel solver inputs (see :meth:`HartreeFockKernel.as_args`)."""
+    def _as_args(self) -> dict:
+        """Dense-kernel solver inputs (see :meth:`HartreeFockKernel._as_args`)."""
         return dict(
             h=self.h,
             weights_b=self.weights_b,

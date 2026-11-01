@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .backends import get_backend
+from ._backends import get_backend
 from .config import ContinuationResult, SCFConfig, SolverConfig
 from .kernel import HartreeFockKernel
 from .superlattice import SuperlatticeHartreeFockKernel, upsample_density

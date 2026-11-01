@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 
 from hartreefock import HartreeFockKernel, SCFConfig
-from hartreefock.backends.jax import solve_scf
-from hartreefock.backends.jax.fock import build_fock, hf_energy, free_energy
-from hartreefock.backends.jax.reference_scf import _density_from_fock
-from hartreefock.backends.jax.scf_acceleration import _residual_coefficients
+from hartreefock._backends.jax import solve_scf
+from hartreefock._backends.jax.fock import build_fock, hf_energy, free_energy
+from hartreefock._backends.jax.scf import _density_from_fock
+from hartreefock._backends.jax.scf_acceleration import _residual_coefficients
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +29,7 @@ def charge_kernel(strength=30.0):
 
 
 def independent_state(kernel, density, n_electrons, builder=build_fock):
-    args = kernel.as_args()
+    args = kernel._as_args()
     Sigma, H, F = builder(density, **{key: args[key] for key in (
         "h", "VR", "refP", "HH", "include_exchange", "include_hartree",
         "exchange_hermitian_channel_packing", "contact_g", "contact_Oi", "contact_Oj")},

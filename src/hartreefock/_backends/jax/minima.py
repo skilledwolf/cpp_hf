@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.special import xlogy
 from ...config import SCFConfig, SCFResult
-from .reference_scf import solve_scf
+from .scf import solve_scf
 from .stability import (
     StabilityResult, stability_analysis, _evaluate_fock, _fock_kwargs,
     _host_fermi_density, _response_fock,

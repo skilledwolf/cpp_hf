@@ -7,7 +7,7 @@ import pytest
 
 from hartreefock.kernel import HartreeFockKernel
 
-native_fock = pytest.importorskip("hartreefock.backends.native.fock")
+native_fock = pytest.importorskip("hartreefock._backends.native.fock")
 jax = pytest.importorskip("jax")
 
 
@@ -33,9 +33,9 @@ def _kernel(rng, *, uniform, orbital_V, embed, nk=5, nb=3):
 
 
 def _jax_fock_and_energy(kernel, P):
-    from hartreefock.backends.jax.fock import build_fock, hf_energy
+    from hartreefock._backends.jax.fock import build_fock, hf_energy
 
-    a = kernel.as_args()
+    a = kernel._as_args()
     sigma, H, F = build_fock(
         P, h=a["h"], VR=a["VR"], refP=a["refP"], HH=a["HH"], w2d=kernel.w2d,
         include_exchange=a["include_exchange"], include_hartree=a["include_hartree"],
@@ -59,6 +59,8 @@ def test_native_and_jax_fock_agree(uniform, orbital_V, embed, x64):
 
     np.testing.assert_allclose(F_native, F_jax, atol=1e-12)
     np.testing.assert_allclose(E_native, E_jax, rtol=1e-12)
+    # The kernel's NumPy linear maps reproduce the backends' Fock matrix.
+    np.testing.assert_allclose(F_native, kernel.h + kernel.potential(P - kernel.refP), atol=1e-12)
 
 
 def test_native_fock_is_energy_gradient():

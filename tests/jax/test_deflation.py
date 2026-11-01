@@ -25,7 +25,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from hartreefock import HartreeFockKernel, SolverConfig, solve_deflated
-from hartreefock.backends.jax import solve
+from hartreefock._backends.jax import solve
 
 
 def _comm_rms(F, P, w2d):

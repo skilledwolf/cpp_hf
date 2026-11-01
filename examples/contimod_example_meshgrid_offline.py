@@ -17,7 +17,7 @@ sys.path.insert(0, str(SRC_DIR))
 
 import hartreefock
 
-import hartreefock.backends.native as cpp_hf  # noqa: E402
+import hartreefock._backends.native as cpp_hf  # noqa: E402
 from hartreefock import SCFConfig
 
 
