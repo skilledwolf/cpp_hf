@@ -82,10 +82,10 @@ check.
 :::
 
 :::{grid-item-card} Python API
-:link: reference/python/index
+:link: reference/index
 :link-type: doc
 
-Every public name, generated from the docstrings.
+The functions you call, grouped by task, then every public name by module.
 :::
 ::::
 
@@ -95,7 +95,7 @@ Every public name, generated from the docstrings.
 get-started/index
 tutorial/index
 guides/index
-reference/python/index
+reference/index
 development/index
 project/index
 ```

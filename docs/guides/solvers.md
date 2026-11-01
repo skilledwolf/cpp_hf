@@ -78,13 +78,25 @@ energy, chemical potential, iteration count, convergence flag, a message
 and the per-iteration `history`.
 
 ```{code-cell} ipython3
-rows = []
+rows, residuals = [], {}
 for acceleration in ("linear", "diis", "oda", "rdiis", "anderson"):
     t = time.perf_counter()
     r = hf.solve_scf(kernel, P0, n, config=hf.SCFConfig(acceleration=acceleration))
     rows.append((acceleration, r.converged, r.n_iter, float(r.energy), time.perf_counter() - t))
+    residuals[acceleration] = np.asarray(r.history["density_residual"])
     print(f"{acceleration:>9}: converged {str(r.converged):5}  {r.n_iter:3d} iterations  "
           f"E = {r.energy:.10f}  m = {magnetization(r.density):.4f}  {rows[-1][-1] * 1e3:5.0f} ms")
+```
+
+```{code-cell} ipython3
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots()
+for acceleration, res in residuals.items():
+    ax.semilogy(np.arange(1, len(res) + 1), res, "o-", ms=3, label=acceleration)
+ax.axhline(1e-7, ls=":", color="0.5")
+ax.set(xlabel="iteration", ylabel="density change")
+ax.legend();
 ```
 
 - `"linear"`: plain mixing with `mixing`.
@@ -117,10 +129,14 @@ for optimizer in ("cg", "newton", "auto"):
           f"E = {float(r.energy):.10f}  m = {magnetization(r.density):.4f}  {rows[-1][-1] * 1e3:5.0f} ms")
 ```
 
-Every method reaches the same polarized state. RDIIS, Newton and `"auto"`
-take five to eight iterations; plain mixing and DIIS about four times as
-many, and plain CG hundreds to reach a gradient of $10^{-8}$, which is why
-`"auto"` hands over to Newton.
+Every method reaches the same polarized state. RDIIS, ODA, Anderson,
+Newton and `"auto"` take five to eight iterations, plain CG hundreds to
+reach a gradient of $10^{-8}$, which is why `"auto"` hands over to Newton.
+Linear mixing and DIIS lie on top of each other in the figure: both blend
+the new density with the old one by `mixing` (0.5 by default), and on this
+problem one Roothaan step is already almost exact, so the blend halves the
+error per iteration. With `mixing=1.0` DIIS converges in 6 iterations
+here; the default is safer when the Roothaan step overshoots.
 
 ```{code-cell} ipython3
 :tags: [remove-cell]
