@@ -21,7 +21,7 @@ from jax import lax
 
 from ...config import SolveResult
 from .fock import build_fock, free_energy, hf_energy
-from .linalg import hermitian_eigh
+from .linalg import adjoint, bmm, hermitian_eigh
 from .occupations import (
     _occupation_gradient,
     _project_capped_occupations,
@@ -42,7 +42,7 @@ def _skew_hermitian(A: jax.Array) -> jax.Array:
 
 def _density_from_Qp(Q: jax.Array, p: jax.Array) -> jax.Array:
     """P = Q diag(p) Q†."""
-    return jnp.einsum("...in,...n,...jn->...ij", Q, p, jnp.conj(Q))
+    return bmm(Q * p[..., None, :].astype(Q.dtype), adjoint(Q))
 
 
 def _project_density_eigensystem(Q, p, project_fn):
@@ -69,7 +69,7 @@ def _project_density_eigensystem(Q, p, project_fn):
 
 def _fock_in_orbital_basis(Q: jax.Array, F: jax.Array) -> jax.Array:
     """Ft = Q† F Q."""
-    return jnp.einsum("...in,...ij,...jm->...nm", jnp.conj(Q), F, Q)
+    return bmm(bmm(adjoint(Q), F), Q)
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +150,7 @@ def _cayley_unitary_from_spectrum(V: jax.Array, lam: jax.Array,
                                   tau: jax.Array) -> jax.Array:
     """U(τ) = V · diag(c(τ, λ)) · V†."""
     c = _cayley_factor(lam, tau, V.dtype)
-    return (V * c[..., None, :]) @ jnp.conj(jnp.swapaxes(V, -1, -2))
+    return bmm(V * c[..., None, :], adjoint(V))
 
 
 def _diag_UFU_from_spectrum(V: jax.Array, Ft_eig: jax.Array,
@@ -163,7 +163,7 @@ def _diag_UFU_from_spectrum(V: jax.Array, Ft_eig: jax.Array,
     c = _cayley_factor(lam, tau, V.dtype)
     cbar = jnp.conj(c)
     M = (cbar[..., :, None]) * Ft_eig * (c[..., None, :])
-    A = V @ M
+    A = bmm(V, M)
     diag = jnp.real(jnp.sum(A * jnp.conj(V), axis=-1))
     return diag
 
@@ -460,14 +460,14 @@ def _solve_impl(
         # the LU-based Cayley). Cache the accepted trial's (Q,p), including
         # any eigensystem repair after symmetry projection.
         V_d, lam_d = _cayley_spectral_setup(d_Q)
-        Ft_eig = jnp.conj(jnp.swapaxes(V_d, -2, -1)) @ Ft @ V_d
+        Ft_eig = bmm(bmm(adjoint(V_d), Ft), V_d)
 
         d_Q_norm = _norm_matrix(d_Q, w_norm)
         tau0 = jnp.minimum(1.0, max_step_r / jnp.maximum(d_Q_norm, tiny))
 
         def trial_free_energy(tau_val):
             U_trial = _cayley_unitary_from_spectrum(V_d, lam_d, tau_val)
-            Q_trial = Q @ U_trial
+            Q_trial = bmm(Q, U_trial)
             p_trial = _project_capped_occupations(
                 p - tau_val * d_p, w_norm, n_target_norm,
             )
@@ -509,7 +509,7 @@ def _solve_impl(
             # arrays changes rounding enough to stall float32 convergence.
             # The compiled line search need not carry unused trial orbitals.
             U = _cayley_unitary_from_spectrum(V_d, lam_d, tau_final)
-            Q_new = Q @ U
+            Q_new = bmm(Q, U)
             p_new = _project_capped_occupations(
                 p - tau_final * d_p, w_norm, n_target_norm,
             )

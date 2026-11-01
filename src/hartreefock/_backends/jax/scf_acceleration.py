@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 
 from .fock import hf_energy, occupation_entropy
-from .linalg import hermitian_eigh
+from .linalg import adjoint, bmm, hermitian_eigh
 from .scf import _herm, _weighted_matrix_norm
 from .utils import fermidirac, find_chemical_potential
 
@@ -102,7 +102,7 @@ def _run_accelerated_scf(
 
         def repair(_):
             occupations = _capped_occupations(p, w2d, normalized_count)
-            repaired = project((Q * occupations[..., None, :]) @ jnp.conj(Q.swapaxes(-1, -2)))
+            repaired = project(bmm(Q * occupations[..., None, :].astype(Q.dtype), adjoint(Q)))
             return repaired, jnp.linalg.eigvalsh(repaired)
 
         P, p = jax.lax.cond(bad, repair, lambda _: (P, p), operand=None)
@@ -119,12 +119,12 @@ def _run_accelerated_scf(
             return fermidirac(shifted_bands - shifted_mu, T), shifted_mu
 
         p, mu = jax.lax.cond(jnp.asarray(shift) != 0.0, shifted, lambda _: (p, mu), None)
-        return project((Q * p[..., None, :]) @ jnp.conj(Q.swapaxes(-1, -2))), mu
+        return project(bmm(Q * p[..., None, :].astype(Q.dtype), adjoint(Q))), mu
 
     def state(P, F, E, S):
         D, mu = fermi_density(F)
         dr = _weighted_matrix_norm(D - P, w2d, ws)
-        cr = _weighted_matrix_norm(F @ P - P @ F, w2d, ws)
+        cr = _weighted_matrix_norm(bmm(F, P) - bmm(P, F), w2d, ws)
         return _State(P, F, D, E, S, mu, dr, cr)
 
     def evaluate(P):

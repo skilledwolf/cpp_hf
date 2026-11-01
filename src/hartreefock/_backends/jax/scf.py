@@ -27,7 +27,7 @@ import jax.numpy as jnp
 
 from ...config import SCFConfig, SCFResult, drop_unrequested
 from .fock import fock_builder, free_energy, hf_energy
-from .linalg import hermitian_eigh
+from .linalg import adjoint, bmm, hermitian_eigh
 from .utils import (
     device_args,
     fermidirac,
@@ -44,6 +44,11 @@ def _herm(X):
 def _weighted_matrix_norm(matrix, weights, weight_sum):
     per_k = jnp.sum(jnp.abs(matrix) ** 2, axis=(-2, -1))
     return jnp.sqrt(jnp.sum(weights * per_k) / weight_sum)
+
+
+# Relative particle-number mismatch beyond which ODA treats a density as
+# infeasible and steps fully onto the occupied P_new.
+_ODA_N_TOL = 1e-8
 
 
 def _density_from_fock(fock, *, weights, n_electrons, temperature, level_shift):
@@ -63,7 +68,7 @@ def _density_from_fock(fock, *, weights, n_electrons, temperature, level_shift):
     occupations, mu = jax.lax.cond(
         level_shift == 0.0, lambda _: (occ_raw, mu_raw), shifted_occupations, None,
     )
-    density = jnp.einsum("...in,...n,...jn->...ij", orbitals, occupations, jnp.conj(orbitals))
+    density = bmm(orbitals * occupations[..., None, :].astype(orbitals.dtype), adjoint(orbitals))
     return _herm(density), mu
 
 
@@ -315,7 +320,7 @@ def _run_scf(
 
         P_new, F, E, Omega, mu = _build_and_occupy(density)
         delta = P_new - density
-        comm = F @ density - density @ F
+        comm = bmm(F, density) - bmm(density, F)
         d_res = _weighted_matrix_norm(delta, weights_2d, ws)
         c_res = _weighted_matrix_norm(comm, weights_2d, ws)
         converged = jnp.logical_and(d_res <= density_tol, c_res <= comm_tol)
@@ -377,6 +382,11 @@ def _run_scf(
             )
             lam_finite = jnp.where(accepted, lam_finite, jnp.asarray(0.0, real_dtype))
             lam = jnp.where(T > 0.0, lam_finite, lam_zero_T)
+            # A start with the wrong particle number is off the constraint
+            # surface, so its energy is no bound: take the full step onto it.
+            n_now = jnp.sum(weights_2d * jnp.real(jnp.trace(density, axis1=-2, axis2=-1)))
+            off_shell = jnp.abs(n_now - n_electrons) > _ODA_N_TOL * jnp.maximum(1.0, jnp.abs(n_electrons))
+            lam = jnp.where(off_shell, jnp.asarray(1.0, real_dtype), lam)
             updated = _herm(jnp.asarray(
                 _project(density + lam.astype(h.dtype) * delta), dtype=h.dtype))
         else:  # linear

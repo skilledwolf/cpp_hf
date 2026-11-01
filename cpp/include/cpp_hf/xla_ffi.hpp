@@ -7,11 +7,16 @@
 #pragma once
 
 #include "cpp_hf/linalg.hpp"
+#include "cpp_hf/parallel.hpp"
+#include "cpp_hf/superlattice.hpp"
 #include "cpp_hf/types.hpp"
 
 #include "xla/ffi/api/ffi.h"
 
+#include <Eigen/Dense>
+
 #include <cstddef>
+#include <cstdint>
 
 namespace cpp_hf {
 namespace xla_ffi {
@@ -43,6 +48,107 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(EighC128, EighC128Impl,
                               ffi::Ffi::Bind()
                                   .Arg<ffi::Buffer<ffi::C128>>()
                                   .Ret<ffi::Buffer<ffi::F64>>()
+                                  .Ret<ffi::Buffer<ffi::C128>>());
+
+// Streamed superlattice Fock self-energy Σ_F[rho] of a (nkx, nky, D, D)
+// complex128 density with D = n_G · dim_orb (see superlattice.hpp).  The
+// layout tables come in as buffers: the lag Coulomb FFT (N_ext_x, N_ext_y),
+// the orbital table (N_ext_x, N_ext_y, dim_orb, dim_orb) or an empty array,
+// the per-G offsets (n_G, 2) and the ΔG pair CSR.  ``hermitian_rho`` opts
+// into the ΔG <-> -ΔG conjugate halving, valid only for a Hermitian rho.
+inline ffi::Error SuperlatticeFockImpl(ffi::Buffer<ffi::C128> rho,
+                                       ffi::Buffer<ffi::C128> v_fft,
+                                       ffi::Buffer<ffi::C128> v_fft_orbital,
+                                       ffi::Buffer<ffi::S64> g_a_off,
+                                       ffi::Buffer<ffi::S64> pair_i,
+                                       ffi::Buffer<ffi::S64> pair_j,
+                                       ffi::Buffer<ffi::S64> pair_start,
+                                       ffi::ResultBuffer<ffi::C128> sigma,
+                                       bool hermitian_rho) {
+    const auto rd = rho.dimensions();
+    const auto vd = v_fft.dimensions();
+    const auto gd = g_a_off.dimensions();
+    if (rd.size() != 4 || rd[2] != rd[3]) {
+        return ffi::Error::InvalidArgument("superlattice Fock needs rho of shape (nkx, nky, D, D)");
+    }
+    if (vd.size() != 2 || gd.size() != 2 || gd[1] != 2 || pair_start.dimensions().size() != 1 ||
+        pair_start.element_count() < 1) {
+        return ffi::Error::InvalidArgument("superlattice Fock got malformed layout tables");
+    }
+    const std::size_t nkx = rd[0], nky = rd[1], D = rd[2];
+    const std::size_t n_G = gd[0];
+    if (n_G == 0 || D % n_G != 0) {
+        return ffi::Error::InvalidArgument("superlattice Fock needs D to be a multiple of n_G");
+    }
+    const std::size_t dim_orb = D / n_G;
+    const std::size_t nx = vd[0], ny = vd[1];
+    const c64* orbital = nullptr;
+    if (v_fft_orbital.element_count() != 0) {
+        if (v_fft_orbital.element_count() != nx * ny * dim_orb * dim_orb) {
+            return ffi::Error::InvalidArgument(
+                "superlattice Fock orbital table must be (N_ext_x, N_ext_y, dim_orb, dim_orb)");
+        }
+        orbital = reinterpret_cast<const c64*>(v_fft_orbital.typed_data());
+    }
+    const std::size_t n_delta = pair_start.element_count() - 1;
+    selfenergy_superlattice_streamed(
+        reinterpret_cast<const c64*>(rho.typed_data()),
+        reinterpret_cast<c64*>(sigma->typed_data()),
+        reinterpret_cast<const c64*>(v_fft.typed_data()), orbital,
+        g_a_off.typed_data(), pair_i.typed_data(), pair_j.typed_data(),
+        pair_start.typed_data(), n_delta, nx, ny, nkx, nky, n_G, dim_orb, hermitian_rho);
+    return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(SuperlatticeFock, SuperlatticeFockImpl,
+                              ffi::Ffi::Bind()
+                                  .Arg<ffi::Buffer<ffi::C128>>()
+                                  .Arg<ffi::Buffer<ffi::C128>>()
+                                  .Arg<ffi::Buffer<ffi::C128>>()
+                                  .Arg<ffi::Buffer<ffi::S64>>()
+                                  .Arg<ffi::Buffer<ffi::S64>>()
+                                  .Arg<ffi::Buffer<ffi::S64>>()
+                                  .Arg<ffi::Buffer<ffi::S64>>()
+                                  .Ret<ffi::Buffer<ffi::C128>>()
+                                  .Attr<bool>("hermitian_rho"));
+
+// Batched complex128 matmul c = a @ b over shared leading axes, threaded over
+// the batch (XLA CPU runs a batched dot serially).  a is (..., n, m), b is
+// (..., m, p) with the same batch shape; c is (..., n, p).
+inline ffi::Error MatmulC128Impl(ffi::Buffer<ffi::C128> a, ffi::Buffer<ffi::C128> b,
+                                 ffi::ResultBuffer<ffi::C128> c) {
+    const auto ad = a.dimensions();
+    const auto bd = b.dimensions();
+    if (ad.size() < 2 || bd.size() != ad.size()) {
+        return ffi::Error::InvalidArgument("matmul needs operands of the same rank >= 2");
+    }
+    const std::size_t r = ad.size();
+    std::size_t batch = 1;
+    for (std::size_t i = 0; i + 2 < r; ++i) {
+        if (ad[i] != bd[i]) return ffi::Error::InvalidArgument("matmul batch shapes differ");
+        batch *= static_cast<std::size_t>(ad[i]);
+    }
+    const std::size_t n = ad[r - 2], m = ad[r - 1], p = bd[r - 1];
+    if (static_cast<std::size_t>(bd[r - 2]) != m) {
+        return ffi::Error::InvalidArgument("matmul inner dimensions differ");
+    }
+    using Mat = Eigen::Matrix<c64, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+    const c64* A = reinterpret_cast<const c64*>(a.typed_data());
+    const c64* B = reinterpret_cast<const c64*>(b.typed_data());
+    c64* C = reinterpret_cast<c64*>(c->typed_data());
+    parallel_for(batch, [&](std::size_t k) {
+        Eigen::Map<const Mat> Ak(A + k * n * m, n, m);
+        Eigen::Map<const Mat> Bk(B + k * m * p, m, p);
+        Eigen::Map<Mat> Ck(C + k * n * p, n, p);
+        Ck.noalias() = Ak * Bk;
+    });
+    return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(MatmulC128, MatmulC128Impl,
+                              ffi::Ffi::Bind()
+                                  .Arg<ffi::Buffer<ffi::C128>>()
+                                  .Arg<ffi::Buffer<ffi::C128>>()
                                   .Ret<ffi::Buffer<ffi::C128>>());
 
 }  // namespace xla_ffi

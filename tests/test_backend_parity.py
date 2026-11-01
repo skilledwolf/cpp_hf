@@ -99,3 +99,28 @@ def test_native_only_options_raise_on_jax():
     config = hf.SCFConfig(acceleration="rdiis", preconditioner="hartree")
     with pytest.raises(NotImplementedError, match="native"):
         hf.solve_scf(kernel, P0, 1.0, config=config, backend="jax")
+
+
+@pytest.mark.parametrize("backend", ["native", "jax"])
+def test_oda_moves_a_start_with_the_wrong_particle_count_onto_it(backend, x64):
+    """ODA must not keep an infeasible start whose free energy is lower."""
+    import hartreefock as hf
+
+    nk = 4
+    ks = (np.arange(nk) - nk // 2) * (2 * np.pi / nk)
+    KX, KY = np.meshgrid(ks, ks, indexing="ij")
+    h = np.zeros((nk, nk, 2, 2), complex)
+    h[..., 0, 0], h[..., 1, 1] = 0.3, -0.3
+    h[..., 0, 1], h[..., 1, 0] = KX - 1j * KY, KX + 1j * KY
+    kernel = HartreeFockKernel(np.full((nk, nk), 1.0 / nk**2), h, np.full((nk, nk, 1, 1), 0.7), T=0.1)
+    n_e = 0.25
+    # The filled lower band (N = 1): its free energy is below every density with N = 1/4.
+    _, U = np.linalg.eigh(h)
+    P0 = U[..., :, :1] @ np.conj(U[..., :, :1]).swapaxes(-1, -2)
+    common = dict(max_iter=400, density_tol=1e-8, comm_tol=1e-7, mixing=0.5)
+    oda = hf.solve_scf(kernel, P0, n_e, config=hf.SCFConfig(acceleration="oda", **common), backend=backend)
+    diis = hf.solve_scf(kernel, P0, n_e, config=hf.SCFConfig(acceleration="diis", **common), backend=backend)
+    w = np.full((nk, nk), 1.0 / nk**2)
+    count = np.sum(w * np.real(np.trace(np.asarray(oda.density), axis1=-2, axis2=-1)))
+    np.testing.assert_allclose(count, n_e, atol=1e-8)
+    np.testing.assert_allclose(float(oda.energy), float(diis.energy), atol=1e-6)

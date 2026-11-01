@@ -2,36 +2,15 @@
 
 from __future__ import annotations
 
-import os
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import lax
 
-_FFI_EIGH = "hartreefock_eigh_c128"
-_ffi_ready: bool | None = None
-
-
-def _ffi_eigh_ready() -> bool:
-    """Register the native batched eigh with XLA once; ``False`` if unavailable.
-
-    ``HF_JAX_FFI=0`` turns the native kernels off (XLA's own eigh is used).
-    """
-    global _ffi_ready
-    if _ffi_ready is None:
-        _ffi_ready = False
-        if os.environ.get("HF_JAX_FFI", "1") != "0":
-            try:
-                from hartreefock._backends.native import _native
-            except ImportError:
-                return False
-            targets = _native.xla_ffi_targets()
-            if _FFI_EIGH in targets:
-                jax.ffi.register_ffi_target(_FFI_EIGH, targets[_FFI_EIGH], platform="cpu")
-                _ffi_ready = True
-    return _ffi_ready
+from . import ffi
 
 
 def hermitian_eigh(array: jax.Array) -> tuple[jax.Array, jax.Array]:
@@ -42,11 +21,11 @@ def hermitian_eigh(array: jax.Array) -> tuple[jax.Array, jax.Array]:
     other dtypes, it is ``jnp.linalg.eigh``.  Not differentiable.
     """
     array = jnp.asarray(array)
-    if array.dtype != jnp.complex128 or array.ndim < 3 or not _ffi_eigh_ready():
+    if array.dtype != jnp.complex128 or array.ndim < 3 or not ffi.available(ffi.EIGH):
         w, v = jnp.linalg.eigh(array)
         return w, v
     call = jax.ffi.ffi_call(
-        _FFI_EIGH,
+        ffi.EIGH,
         (
             jax.ShapeDtypeStruct(array.shape[:-1], jnp.float64),
             jax.ShapeDtypeStruct(array.shape, jnp.complex128),
@@ -63,6 +42,47 @@ def hermitian_eigh(array: jax.Array) -> tuple[jax.Array, jax.Array]:
     w, v = lax.platform_dependent(array, cpu=native, default=xla)
     return w, v
 
+
+
+def _native_matmul(a, b):
+    out = jax.ShapeDtypeStruct(a.shape[:-1] + b.shape[-1:], jnp.complex128)
+    return jax.ffi.ffi_call(ffi.MATMUL, out, vmap_method="broadcast_all")(a, b)
+
+
+@jax.custom_jvp
+def _matmul_c128(a, b):
+    return lax.platform_dependent(a, b, cpu=_native_matmul, default=jnp.matmul)
+
+
+@_matmul_c128.defjvp
+def _matmul_c128_jvp(primals, tangents):
+    (a, b), (da, db) = primals, tangents
+    return _matmul_c128(a, b), _matmul_c128(da, b) + _matmul_c128(a, db)
+
+
+def adjoint(a: jax.Array) -> jax.Array:
+    """Conjugate transpose over the last two axes."""
+    return jnp.conj(jnp.swapaxes(a, -1, -2))
+
+
+def bmm(a: jax.Array, b: jax.Array) -> jax.Array:
+    """Batched ``a @ b`` over the last two axes.
+
+    On CPU a complex128 product of stacked matrices goes to the native
+    OpenMP kernel through ``jax.ffi`` (XLA CPU runs a batched dot serially);
+    otherwise it is ``jnp.matmul``.  Forward-mode differentiable.
+    """
+    a, b = jnp.asarray(a), jnp.asarray(b)
+    if (
+        a.dtype != jnp.complex128 or b.dtype != jnp.complex128
+        or max(a.ndim, b.ndim) < 3 or min(a.ndim, b.ndim) < 2
+        or not ffi.available(ffi.MATMUL)
+    ):
+        return jnp.matmul(a, b)
+    batch = jnp.broadcast_shapes(a.shape[:-2], b.shape[:-2])
+    a = jnp.broadcast_to(a, batch + a.shape[-2:])
+    b = jnp.broadcast_to(b, batch + b.shape[-2:])
+    return _matmul_c128(a, b)
 
 # Canonical, JIT-friendly block spec representation:
 #   ("sizes",   (n1, n2, ...)) or
@@ -312,7 +332,7 @@ def _eigh_block_indices(
     v_full = jnp.zeros(array.shape, dtype=array.dtype)
     col_start = 0
     for idx, v in zip(blocks, eigenvecs):
-        size = int(len(idx))
+        size = len(idx)
         idx_j = jnp.asarray(idx, dtype=jnp.int32)
         v_full = v_full.at[..., idx_j, col_start : col_start + size].set(v)
         col_start += size

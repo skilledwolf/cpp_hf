@@ -13,13 +13,14 @@ The builder supports JIT and forward-mode JVP.
 from __future__ import annotations
 
 import weakref
-from typing import Callable
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from ...superlattice import ExtendedGridLayout, superlattice_hartree
+from . import ffi
 
 
 def make_superlattice_fock_fn(
@@ -28,11 +29,19 @@ def make_superlattice_fock_fn(
     """JIT-compiled ``rho -> Σ_F[rho]`` for densities of shape ``(nkx, nky, D, D)``.
 
     Uses ``layout.V_lag_fft_orbital`` when present, else the scalar table.
+    On CPU this is the native OpenMP streaming kernel through ``jax.ffi``.
     """
+    if ffi.on_cpu() and ffi.available(ffi.SUPERLATTICE_FOCK):
+        return _make_native_superlattice_fock_fn(layout, n_G, dim_orb, nkx, nky)
     if layout.V_lag_fft_orbital is not None:
         return _make_orbital_superlattice_fock_fn(
             layout, n_G, dim_orb, nkx, nky, layout.V_lag_fft_orbital,
         )
+    return _make_scalar_superlattice_fock_fn(layout, n_G, dim_orb, nkx, nky)
+
+
+def _make_scalar_superlattice_fock_fn(layout, n_G, dim_orb, nkx, nky):
+    """Stream the ``ΔG`` channels of a scalar interaction, unrolled in HLO."""
     g_a_off = np.asarray(layout.g_a_off)
     delta_pair_i = np.asarray(layout.delta_pair_i)
     delta_pair_j = np.asarray(layout.delta_pair_j)
@@ -153,9 +162,49 @@ def _make_orbital_superlattice_fock_fn(
     return orbital_fock
 
 
+def _make_native_superlattice_fock_fn(layout, n_G, dim_orb, nkx, nky):
+    """``rho -> Σ_F[rho]`` through the native streaming kernel (CPU only).
+
+    Σ_F is linear in rho, so the JVP applies the same kernel to the tangent
+    (without the Hermitian ΔG halving, as a tangent need not be Hermitian).
+    """
+    D = n_G * dim_orb
+    shape = (nkx, nky, D, D)
+    V_orb = layout.V_lag_fft_orbital
+    tables = (
+        jnp.asarray(layout.V_lag_fft, dtype=jnp.complex128),
+        jnp.asarray(
+            np.zeros((0,), np.complex128) if V_orb is None else V_orb, dtype=jnp.complex128
+        ),
+        jnp.asarray(layout.g_a_off, dtype=jnp.int64),
+        jnp.asarray(layout.delta_pair_i, dtype=jnp.int64),
+        jnp.asarray(layout.delta_pair_j, dtype=jnp.int64),
+        jnp.asarray(layout.delta_pair_start, dtype=jnp.int64),
+    )
+    call = jax.ffi.ffi_call(
+        ffi.SUPERLATTICE_FOCK,
+        jax.ShapeDtypeStruct(shape, jnp.complex128),
+        vmap_method="sequential",
+    )
+
+    def apply(rho, hermitian):
+        if rho.shape != shape:
+            raise ValueError(f"density must have shape {shape}; got {rho.shape}")
+        return call(jnp.asarray(rho, dtype=jnp.complex128), *tables, hermitian_rho=hermitian)
+
+    @jax.custom_jvp
+    def fock_fn(rho):
+        return apply(rho, True)
+
+    @fock_fn.defjvp
+    def _fock_jvp(primals, tangents):
+        (rho,), (drho,) = primals, tangents
+        return apply(rho, True), apply(drho, False)
+
+    return jax.jit(fock_fn)
 
 
-_BUILDERS: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+_BUILDERS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def superlattice_build_fock(kernel) -> Callable:

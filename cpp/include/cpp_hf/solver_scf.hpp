@@ -465,6 +465,18 @@ inline SCFResult solve_scf(const HFKernel& K, const c64* P0, f32 n_e,
             } else {
                 lam = 0.0;  // c1 ≥ 0 and c2 ≤ 0: don't move
             }
+            // A start with the wrong particle number is off the constraint
+            // surface, so its energy is no bound: take the full step onto it.
+            double n_now = 0.0;
+            for (std::size_t kk = 0; kk < nk; ++kk) {
+                const c64* Pk = density.data() + kk * nb2;
+                double tr = 0.0;
+                for (std::size_t a = 0; a < nb; ++a) tr += Pk[a * nb + a].real();
+                n_now += static_cast<double>(K.w2d[kk]) * tr;
+            }
+            if (std::abs(n_now - n_e) >
+                1.0e-8 * std::max(1.0, std::abs(static_cast<double>(n_e))))
+                lam = 1.0;
             for (std::size_t i = 0; i < n_tot; ++i)
                 density[i] = density[i] + c64(lam, 0.0) * delta[i];
             if (project_fn && *project_fn)
