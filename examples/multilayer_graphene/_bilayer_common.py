@@ -416,7 +416,7 @@ def n_electrons_for_density(setup: BilayerSetup, n_cm12: float, temperature: flo
     h_run = setup.h_template.copy()
     h_run.fermi = FermiParams(T=float(temperature), mu=0.0)
     h_run = h_run.with_chemical_potential(density=float(setup.ne_cn + dd))
-    n_e = float(h_run.state.density() / float(h_run.degeneracy))
+    n_e = float(h_run.state.density() / h_run.basis.multiplicity)
     return n_e, h_run
 
 

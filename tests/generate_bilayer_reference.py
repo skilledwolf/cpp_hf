@@ -145,7 +145,7 @@ def main():
             h_run = h_template.copy()
             h_run.fermi = FermiParams(T=TEMPERATURE, mu=0.0)
             h_run = h_run.with_chemical_potential(density=float(ne_cn + dd))
-            n_e = float(h_run.state.density() / float(h_run.degeneracy))
+            n_e = float(h_run.state.density() / h_run.basis.multiplicity)
 
             P0 = init_density_from_seed(h_run, seeds[branch])
             result = solve_scf_point(

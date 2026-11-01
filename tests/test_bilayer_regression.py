@@ -86,7 +86,7 @@ def _initial_state(setup, branch, n_cm12):
     h_run = h.copy()
     h_run.fermi = FermiParams(T=temperature, mu=0.0)
     h_run = h_run.with_chemical_potential(density=float(ne_cn + n_cm12 * 1e12 * PER_CM**2))
-    n_e = float(h_run.state.density() / float(h_run.degeneracy))
+    n_e = float(h_run.state.density() / h_run.basis.multiplicity)
     if branch == "PM":  # the zero seed is the empty density
         P0 = np.zeros_like(np.asarray(h_run.hs))
     else:

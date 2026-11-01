@@ -238,7 +238,7 @@ def _h_run_at_density(setup: dict, n_cm12: float):
     dd = float(n_cm12) * 1e12 * (PER_CM ** 2)
     h_run = setup["h"].copy()
     h_run = h_run.with_chemical_potential(density=setup["ne_cn"] + dd)
-    n_e = float(h_run.state.density() / float(h_run.degeneracy))
+    n_e = float(h_run.state.density() / h_run.basis.multiplicity)
     return n_e, h_run
 
 

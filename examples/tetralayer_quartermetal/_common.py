@@ -604,7 +604,7 @@ def n_electrons_for_density(setup: QMSetup, n_cm12: float, T: float):
     h_run = setup.h_template.copy()
     h_run.fermi = FermiParams(T=float(T), mu=0.0)
     h_run = h_run.with_chemical_potential(density=float(setup.ne_cn + dd))
-    n_e = float(h_run.state.density() / float(h_run.degeneracy))
+    n_e = float(h_run.state.density() / h_run.basis.multiplicity)
     return n_e, h_run
 
 
@@ -613,7 +613,7 @@ def initial_density_from_seed(h_run, seed_op, T: float,
     """Cold-seed density matrix: diagonalize h_run + seed_op and Fermi-fill."""
     from contimod.meanfield import SelfEnergySeed
     if density is None:
-        density = float(h_run.state.density() / float(h_run.degeneracy))
+        density = float(h_run.state.density() / h_run.basis.multiplicity)
     seed_arr = np.asarray(seed_op)
     if np.max(np.abs(seed_arr)) == 0.0:
         P0 = h_run.state.density_matrix(density=float(density), T=float(T))
