@@ -210,14 +210,14 @@ def build_bilayer(
     spin_contrast = -s3
 
     seeds = {
-        "PM": h_template.get_operator("zero"),
-        "SVP": -float(init_scale) * h_template.get_operator(sv_contrast),
+        "PM": h_template.operator("zero"),
+        "SVP": -float(init_scale) * h_template.operator(sv_contrast),
         # SP: spin-polarized but valley-symmetric
-        "SP": -float(init_scale) * h_template.get_operator(spin_contrast),
+        "SP": -float(init_scale) * h_template.operator(spin_contrast),
         # SVP_flipped: same SVP projection, opposite seed sign (tests whether
         # the SVP projected subspace is connected - should converge to the
         # same state as SVP if so, else to a distinct configuration).
-        "SVP_flipped": +float(init_scale) * h_template.get_operator(sv_contrast),
+        "SVP_flipped": +float(init_scale) * h_template.operator(sv_contrast),
     }
 
     G_pm = _make_pm_group(identity_op, s1, s2, s3, v3)
@@ -321,10 +321,10 @@ def build_bilayer_layer_resolved(
     spin_contrast = -s3
 
     seeds = {
-        "PM": h_template.get_operator("zero"),
-        "SVP": -float(init_scale) * h_template.get_operator(sv_contrast),
-        "SP": -float(init_scale) * h_template.get_operator(spin_contrast),
-        "SVP_flipped": +float(init_scale) * h_template.get_operator(sv_contrast),
+        "PM": h_template.operator("zero"),
+        "SVP": -float(init_scale) * h_template.operator(sv_contrast),
+        "SP": -float(init_scale) * h_template.operator(spin_contrast),
+        "SVP_flipped": +float(init_scale) * h_template.operator(sv_contrast),
     }
 
     G_pm = _make_pm_group(identity_op, s1, s2, s3, v3)

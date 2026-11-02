@@ -163,8 +163,8 @@ def _build_setup(D_Vnm: float, *, hartree_kind: str = "dualgate_eps2") -> dict:
     v3 = np.asarray(model.valley_op(3))
     proj_pol = 0.25 * (identity + s3) @ (identity + v3)
     sv_seed_shape = (-1.0) * proj_pol + (1.0 / 3.0) * (identity - proj_pol)
-    pm_seed_op = h.get_operator("zero")
-    svp_seed_op = float(INIT_SCALE) * h.get_operator(sv_seed_shape)
+    pm_seed_op = h.operator("zero")
+    svp_seed_op = float(INIT_SCALE) * h.operator(sv_seed_shape)
 
     # C3-aware symmetry projectors (PM_C3, C3, SVP_C3, ...) via contimod.
     # The QM convention treats the "SVP_C3" *phase* as C3-projected only —

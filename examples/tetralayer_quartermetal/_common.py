@@ -322,7 +322,7 @@ def build_setup(*, D_Vnm: float, nk: int = NK_DEFAULT, kmax: float = KMAX,
         # 8-orbital model: no spin/valley structure.  PM is trivial
         # (everything is in the symmetric subspace by construction).
         # SVP and SVP_flipped are not meaningful; return identity projectors.
-        seeds = {"PM": h.get_operator("zero")}
+        seeds = {"PM": h.operator("zero")}
         project_fns = {"PM": (lambda A: A)}
         return QMSetup(
             h_template=h, model=model, weights=weights, Vq=Vq,
@@ -348,9 +348,9 @@ def build_setup(*, D_Vnm: float, nk: int = NK_DEFAULT, kmax: float = KMAX,
     sv_seed_shape_flipped = (1.0) * proj_pol - (1.0 / 3.0) * (identity_op - proj_pol)
 
     seeds = {
-        "PM": h.get_operator("zero"),
-        "SVP": float(init_scale) * h.get_operator(sv_seed_shape),
-        "SVP_flipped": float(init_scale) * h.get_operator(sv_seed_shape_flipped),
+        "PM": h.operator("zero"),
+        "SVP": float(init_scale) * h.operator(sv_seed_shape),
+        "SVP_flipped": float(init_scale) * h.operator(sv_seed_shape_flipped),
     }
 
     # PM group: spin {I, σ_x, σ_y, σ_z} × valley {I, τ_z}, plus time reversal.
