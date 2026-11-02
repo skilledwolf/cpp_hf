@@ -106,7 +106,7 @@ def test_exchange_and_hartree_match_direct_sums(orb):
 
 @pytest.mark.parametrize(
     "case",
-    [dict(), dict(V=orbital), dict(embed_reference=True, center_hartree=False)],
+    [dict(), dict(V=orbital), dict(embed_reference=True)],
     ids=["scalar", "orbital", "embedded"],
 )
 def test_fock_matches_the_kernel_linear_maps(x64, case):
@@ -140,22 +140,21 @@ def test_fock_matches_the_kernel_linear_maps(x64, case):
 
 
 def test_embedding_solves_standard_hf(x64):
-    """An embedded kernel converges to the unreferenced HF state, its energy offset by a constant."""
+    """An embedded kernel converges to the unreferenced HF state and reports its energy."""
     rng = np.random.default_rng(11)
     h = band_hamiltonian(rng)
     D = h.shape[-1]
     ref = np.broadcast_to(0.5 * np.eye(D), h.shape)
     common = dict(V=orbital, hartree=True, degeneracy=2.0)
     plain = make_kernel(h, reference=np.zeros_like(ref), **common)
-    embedded = make_kernel(h, reference=ref, embed_reference=True, center_hartree=False, **common)
+    embedded = make_kernel(h, reference=ref, embed_reference=True, **common)
     n = 0.3 * D * W * NX * NY
     config = hf.SolverConfig(max_iter=300, density_tol=1e-10, comm_tol=1e-10, mixing=0.3, method="rdiis")
     r_plain = hf.solve(plain, ref, n, config=config)
     r_embedded = hf.solve(embedded, ref, n, config=config)
-    assert r_plain.converged and r_embedded.converged, (r_plain.message, r_embedded.message)
-    np.testing.assert_allclose(
-        float(r_embedded.energy) - embedded.embedded_energy_offset, float(r_plain.energy), atol=1e-9
-    )
+    assert r_plain.converged and r_embedded.converged
+    np.testing.assert_allclose(float(r_embedded.energy), float(r_plain.energy), atol=1e-9)
+    np.testing.assert_allclose(float(r_embedded.mu), float(r_plain.mu), atol=1e-9)
     np.testing.assert_allclose(r_embedded.density, r_plain.density, atol=1e-7)
 
 

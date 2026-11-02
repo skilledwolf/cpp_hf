@@ -191,7 +191,8 @@ class SolveResult(NamedTuple):
         The Fock matrix at the density.
     energy : float
         Hartree-Fock energy summed with the weights (without ``-TS``),
-        ``Tr(hP) + ½ Tr(V_HF[P - P_ref] (P - P_ref))``.
+        ``Tr(hP) + ½ Tr(V_HF[P - P_ref] (P - P_ref))``; with an embedded
+        reference the standard ``Tr(hP) + ½ Tr(V_HF[P] P)``.
     mu : float
         Chemical potential.
     n_iter : int

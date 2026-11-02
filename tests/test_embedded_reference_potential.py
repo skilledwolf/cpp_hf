@@ -56,8 +56,7 @@ def _build_F(kernel, P):
 @pytest.mark.parametrize("with_hartree", [True, False])
 def test_embedded_F_at_refP_equals_h_plus_V_HF_refP(with_hartree):
     kernel_embed = _make_kernels(
-        embed=True, with_hartree=with_hartree, refP_arg=None,
-        center_hartree=False,
+        embed=True, with_hartree=with_hartree, refP_arg=None
     )
     kernel_plain = _make_kernels(
         embed=False, with_hartree=with_hartree, refP_arg=None,
@@ -78,8 +77,7 @@ def test_embedded_F_at_refP_equals_h_plus_V_HF_refP(with_hartree):
 @pytest.mark.parametrize("with_hartree", [True, False])
 def test_F_difference_independent_of_P(with_hartree):
     kernel_embed = _make_kernels(
-        embed=True, with_hartree=with_hartree, refP_arg=None,
-        center_hartree=False,
+        embed=True, with_hartree=with_hartree, refP_arg=None
     )
     kernel_plain = _make_kernels(
         embed=False, with_hartree=with_hartree, refP_arg=None,
@@ -102,18 +100,17 @@ def test_embedding_no_op_when_refP_zero(with_hartree):
     weights, h, Vq, HH, T, _ = _setup()
     refP_zero = np.zeros_like(h)
     kwargs = dict(hartree=HH) if with_hartree else {}
-    kernel = HartreeFockKernel(mesh_for(weights), h, Vq, T=T, exchange=True, reference=refP_zero, embed_reference=True, center_hartree=False, **kwargs)
+    kernel = HartreeFockKernel(mesh_for(weights), h, Vq, T=T, exchange=True, reference=refP_zero, embed_reference=True, **kwargs)
     np.testing.assert_allclose(np.asarray(kernel.h), h, atol=1e-6)
     assert float(kernel.embedded_energy_offset) == 0.0
 
 
-@pytest.mark.parametrize("center", [False, True])
 @pytest.mark.parametrize("density_scale", [0.6, 1.4])
-def test_embedded_energy_correction_uses_the_current_particle_count(center, density_scale):
+def test_embedded_energy_differs_by_the_offset(density_scale):
     weights, h, Vq, HH, T, refP = _setup(nk=2)
     weights *= .3  # The gauge correction uses physical, unnormalized counts.
     common = dict(mesh=mesh_for(weights), h=h, V=Vq, T=T, hartree=HH)
-    embedded = HartreeFockKernel(reference=refP, embed_reference=True, center_hartree=center, **common)
+    embedded = HartreeFockKernel(reference=refP, embed_reference=True, **common)
     standard = HartreeFockKernel(reference=np.zeros_like(refP), **common)
     P = density_scale * refP
 
@@ -125,20 +122,13 @@ def test_embedded_energy_correction_uses_the_current_particle_count(center, dens
 
     F_standard, E_standard = evaluate(standard, P)
     F_embedded, E_embedded = evaluate(embedded, P)
-    count = float(np.einsum("ij,ijaa->", weights, P).real)
-    corrected = (E_embedded - embedded.embedded_energy_offset
-                 + embedded.embedded_hartree_shift * count)
-    np.testing.assert_allclose(corrected, E_standard, atol=1e-6)
-    np.testing.assert_allclose(
-        F_embedded + embedded.embedded_hartree_shift * np.eye(h.shape[-1]),
-        F_standard, atol=1e-6,
-    )
+    np.testing.assert_allclose(E_embedded - embedded.embedded_energy_offset, E_standard, atol=1e-6)
+    np.testing.assert_allclose(F_embedded, F_standard, atol=1e-6)
     Sigma_ref, H_ref, _ = _build_F(standard, refP)
     expected_offset = .5 * np.einsum(
         "ij,ijab,ijba->", weights, Sigma_ref + H_ref, refP,
     ).real
     np.testing.assert_allclose(embedded.embedded_energy_offset, expected_offset, atol=1e-6)
-    assert (embedded.embedded_hartree_shift != 0.0) == center
 
 
 def test_embedding_includes_contact_reference_potential_and_offset():
@@ -152,7 +142,7 @@ def test_embedding_includes_contact_reference_potential_and_offset():
     contact_terms = [(1.0, sigma_z, sigma_z)]
 
     kernel_plain = HartreeFockKernel(mesh_for(weights), h, Vq, T=0.1, reference=refP, contact_terms=contact_terms)
-    kernel_embed = HartreeFockKernel(mesh_for(weights), h, Vq, T=0.1, reference=refP, contact_terms=contact_terms, embed_reference=True, center_hartree=False)
+    kernel_embed = HartreeFockKernel(mesh_for(weights), h, Vq, T=0.1, reference=refP, contact_terms=contact_terms, embed_reference=True)
 
     # For O_i = O_j = sigma_z and rho_bar = diag(0.8, 0.2):
     # g O_i tr(O_j rho_bar) - g O_i rho_bar O_j = diag(-0.2, -0.8).

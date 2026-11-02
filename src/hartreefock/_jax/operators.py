@@ -52,7 +52,7 @@ def fock_operators(kernel):
 
     def evaluate(P):
         F, E = _evaluate_fock(jnp.asarray(P, dtype=dtype), **kwargs)
-        return np.asarray(F), float(E)
+        return np.asarray(F), float(E) - kernel.embedded_energy_offset
 
     def response(P, dP):
         return np.asarray(_response_fock(

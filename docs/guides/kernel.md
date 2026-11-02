@@ -102,21 +102,11 @@ system diverges.
 
 With `embed_reference=True` the kernel adds
 $V_{HF}[P^{\mathrm{ref}}]$ to `h` once, so the loop solves standard
-Hartree-Fock, $F = h + V_{HF}[P]$. The reported energy and chemical
-potential then differ from the standard ones by constants the kernel
-keeps:
-
-$$
-E_{\text{standard}} = E - \texttt{embedded\_energy\_offset} + \texttt{embedded\_hartree\_shift}\cdot n,
-\qquad
-\mu_{\text{standard}} = \mu + \texttt{embedded\_hartree\_shift}.
-$$
-
-`center_hartree` (on by default) removes the orbital mean of the
-embedded Hartree potential, which keeps the Fermi level near zero.
+Hartree-Fock, $F = h + V_{HF}[P]$, and reports the standard energy and
+chemical potential.
 
 Standard Hartree-Fock is also a reference density of zero. Solving both
-ways gives the same density, and the energies obey the relation:
+ways gives the same state:
 
 ```{code-cell} ipython3
 config = hf.SolverConfig(density_tol=1e-10, comm_tol=1e-10)
@@ -126,12 +116,10 @@ embedded = hf.HartreeFockKernel(mesh, h, V, reference=P_ref, embed_reference=Tru
 r_std = hf.solve(standard, P0, n, config=config)
 r_emb = hf.solve(embedded, P0, n, config=config)
 
-E_from_embedded = r_emb.energy - embedded.embedded_energy_offset + embedded.embedded_hartree_shift * n
-mu_from_embedded = r_emb.mu + embedded.embedded_hartree_shift
 layer_imbalance = np.einsum("ij,ijaa->a", mesh.weights, r_std.density).real @ [1, -1] / n
 print(f"layer imbalance (n1 - n2)/n = {layer_imbalance:+.4f}")
-print(f"energy: standard {r_std.energy:.8f}   from the embedded kernel {E_from_embedded:.8f}")
-print(f"mu:     standard {r_std.mu:.8f}   from the embedded kernel {mu_from_embedded:.8f}")
+print(f"energy: standard {r_std.energy:.8f}   embedded {r_emb.energy:.8f}")
+print(f"mu:     standard {r_std.mu:.8f}   embedded {r_emb.mu:.8f}")
 print(f"largest density difference: {np.abs(np.asarray(r_std.density) - np.asarray(r_emb.density)).max():.1e}")
 ```
 
@@ -142,8 +130,8 @@ back, more than exchange helps.
 
 ```{code-cell} ipython3
 :tags: [remove-cell]
-assert abs(E_from_embedded - r_std.energy) < 1e-8
-assert abs(mu_from_embedded - r_std.mu) < 1e-7
+assert abs(r_emb.energy - r_std.energy) < 1e-8
+assert abs(r_emb.mu - r_std.mu) < 1e-7
 assert np.abs(np.asarray(r_std.density) - np.asarray(r_emb.density)).max() < 1e-6
 ```
 

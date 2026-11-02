@@ -113,12 +113,8 @@ class HartreeFockKernel:
         Density subtracted before building the self-energy.
     embed_reference : bool
         Add ``V_HF[reference]`` to ``h`` once, so the loop solves standard
-        HF: ``F = h + V_HF[P]``.  The reported energy then exceeds standard
-        HF by ``embedded_energy_offset - embedded_hartree_shift * n`` (``n``
-        is ``Σ_k w_k Tr P_k``); ``mu_standard = mu + embedded_hartree_shift``.
-    center_hartree : bool
-        With embedding, subtract the mean diagonal of the reference Hartree
-        potential from ``h`` (a gauge choice that keeps E_F near zero).
+        HF: ``F = h + V_HF[P]``.  Solvers report the standard HF energy; the
+        constant they remove is ``embedded_energy_offset``.
     contact_terms : sequence of (g, O_i, O_j), optional
         q-independent interactions ``H = ½ g O_i ⊗ O_j`` (dense basis).  Each
         contributes ``σ_H = g O_i tr(O_j ρ̄)`` and ``σ_F = -g O_i ρ̄ O_j`` with
@@ -139,7 +135,6 @@ class HartreeFockKernel:
         degeneracy: float = 1.0,
         reference=None,
         embed_reference: bool = False,
-        center_hartree: bool = True,
         contact_terms=None,
     ):
         if not isinstance(mesh, Mesh):
@@ -185,9 +180,7 @@ class HartreeFockKernel:
             self._init_dense(V, hartree)
 
         self.embed_reference = bool(embed_reference)
-        self.center_hartree = bool(center_hartree)
         self.embedded_energy_offset = 0.0
-        self.embedded_hartree_shift = 0.0
         if self.embed_reference:
             if reference is None:
                 raise ValueError("embed_reference needs a reference density")
@@ -309,14 +302,9 @@ class HartreeFockKernel:
     def _embed_reference(self) -> None:
         ref = self.refP
         V_ref = self.potential(ref)
-        # The offset uses the uncentred potential; centring separately
-        # subtracts shift * N(P) from the reported energy.
         self.embedded_energy_offset = 0.5 * float(
             np.einsum("ij,ijab,ijba->", self.w2d, V_ref, ref).real
         )
-        if self.center_hartree and self.include_hartree:
-            self.embedded_hartree_shift = float(np.mean(np.diag(self._long_range_hartree(ref)).real))
-            V_ref = V_ref - self.embedded_hartree_shift * np.eye(V_ref.shape[-1])
         self.h = np.ascontiguousarray(self.h + V_ref.astype(self.h.dtype))
 
     # ----- linear maps (no reference subtraction) -----------------------------------
@@ -402,10 +390,7 @@ class HartreeFockKernel:
         if self.include_hartree:
             sigma = sigma + self.hartree(P - refP)[None]
             if embedded:
-                sigma_ref = self.hartree(refP)
-                if self.center_hartree:
-                    sigma_ref = sigma_ref - self.embedded_hartree_shift * np.eye(self.h.shape[-1])
-                sigma = sigma + sigma_ref[None]
+                sigma = sigma + self.hartree(refP)[None]
         D = self.h.shape[-1]
         sigma = _herm(np.broadcast_to(sigma, (k.shape[0], D, D)))
         return sigma[0] if squeeze else sigma

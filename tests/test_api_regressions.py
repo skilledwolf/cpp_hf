@@ -163,10 +163,9 @@ def test_zero_temperature_scf_preserves_flat_band_particle_count(acceleration):
 
 
 @pytest.mark.parametrize("kind", ["regular", "superlattice"])
-@pytest.mark.parametrize("center", [False, True])
 @pytest.mark.parametrize("density_scale", [0.6, 1.4])
-def test_embedded_energy_correction_recovers_standard_hf(kind, center, density_scale):
-    """The energy gauge correction uses the current count, not the reference count."""
+def test_embedded_kernel_reports_standard_hf(kind, density_scale):
+    """Away from the reference density too, the embedded Fock matrix and energy are standard."""
     weights = np.full((2, 2), 0.3 / 4)
     kx = np.linspace(-0.5, 0.5, 2, endpoint=False)
     h = np.diag([-0.5, 0.5])[None, None] + kx[:, None, None, None] * np.array([[0, 1], [1, 0]])
@@ -182,16 +181,11 @@ def test_embedded_energy_correction_recovers_standard_hf(kind, center, density_s
         common = dict(V=lambda q: np.full_like(q, 0.3), plane_waves=np.zeros((1, 2)),
                       hartree=HH[None, None])
     common.update(mesh=mesh, h=h, T=0.05)
-    embedded = HartreeFockKernel(**common, reference=refP, embed_reference=True, center_hartree=center)
+    embedded = HartreeFockKernel(**common, reference=refP, embed_reference=True)
     standard = HartreeFockKernel(**common, reference=np.zeros_like(refP))
     P = density_scale * refP
 
     F_standard, E_standard = fock_operators(standard).evaluate(P)
     F_embedded, E_embedded = fock_operators(embedded).evaluate(P)
-    n_electrons = float(np.einsum("ij,ijaa->", weights, P).real)
-    corrected = (E_embedded - embedded.embedded_energy_offset
-                 + embedded.embedded_hartree_shift * n_electrons)
-    np.testing.assert_allclose(corrected, E_standard, atol=1e-12)
-    np.testing.assert_allclose(
-        F_embedded + embedded.embedded_hartree_shift * np.eye(2), F_standard, atol=1e-12
-    )
+    np.testing.assert_allclose(E_embedded, E_standard, atol=1e-12)
+    np.testing.assert_allclose(F_embedded, F_standard, atol=1e-12)

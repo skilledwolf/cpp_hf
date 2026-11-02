@@ -7,6 +7,11 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- An embedded reference (`embed_reference=True`) reports the standard HF
+  energy, chemical potential and Fock matrix from `hf.solve`, the
+  continuation, deflation and stability tools and `fock_operators`.
+  `center_hartree` and `embedded_hartree_shift` are gone: the centring was a
+  gauge shift of `h` that only moved the chemical potential.
 - One entry point, one config, one result: `hf.solve(kernel, P0, n,
   config=hf.SolverConfig(method=...))` with `method` one of `"rdiis"` (the
   default), `"anderson"`, `"oda"`, `"linear"` (Roothaan iteration) or

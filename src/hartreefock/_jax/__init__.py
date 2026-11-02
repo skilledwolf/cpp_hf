@@ -11,12 +11,19 @@ from .utils import resample_kgrid
 
 
 def solve(kernel, P0, n_electrons, *, config=None):
-    """Roothaan iteration or direct minimization, as ``config.method`` says."""
+    """Roothaan iteration or direct minimization, as ``config.method`` says.
+
+    The energy is the standard HF energy, also for an embedded reference.
+    """
     from ..config import SolverConfig
 
     config = SolverConfig() if config is None else config
     run = roothaan if config.roothaan else minimize
-    return run(kernel, P0, n_electrons, config=config)
+    result = run(kernel, P0, n_electrons, config=config)
+    offset = kernel.embedded_energy_offset
+    history = {key: value - offset if key in ("E", "free_energy") else value
+               for key, value in result.history.items()}
+    return result._replace(energy=result.energy - offset, history=history)
 
 __all__ = [
     "build_fock",
