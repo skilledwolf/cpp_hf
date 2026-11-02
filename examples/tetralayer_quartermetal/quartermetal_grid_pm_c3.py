@@ -83,7 +83,7 @@ def _run_d_row(args: tuple) -> list[dict]:
         ]
 
     kernel = hartreefock.HartreeFockKernel(
-        weights=setup.weights, hamiltonian=np.asarray(setup.h_template.hs),
+        weights=setup.weights, hamiltonian=np.asarray(setup.h_template.matrices),
         coulomb_q=setup.Vq, T=T,
         include_hartree=True, include_exchange=True,
         reference_density=refP, hartree_matrix=setup.hartree_matrix,
@@ -111,7 +111,7 @@ def _run_d_row(args: tuple) -> list[dict]:
         # Replace the kernel hamiltonian per n (matches contimod's mu shift)
         kernel = hartreefock.HartreeFockKernel(
             weights=setup.weights,
-            hamiltonian=np.asarray(h_run.hs),
+            hamiltonian=np.asarray(h_run.matrices),
             coulomb_q=setup.Vq, T=T,
             include_hartree=True, include_exchange=True,
             reference_density=refP,

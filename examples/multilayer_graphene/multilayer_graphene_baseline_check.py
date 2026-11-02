@@ -120,7 +120,7 @@ def load_reference_targets(
 def _kernel_for_setup(setup: common.BilayerSetup, temperature: float) -> hartreefock.HartreeFockKernel:
     return hartreefock.HartreeFockKernel(
         weights=setup.weights,
-        hamiltonian=np.asarray(setup.h_template.hs),
+        hamiltonian=np.asarray(setup.h_template.matrices),
         coulomb_q=setup.Vq,
         T=float(temperature),
         include_hartree=False,

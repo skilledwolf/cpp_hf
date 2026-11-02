@@ -69,7 +69,7 @@ def _run_dtb_row(Delta_tb_meV, n_e_grid_per_flavor, nk, kmax, T):
         D_Vnm=D_Vnm, nk=int(nk), kmax=float(kmax), T=float(T),
         bz_kind="rhombic", hartree_kind="dualgate_eps2",  # HH unused (no SCF)
     )
-    h_arr = np.asarray(setup.h_template.hs)
+    h_arr = np.asarray(setup.h_template.matrices)
     weights = np.asarray(setup.weights)
 
     eigs = np.linalg.eigvalsh(

@@ -77,7 +77,7 @@ CELLS = [
 def run_scf(setup, refP, projector_key, seed_key, n_cm12):
     n_e, h_run = qm.n_electrons_for_density(setup, n_cm12, T)
     kernel = hartreefock.HartreeFockKernel(
-        weights=setup.weights, hamiltonian=np.asarray(h_run.hs),
+        weights=setup.weights, hamiltonian=np.asarray(h_run.matrices),
         coulomb_q=setup.Vq, T=T,
         include_hartree=True, include_exchange=True,
         reference_density=refP, hartree_matrix=setup.hartree_matrix,
@@ -162,7 +162,7 @@ def main(argv=None):
             )
             kernel0 = hartreefock.HartreeFockKernel(
                 weights=setup.weights,
-                hamiltonian=np.asarray(setup.h_template.hs),
+                hamiltonian=np.asarray(setup.h_template.matrices),
                 coulomb_q=setup.Vq, T=T,
                 include_hartree=True, include_exchange=True,
                 reference_density=refP, hartree_matrix=setup.hartree_matrix,

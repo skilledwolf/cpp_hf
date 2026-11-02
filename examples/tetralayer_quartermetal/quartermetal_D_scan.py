@@ -57,12 +57,12 @@ def run_one(D_Vnm):
     n_e, h_run = qm.n_electrons_for_density(setup, N_CM12, T)
     layer = np.asarray(setup.model.layer)
     kernel_HF = hartreefock.HartreeFockKernel(
-        weights=setup.weights, hamiltonian=np.asarray(h_run.hs),
+        weights=setup.weights, hamiltonian=np.asarray(h_run.matrices),
         coulomb_q=setup.Vq, T=T, include_hartree=True, include_exchange=True,
         reference_density=refP, hartree_matrix=setup.hartree_matrix,
     )
     kernel_X = hartreefock.HartreeFockKernel(
-        weights=setup.weights, hamiltonian=np.asarray(h_run.hs),
+        weights=setup.weights, hamiltonian=np.asarray(h_run.matrices),
         coulomb_q=setup.Vq, T=T, include_hartree=False, include_exchange=True,
         reference_density=refP, hartree_matrix=setup.hartree_matrix,
     )

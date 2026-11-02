@@ -638,7 +638,7 @@ def noninteracting_cn_reference(setup: QMSetup, T: float | None = None,
     """
     import contimod as cm
     from contimod.utils.spectrum_fermi import FermiParams
-    h_arr = np.asarray(setup.h_template.hs)
+    h_arr = np.asarray(setup.h_template.matrices)
     nb = h_arr.shape[-1]
     small = (nb == 8)
     nk = int(setup.weights.shape[0])
@@ -734,7 +734,7 @@ def _bootstrap_cn_sc_reference(setup: QMSetup, *,
 
     refP_init = noninteracting_cn_reference(setup, T=T, ref_kind="u0")
 
-    h_arr = np.asarray(setup.h_template.hs)
+    h_arr = np.asarray(setup.h_template.matrices)
     kernel = hartreefock.HartreeFockKernel(
         weights=setup.weights, hamiltonian=h_arr,
         coulomb_q=setup.Vq, T=float(T),

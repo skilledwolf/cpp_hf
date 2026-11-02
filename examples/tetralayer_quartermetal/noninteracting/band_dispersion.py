@@ -65,7 +65,7 @@ def diag_along_kx_cut(model, kx_array: np.ndarray) -> np.ndarray:
         h = model.discretize(nk=max(len(kx_array), 64), kmax=kmax_x)
         ks = np.asarray(h.kmesh.ks)
         iy0 = int(np.argmin(np.abs(ks[0, :, 1])))
-        H_at_k = np.asarray(h.hs)[:, iy0, :, :]
+        H_at_k = np.asarray(h.matrices)[:, iy0, :, :]
     eigs = np.linalg.eigvalsh(H_at_k)
     return eigs
 
@@ -78,7 +78,7 @@ def dos_curve(model, *, nk: int, kmax: float,
     triangulation-based 2D DOS from ``bztetra.twod``.
     """
     h = model.discretize(nk=int(nk), kmax=float(kmax))
-    h_arr = np.asarray(h.hs)
+    h_arr = np.asarray(h.matrices)
     eigs = np.linalg.eigvalsh(
         h_arr.reshape(-1, h_arr.shape[-2], h_arr.shape[-1])
     ).reshape(*h_arr.shape[:2], -1)

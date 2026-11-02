@@ -117,7 +117,7 @@ def main(argv=None):
 
         n_cm12_total = float(n_e) * SPIN_VALLEY
         _, h_run = qm.n_electrons_for_density(setup, n_cm12_total, T)
-        h_arr = np.asarray(h_run.hs)
+        h_arr = np.asarray(h_run.matrices)
         eigs = np.linalg.eigvalsh(
             h_arr.reshape(-1, h_arr.shape[-2], h_arr.shape[-1])
         ).reshape(*h_arr.shape[:2], -1)

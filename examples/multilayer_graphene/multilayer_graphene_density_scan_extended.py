@@ -79,7 +79,7 @@ def run_scan(args: argparse.Namespace) -> list[dict]:
 
     kernel = hartreefock.HartreeFockKernel(
         weights=setup.weights,
-        hamiltonian=np.asarray(setup.h_template.hs),
+        hamiltonian=np.asarray(setup.h_template.matrices),
         coulomb_q=setup.Vq,
         T=args.temperature,
         include_hartree=False,

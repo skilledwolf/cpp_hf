@@ -99,7 +99,7 @@ def fs_topology_for_cell(model, mu: float, *, nk: int, kmax: float
     from scipy.ndimage import label
 
     h = model.discretize(nk=int(nk), kmax=float(kmax))
-    h_arr = np.asarray(h.hs)
+    h_arr = np.asarray(h.matrices)
     eigs = np.linalg.eigvalsh(
         h_arr.reshape(-1, h_arr.shape[-2], h_arr.shape[-1])
     ).reshape(*h_arr.shape[:2], -1)

@@ -14,7 +14,7 @@ option (added across cpp_hf / jax_hf / contimod): the kernel pre-bakes
 ``V_HF[refP] = J[refP] + Σ[refP]`` into ``h`` once at construction so
 the SCF natively solves *standard* HF (gradient ``F = h + V_HF[P]``)
 instead of the reference-subtracted modified-HF default.  The Fock
-returned in ``result.hmf.hs`` is therefore the standard physical Fock
+returned in ``result.hamiltonian.matrices`` is therefore the standard physical Fock
 directly — no manual reconstruction (no Σ_x[refP] precompute, no
 HH·diag(refP) diagonal addition).  ``center_embedded_hartree=True``
 subtracts the orbital-uniform mean of J[refP] so absolute eigenvalues
@@ -249,7 +249,7 @@ def _solve_meanfield_phase(setup: dict, h_run, *, seed_op, project_fn,
     """One contimod SCF call for a single (cell, phase).
 
     Uses ``embed_reference_potential=True`` so the converged Fock in
-    ``result.hmf.hs`` is the *standard* HF Fock — no post-processing
+    ``result.hamiltonian.matrices`` is the *standard* HF Fock — no post-processing
     required to recover bands / DOS / Δ_tb.
     """
     return mf.solve(
@@ -278,11 +278,11 @@ def _physical_eigs(res, weights, n_e):
     """Diagonalize the standard-HF Fock from the embedded SCF result.
 
     With ``embed_reference_potential=True`` the SCF result's
-    ``hmf.hs`` already equals ``h_bare + V_HF[P]`` (i.e. F_std), so
+    ``hmf.matrices`` already equals ``h_bare + V_HF[P]`` (i.e. F_std), so
     this is just an eigvalsh + μ search — no Σ_x[refP] / HH·diag(refP)
     reconstruction.
     """
-    fock = np.asarray(res.hmf.hs)
+    fock = np.asarray(res.hamiltonian.matrices)
     n_orb = fock.shape[-1]
     eigs = np.linalg.eigvalsh(fock.reshape(-1, n_orb, n_orb))
     eigs = eigs.reshape(*fock.shape[:2], -1)
