@@ -11,6 +11,7 @@ from scipy.special import expit
 
 from hartreefock import (
     HartreeFockKernel,
+    Mesh,
     SolverConfig,
     fock_operators,
     solve,
@@ -197,3 +198,18 @@ def test_embedded_kernel_reports_standard_hf(kind, density_scale):
         np.testing.assert_allclose(sum(kernel.energies(P).values()), E, atol=1e-12)
     np.testing.assert_allclose(embedded.energies(P)["kinetic"],
                                standard.energies(P)["kinetic"], atol=1e-12)
+
+
+def test_noninteracting_start():
+    """P0=None starts from the filled bands of h; a field biases the start."""
+    mesh = Mesh.square(2.0, 16)
+    eps = np.sum(mesh.ks**2, axis=-1)
+    kernel = HartreeFockKernel(mesh, eps[..., None, None] * np.eye(2), lambda q: np.full_like(q, 0.5), T=0.05)
+    n = 1 / (2 * np.pi)
+    P = kernel.noninteracting_density(n)
+    np.testing.assert_allclose(np.trace(kernel.mean_density(P)).real, n, rtol=1e-10)
+    up, down = np.diag(kernel.mean_density(kernel.noninteracting_density(n, field=np.diag([-1.0, 1.0])))).real
+    assert up > 10 * down
+    result = solve(kernel, None, n)
+    assert result.converged
+    np.testing.assert_allclose(float(result.energy), float(solve(kernel, P, n).energy), atol=1e-8)

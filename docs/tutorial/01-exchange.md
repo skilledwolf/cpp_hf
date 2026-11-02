@@ -62,11 +62,11 @@ def electron_gas(nk, kmax, rs):
     def V(q):  # 2π e²/q; at q = 0 the average of 1/q over a cell, 4 ln(1 + √2) / dk
         return 2 * np.pi * np.sqrt(2) * rs * np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
 
-    return mesh, eps[..., None, None] * np.eye(2), V, eps
+    return mesh, eps[..., None, None] * np.eye(2), V
 
 
 n = 1 / (2 * np.pi)            # k_F = 1 with two spins: n = k_F² / 2π
-mesh, h, V, eps = electron_gas(nk=96, kmax=2.1, rs=1.0)
+mesh, h, V = electron_gas(nk=96, kmax=2.1, rs=1.0)
 print(h.shape, mesh.transfer_distance_grid.shape)
 ```
 
@@ -80,13 +80,12 @@ between occupied states to be represented.
 ## Solving
 
 {class}`~hartreefock.HartreeFockKernel` holds what does not change during
-a solve; by default it keeps exchange only. The start is the filled Fermi
-disc:
+a solve; by default it keeps exchange only. Without a starting density
+`hf.solve` fills the bands of `h`, here the Fermi disc:
 
 ```{code-cell} ipython3
 kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
-P0 = (eps < 1)[..., None, None] * np.eye(2)
-result = hf.solve(kernel, P0, n)
+result = hf.solve(kernel, None, n)
 print(result.converged, result.n_iter, "iterations,  mu =", round(float(result.mu), 4))
 ```
 
@@ -126,10 +125,9 @@ Rydberg, at $r_s = 1$ where $E_F = 2$ Ry:
 
 ```{code-cell} ipython3
 def energies(nk, rs=1.0):
-    mesh, h, V, eps = electron_gas(nk, kmax=2.1, rs=rs)
+    mesh, h, V = electron_gas(nk, kmax=2.1, rs=rs)
     kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
-    P0 = (eps < 1)[..., None, None] * np.eye(2)
-    r = hf.solve(kernel, P0, n)
+    r = hf.solve(kernel, None, n)
     parts = kernel.energies(r.density)
     to_ry = 2 / rs**2 / n        # E_F k_F² per area -> Ry per electron
     return parts["kinetic"] * to_ry, parts["exchange"] * to_ry

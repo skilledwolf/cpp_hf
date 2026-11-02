@@ -196,7 +196,7 @@ again with Newton, then polishes the result without the bias.
 `result.best` is the lowest. From the balanced start:
 
 ```{code-cell} ipython3
-start = (eps < np.pi * n)[..., None, None] * np.eye(2)
+start = kernel.noninteracting_density(n)
 d = hf.solve_deflated(kernel, start, n, n_solutions=4)
 for s in d.solutions:
     check = hf.stability_analysis(kernel, s.density, n)

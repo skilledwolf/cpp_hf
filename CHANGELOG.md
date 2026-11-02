@@ -61,6 +61,9 @@ This project adheres to [Semantic Versioning](https://semver.org).
   whole).
 
 ### Added
+- `hf.solve(kernel, None, n)` starts from `kernel.noninteracting_density(n)`,
+  the Fermi-filled bands of `h` at `T`; `field=` (a `(D, D)` matrix or one
+  per k-point) biases the start, e.g. toward spin polarization.
 - `kernel.mean_density(P)`, the k-summed density ρ̄ (its diagonal is the
   orbital occupations), and `kernel.energies(P)`, the kinetic, Hartree and
   exchange parts of the standard energy, which sum to `hf.solve`'s `energy`.

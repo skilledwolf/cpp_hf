@@ -17,6 +17,7 @@ from hartreefock import (
     solve_minimum,
     stability_analysis,
 )
+from hartreefock.kernel import fermi_density
 
 
 def saddle_kernel():
@@ -122,9 +123,9 @@ def test_eigenvalue_requires_an_independently_verified_residual(monkeypatch):
 
 
 @pytest.mark.parametrize("number", [1e-60, 1e-6, 2.0 - 1e-6])
-def test_host_fermi_density_preserves_particle_count_in_extreme_tails(number):
+def test_fermi_density_preserves_particle_count_in_extreme_tails(number):
     fock = np.zeros((1, 1, 2, 2), complex)
-    density, _, _, occupations = module._host_fermi_density(fock, np.ones((1, 1)), number, 0.1)
+    density, _, _, occupations = fermi_density(fock, np.ones((1, 1)), number, 0.1)
     np.testing.assert_allclose(np.trace(density[0, 0]).real, number, rtol=1e-13, atol=0.0)
     np.testing.assert_allclose(occupations, number / 2, rtol=1e-13, atol=0.0)
 
@@ -156,7 +157,7 @@ def test_fermi_escape_preserves_unstable_tangent_and_saturated_occupations():
     Q = np.linalg.qr(rng.normal(size=(2, 2, 4, 4)) + 1j * rng.normal(size=(2, 2, 4, 4)))[0]
     F = (Q * np.array([-4.0, -0.03, 0.03, 4.0])) @ Q.conj().swapaxes(-2, -1)
     w = np.full((2, 2), 0.25)
-    P = module._host_fermi_density(F, w, 2.0, 0.1)[0]
+    P = fermi_density(F, w, 2.0, 0.1)[0]
     kernel = HartreeFockKernel(mesh_for(w), F, np.ones((2, 2, 1, 1)), T=0.1, reference=P)
     s = stability_analysis(kernel, P, 2.0)
     assert s.stationary and s.stable is False

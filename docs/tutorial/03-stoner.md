@@ -63,7 +63,7 @@ def hubbard(U):
     return hf.HartreeFockKernel(mesh, h, T=T, contact_terms=[(U, up, down), (U, down, up)])
 
 
-P_para = (eps < 1)[..., None, None] * np.eye(2)
+P_para = hubbard(0.0).noninteracting_density(n)
 ```
 
 ## The curvature

@@ -76,10 +76,11 @@ def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None):
     ----------
     kernel : HartreeFockKernel
         The problem.
-    P0 : (nk1, nk2, nb, nb) array
-        Starting density. Roothaan corrects its particle number before the
-        first step; direct minimization takes its occupations as the seed and
-        imposes the particle number through the chemical potential.
+    P0 : (nk1, nk2, nb, nb) array or None
+        Starting density; ``None`` is ``kernel.noninteracting_density(n)``.
+        Roothaan corrects its particle number before the first step; direct
+        minimization takes its occupations as the seed and imposes the
+        particle number through the chemical potential.
     n_electrons : float
         Particle number, counted with the kernel weights, ``Σ_k w_k Tr P_k``.
     config : SolverConfig, optional

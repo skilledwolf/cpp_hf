@@ -87,7 +87,6 @@ capacitor = np.pi * e2 * d * np.array([[1.0, -1.0], [-1.0, 1.0]])
 
 n = 1 / (2 * np.pi)
 P_ref = np.broadcast_to(0.5 * n / mesh.weight_normalization * np.eye(2), h.shape).copy()   # equal layers
-P0 = (eps < 1)[..., None, None] * np.eye(2)
 print("orbital-resolved V:", V(mesh.transfer_distance_grid).shape, "  Hartree matrix:", capacitor.tolist())
 ```
 
@@ -113,8 +112,8 @@ config = hf.SolverConfig(density_tol=1e-10, comm_tol=1e-10)
 common = dict(T=T, hartree=capacitor)
 standard = hf.HartreeFockKernel(mesh, h, V, reference=np.zeros_like(h), **common)
 embedded = hf.HartreeFockKernel(mesh, h, V, reference=P_ref, embed_reference=True, **common)
-r_std = hf.solve(standard, P0, n, config=config)
-r_emb = hf.solve(embedded, P0, n, config=config)
+r_std = hf.solve(standard, None, n, config=config)
+r_emb = hf.solve(embedded, None, n, config=config)
 
 layer_imbalance = np.diag(standard.mean_density(r_std.density)).real @ [1, -1] / n
 print(f"layer imbalance (n1 - n2)/n = {layer_imbalance:+.4f}")

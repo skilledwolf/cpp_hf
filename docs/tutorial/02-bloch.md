@@ -54,7 +54,7 @@ def electron_gas(nk, kmax, rs):
     def V(q):
         return 2 * np.pi * np.sqrt(2) * rs * np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
 
-    return mesh, eps[..., None, None] * np.eye(2), V, eps
+    return mesh, eps[..., None, None] * np.eye(2), V
 
 
 n = 1 / (2 * np.pi)
@@ -62,11 +62,11 @@ n = 1 / (2 * np.pi)
 
 def solve_both(nk, rs):
     """Paramagnetic and fully polarized solutions: (kinetic, exchange, magnetization) of each, Ry per electron."""
-    mesh, h, V, eps = electron_gas(nk, kmax=3.0, rs=rs)
+    mesh, h, V = electron_gas(nk, kmax=3.0, rs=rs)
     kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
     starts = {
-        "para": (eps < 1)[..., None, None] * np.eye(2),
-        "ferro": (eps < 2)[..., None, None] * np.diag([1.0, 0.0]),
+        "para": None,
+        "ferro": kernel.noninteracting_density(n, field=np.diag([-1.0, 1.0])),
     }
     out = {}
     for name, P0 in starts.items():

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import numpy as np
 import scipy.fft
+from scipy.special import expit
 
 from .mesh import Mesh
 
@@ -37,6 +38,29 @@ def _shift_phase(n0: int, n1: int) -> np.ndarray:
     phase0 = np.exp(2j * np.pi * np.arange(n0) * s0 / n0)
     phase1 = np.exp(2j * np.pi * np.arange(n1) * s1 / n1)
     return (phase0[:, None] * phase1[None, :])[..., None, None]
+
+
+def fermi_density(fock, weights, number, temperature):
+    """Host diagonalization and a fixed-particle Fermi solve in double precision."""
+    eps, orbitals = np.linalg.eigh(fock)
+    capacity = float(weights.sum()) * fock.shape[-1]
+    if number == 0 or number == capacity:
+        mu = -np.inf if number == 0 else np.inf
+    else:
+        shift = temperature * (np.log(number) - np.log(capacity - number))
+        lo = np.nextafter(float(eps.min()) + shift, -np.inf)
+        hi = np.nextafter(float(eps.max()) + shift, np.inf)
+        for _ in range(100):
+            mid = 0.5 * (lo + hi)
+            count = np.sum(weights[..., None] * expit((mid - eps) / temperature))
+            if count < number:
+                lo = mid
+            else:
+                hi = mid
+        mu = 0.5 * (lo + hi)
+    p = expit((mu - eps) / temperature)
+    density = (orbitals * p[..., None, :]) @ orbitals.conj().swapaxes(-2, -1)
+    return density, eps, orbitals, p
 
 
 def _namespace(A):
@@ -306,6 +330,16 @@ class HartreeFockKernel:
         self.h = np.ascontiguousarray(self.h + V_ref.astype(self.h.dtype))
 
     # ----- observables ---------------------------------------------------------------
+
+    def noninteracting_density(self, n_electrons, field=None):
+        """The Fermi-filled density of ``h + field`` with ``n_electrons`` at ``T``.
+
+        ``hf.solve`` starts from it when ``P0`` is ``None``.  A ``field``, a
+        ``(D, D)`` matrix or one per k-point, biases the start, for example
+        ``diag(-δ, δ)`` toward spin polarization.
+        """
+        H = np.asarray(self.h, dtype=np.complex128) + (0.0 if field is None else np.asarray(field))
+        return fermi_density(H, self.w2d.astype(np.float64), float(n_electrons), self.T)[0]
 
     def mean_density(self, P):
         """The k-summed density ``ρ̄ = Σ_k w_k P_k`` ``(D, D)``; its diagonal holds the orbital occupations."""

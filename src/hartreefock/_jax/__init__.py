@@ -18,6 +18,7 @@ def solve(kernel, P0, n_electrons, *, config=None):
     from ..config import SolverConfig
 
     config = SolverConfig() if config is None else config
+    P0 = kernel.noninteracting_density(n_electrons) if P0 is None else P0
     run = roothaan if config.roothaan else minimize
     result = run(kernel, P0, n_electrons, config=config)
     offset = kernel.embedded_energy_offset

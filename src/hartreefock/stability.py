@@ -14,10 +14,11 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.sparse.linalg import ArpackNoConvergence, LinearOperator, eigsh
-from scipy.special import expit, xlogy
+from scipy.special import xlogy
 
 from . import _jax
 from .config import SolverConfig, SolveResult
+from .kernel import fermi_density
 
 
 @dataclass(frozen=True)
@@ -92,29 +93,6 @@ class MinimumResult:
     fock_builds: int
     free_energies: tuple[float, ...]
     message: str
-
-
-def _host_fermi_density(fock, weights, number, temperature):
-    """Host diagonalization and a fixed-particle Fermi solve in double precision."""
-    eps, orbitals = np.linalg.eigh(fock)
-    capacity = float(weights.sum()) * fock.shape[-1]
-    if number == 0 or number == capacity:
-        mu = -np.inf if number == 0 else np.inf
-    else:
-        shift = temperature * (np.log(number) - np.log(capacity - number))
-        lo = np.nextafter(float(eps.min()) + shift, -np.inf)
-        hi = np.nextafter(float(eps.max()) + shift, np.inf)
-        for _ in range(100):
-            mid = 0.5 * (lo + hi)
-            count = np.sum(weights[..., None] * expit((mid - eps) / temperature))
-            if count < number:
-                lo = mid
-            else:
-                hi = mid
-        mu = 0.5 * (lo + hi)
-    p = expit((mu - eps) / temperature)
-    density = (orbitals * p[..., None, :]) @ orbitals.conj().swapaxes(-2, -1)
-    return density, eps, orbitals, p
 
 
 def stability_analysis(
@@ -211,7 +189,7 @@ def stability_analysis(
         F, F.conj().swapaxes(-2, -1), rtol=0.0, atol=100 * precision
     ):
         raise ValueError("Fock builder must return a finite Hermitian matrix")
-    D, eps, Q, p = _host_fermi_density(F, w, n_electrons, kernel.T)
+    D, eps, Q, p = fermi_density(F, w, n_electrons, kernel.T)
 
     def norm(A):
         return float(np.sqrt(np.sum(wn * np.sum(abs(A) ** 2, axis=(-2, -1)))))
@@ -372,7 +350,7 @@ def _fermi_escape_density(fock, response_field, weights, number, temperature, st
     """
     field = np.asarray(fock) + step * np.asarray(response_field)
     field = 0.5 * (field + field.conj().swapaxes(-2, -1))
-    return _host_fermi_density(field, weights, number, temperature)[0]
+    return fermi_density(field, weights, number, temperature)[0]
 
 
 def solve_minimum(

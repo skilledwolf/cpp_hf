@@ -48,10 +48,10 @@ reference density and contact couplings are options
 ## Solving and checking
 
 ```{code-cell} ipython3
-# Filled Fermi discs with the right particle number: for k²/2, n_σ = ε_F / 2π.
+# None fills the bands of h; a Zeeman field of ±πn fills the up band only.
 starts = {
-    "balanced": (eps < np.pi * n_electrons)[..., None, None] * np.eye(2),
-    "polarized": (eps < 2 * np.pi * n_electrons)[..., None, None] * np.diag([1.0, 0.0]),
+    "balanced": None,
+    "polarized": kernel.noninteracting_density(n_electrons, field=np.pi * n_electrons * np.diag([-1.0, 1.0])),
 }
 results = {}
 for name, P0 in starts.items():
