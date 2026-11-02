@@ -7,6 +7,8 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- Building a complex128 kernel with `jax_enable_x64` off raises, instead of
+  solving silently in complex64.
 - `solve_continuation` and `ContinuationResult` are gone:
   `hf.solve(kernel, P0, n, config=, coarse=coarse_kernel)` solves the coarse
   kernel from `P0` with the same config and particle number, resamples its

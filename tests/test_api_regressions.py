@@ -227,3 +227,11 @@ def test_contact_term_gets_its_hermitian_partner():
     sz = np.diag([1.0, -1.0])
     assert len(HartreeFockKernel(mesh_for(np.ones((1, 1))), h[:1, :1], T=0.1,
                                  contact_terms=[(1.0, sz, sz)]).contact_g) == 1
+
+
+def test_complex128_kernel_needs_x64(enable_x64):
+    h = np.zeros((2, 2, 1, 1), np.complex128)
+    with enable_x64(False), pytest.raises(ValueError, match="jax_enable_x64"):
+        HartreeFockKernel(mesh_for(np.ones((2, 2))), h, T=0.1)
+    with enable_x64(False):
+        HartreeFockKernel(mesh_for(np.ones((2, 2), np.float32)), h.astype(np.complex64), T=0.1)

@@ -14,7 +14,8 @@ eigensolvers, complex products and the superlattice exchange run as C++
 kernels through ``jax.ffi``.  Importing hartreefock turns on
 ``jax_enable_x64``, so a solve runs in the dtype of the kernel's arrays:
 complex128 from NumPy defaults, complex64 when the kernel is built from
-single-precision arrays.
+single-precision arrays.  A complex128 kernel built with x64 turned back
+off raises instead of running in single precision.
 :func:`stability_analysis` and :func:`solve_minimum` test and enforce local
 stability.
 """

@@ -15,6 +15,7 @@ The kernel is plain NumPy; the jitted solvers read ``_as_args()``.
 
 from __future__ import annotations
 
+import jax
 import numpy as np
 import scipy.fft
 from scipy.special import expit
@@ -172,6 +173,11 @@ class HartreeFockKernel:
             h = h.astype(np.complex128 if self.superlattice else np.result_type(h.dtype, np.complex64))
         if h.ndim != 4 or h.shape[:2] != mesh.shape or h.shape[-1] != h.shape[-2]:
             raise ValueError(f"h must have shape {mesh.shape} + (D, D), got {h.shape}")
+        if h.dtype == np.complex128 and not jax.config.jax_enable_x64:
+            raise ValueError(
+                "a complex128 kernel needs jax_enable_x64, which importing hartreefock "
+                "turns on; with it off, build the kernel from complex64 arrays"
+            )
         self.h = np.ascontiguousarray(h)
         D = h.shape[-1]
         self.w2d = mesh.weights.astype(h.real.dtype)
