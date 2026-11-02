@@ -64,7 +64,6 @@ def solve_both(nk, rs):
     """Paramagnetic and fully polarized solutions: (kinetic, exchange, magnetization) of each, Ry per electron."""
     mesh, h, V, eps = electron_gas(nk, kmax=3.0, rs=rs)
     kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
-    w = mesh.weights
     starts = {
         "para": (eps < 1)[..., None, None] * np.eye(2),
         "ferro": (eps < 2)[..., None, None] * np.diag([1.0, 0.0]),
@@ -72,11 +71,10 @@ def solve_both(nk, rs):
     out = {}
     for name, P0 in starts.items():
         r = hf.solve(kernel, P0, n)
-        P = np.asarray(r.density)
-        up, down = np.einsum("ij,ijaa->a", w, P).real
-        kinetic = np.einsum("ij,ijab,ijba->", w, h, P).real
+        parts = kernel.energies(r.density)
+        up, down = np.diag(kernel.mean_density(r.density)).real
         to_ry = 2 / rs**2 / n
-        out[name] = (kinetic * to_ry, (float(r.energy) - kinetic) * to_ry, (up - down) / n)
+        out[name] = (parts["kinetic"] * to_ry, parts["exchange"] * to_ry, (up - down) / n)
     return out
 
 

@@ -57,7 +57,7 @@ results = {}
 for name, P0 in starts.items():
     r = hf.solve(kernel, P0, n_electrons)
     s = hf.stability_analysis(kernel, r.density, n_electrons)
-    up, down = np.einsum("ij,ijaa->a", mesh.weights, r.density).real
+    up, down = np.diag(kernel.mean_density(r.density)).real
     results[name] = (r, s)
     print(f"{name:>9}: E = {r.energy:.6f}, spin up/down = {up:.4f}/{down:.4f}, "
           f"stable = {s.stable} (lowest curvature {s.lowest_eigenvalue:+.1e})")

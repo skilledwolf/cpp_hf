@@ -64,8 +64,8 @@ disc = (eps < 2 * np.pi * n)[..., None, None]          # holds n electrons in on
 P0 = disc * np.diag([0.7, 0.3])
 
 
-def magnetization(P, w=kernel.w2d):
-    M = np.einsum("ij,ijab->ab", w, np.asarray(P))
+def magnetization(P):
+    M = kernel.mean_density(P)
     return np.linalg.norm([2 * M[0, 1].real, 2 * M[0, 1].imag, (M[0, 0] - M[1, 1]).real]) / n
 ```
 

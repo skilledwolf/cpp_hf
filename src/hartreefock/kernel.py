@@ -302,10 +302,32 @@ class HartreeFockKernel:
     def _embed_reference(self) -> None:
         ref = self.refP
         V_ref = self.potential(ref)
-        self.embedded_energy_offset = 0.5 * float(
-            np.einsum("ij,ijab,ijba->", self.w2d, V_ref, ref).real
-        )
+        self.embedded_energy_offset = 0.5 * self._trace(V_ref, ref)
         self.h = np.ascontiguousarray(self.h + V_ref.astype(self.h.dtype))
+
+    # ----- observables ---------------------------------------------------------------
+
+    def mean_density(self, P):
+        """The k-summed density ``ρ̄ = Σ_k w_k P_k`` ``(D, D)``; its diagonal holds the orbital occupations."""
+        return _namespace(P).einsum("ij,ijab->ab", self.w2d, P)
+
+    def energies(self, P) -> dict[str, float]:
+        """Kinetic, Hartree and exchange parts of the standard HF energy at ``P``.
+
+        They sum to the ``energy`` that :func:`hartreefock.solve` reports; the
+        contact terms count in the Hartree and exchange parts.
+        """
+        P = np.asarray(P)
+        rho = P if self.embed_reference else P - self.refP
+        kinetic = self._trace(self.h, P)
+        if self.embed_reference:
+            kinetic -= self._trace(self.potential(self.refP), P)
+        hartree = np.broadcast_to(self.hartree(rho), P.shape)
+        return {"kinetic": kinetic, "hartree": 0.5 * self._trace(hartree, rho),
+                "exchange": 0.5 * self._trace(self.exchange(rho), rho)}
+
+    def _trace(self, A, B) -> float:
+        return float(np.einsum("ij,ijab,ijba->", self.w2d, A, B).real)
 
     # ----- linear maps (no reference subtraction) -----------------------------------
 
@@ -353,16 +375,14 @@ class HartreeFockKernel:
         if self.superlattice:
             from .superlattice import superlattice_hartree
 
-            rho_bar = np.einsum("ij,ijab->ab", self.w2d, rho)
             return superlattice_hartree(
-                rho_bar, self.layout.pair_to_delta, self.HH, degeneracy=self.degeneracy
+                self.mean_density(rho), self.layout.pair_to_delta, self.HH, degeneracy=self.degeneracy
             )
-        n = np.einsum("ij,ijaa->a", self.w2d, rho).real
+        n = np.diag(self.mean_density(rho)).real
         return np.diag(self.HH @ n).astype(self.h.dtype)
 
     def _contact_terms(self, rho) -> tuple[np.ndarray, np.ndarray]:
-        rho_bar = _namespace(rho).einsum("ij,ijab->ab", self.w2d, rho)
-        return contact_self_energy(rho_bar, self.contact_g, self.contact_Oi, self.contact_Oj)
+        return contact_self_energy(self.mean_density(rho), self.contact_g, self.contact_Oi, self.contact_Oj)
 
     def potential_at(self, P, k_fractional, *, include_embedded_reference: bool = True):
         """``V_HF[P - refP]`` at arbitrary fractional k (e.g. a band path); plane waves only.

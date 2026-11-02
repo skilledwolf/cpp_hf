@@ -61,6 +61,9 @@ This project adheres to [Semantic Versioning](https://semver.org).
   whole).
 
 ### Added
+- `kernel.mean_density(P)`, the k-summed density ρ̄ (its diagonal is the
+  orbital occupations), and `kernel.energies(P)`, the kinetic, Hartree and
+  exchange parts of the standard energy, which sum to `hf.solve`'s `energy`.
 - `solve_minimum` and `stability_analysis`, and the `rdiis` and `anderson`
   SCF from `cpp_hf` 1.2.0, on the merged API.
 - The documentation is rebuilt as executed pages: a three-step tutorial on

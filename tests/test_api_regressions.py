@@ -189,3 +189,11 @@ def test_embedded_kernel_reports_standard_hf(kind, density_scale):
     F_embedded, E_embedded = fock_operators(embedded).evaluate(P)
     np.testing.assert_allclose(E_embedded, E_standard, atol=1e-12)
     np.testing.assert_allclose(F_embedded, F_standard, atol=1e-12)
+
+    # The energy parts sum to the reported energy, with and without a reference.
+    referenced = HartreeFockKernel(**common, reference=refP)
+    for kernel in (embedded, standard, referenced):
+        E = fock_operators(kernel).evaluate(P)[1]
+        np.testing.assert_allclose(sum(kernel.energies(P).values()), E, atol=1e-12)
+    np.testing.assert_allclose(embedded.energies(P)["kinetic"],
+                               standard.energies(P)["kinetic"], atol=1e-12)
