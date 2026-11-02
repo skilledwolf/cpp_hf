@@ -32,10 +32,35 @@ def available(name: str) -> bool:
         except ImportError:
             return False
         targets = dict(_native.xla_ffi_targets())
+        if targets and not _same_jaxlib(_native.xla_ffi_jaxlib_version()):
+            return False
         for target, capsule in targets.items():
             jax.ffi.register_ffi_target(target, capsule, platform="cpu")
         _registered = frozenset(targets)
     return name in _registered
+
+
+def _same_jaxlib(built: str) -> bool:
+    """Whether the running jaxlib is the one the kernels were compiled against.
+
+    The XLA FFI ABI is not stable across jaxlib releases: a handler built
+    against newer headers can crash an older runtime.  On a mismatch the
+    backend warns once and runs plain JAX.
+    """
+    import jaxlib
+
+    if built == jaxlib.__version__:
+        return True
+    import warnings
+
+    warnings.warn(
+        f"hartreefock's native JAX kernels were built against jaxlib {built or '(unknown)'} "
+        f"but jaxlib {jaxlib.__version__} is installed; using plain JAX. Rebuild "
+        "hartreefock in this environment to enable them.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+    return False
 
 
 def on_cpu() -> bool:

@@ -32,3 +32,12 @@ def test_other_dtypes_and_single_matrices_use_xla():
     h = _hermitian((5, 5)).real
     w, _ = linalg.hermitian_eigh(h)
     np.testing.assert_allclose(w, jnp.linalg.eigh(h)[0])
+
+
+def test_kernels_stay_off_under_a_different_jaxlib(monkeypatch):
+    import jaxlib
+
+    monkeypatch.setattr(jaxlib, "__version__", "0.0.1")
+    with pytest.warns(RuntimeWarning, match="plain JAX"):
+        assert not ffi._same_jaxlib("0.12.0")
+    assert ffi._same_jaxlib("0.0.1")

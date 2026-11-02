@@ -158,10 +158,19 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
 )
+# The FFI ABI follows jaxlib: the handlers are registered at runtime only
+# under the jaxlib they were compiled against.
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -c "import jaxlib; print(jaxlib.__version__)"
+    OUTPUT_VARIABLE HF_XLA_FFI_JAXLIB
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
 if(HF_XLA_FFI_INCLUDE AND EXISTS "${HF_XLA_FFI_INCLUDE}/xla/ffi/api/ffi.h")
     target_include_directories(_native PRIVATE "${HF_XLA_FFI_INCLUDE}")
-    target_compile_definitions(_native PRIVATE HF_HAVE_XLA_FFI=1)
-    message(STATUS "hartreefock: XLA FFI kernels enabled (${HF_XLA_FFI_INCLUDE})")
+    target_compile_definitions(_native PRIVATE HF_HAVE_XLA_FFI=1
+                               HF_XLA_FFI_JAXLIB="${HF_XLA_FFI_JAXLIB}")
+    message(STATUS "hartreefock: XLA FFI kernels enabled for jaxlib ${HF_XLA_FFI_JAXLIB}")
 else()
     message(STATUS "hartreefock: jaxlib not found at build time; no XLA FFI kernels")
 endif()

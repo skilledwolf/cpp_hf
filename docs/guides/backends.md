@@ -20,10 +20,13 @@ on every solver picks one.
 backends that import, and {func}`~hartreefock.get_backend` returns one as a
 module.
 
-On the CPU, in double precision, the JAX backend calls three native kernels
+On the CPU, in double precision, the JAX backend calls native kernels
 through `jax.ffi` when the extension was built with them: the batched
-eigensolver, a batched matrix product and the superlattice Fock build. Set
-the environment variable `HF_JAX_FFI=0` to run plain JAX instead.
+eigensolver and eigenvalue solver, a batched matrix product and the
+superlattice Fock build. They load only under the jaxlib the extension was
+compiled against; under another jaxlib the backend warns and runs plain JAX,
+and rebuilding hartreefock in that environment turns them back on. Set the
+environment variable `HF_JAX_FFI=0` to run plain JAX regardless.
 
 ## The same answer
 

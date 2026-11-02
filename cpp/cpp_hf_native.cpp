@@ -560,6 +560,14 @@ PYBIND11_MODULE(_native, m) {
 #endif
         return targets;
     });
+    // The jaxlib the FFI handlers were compiled against ("" without them).
+    m.def("xla_ffi_jaxlib_version", []() {
+#ifdef HF_HAVE_XLA_FFI
+        return std::string(HF_XLA_FFI_JAXLIB);
+#else
+        return std::string();
+#endif
+    });
 
     // --- Hermitian eigh (batched + block-sizes) ---
     m.def("eigh_batched",

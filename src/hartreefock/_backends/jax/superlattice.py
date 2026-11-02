@@ -18,6 +18,7 @@ from collections.abc import Callable
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import lax
 
 from ...superlattice import ExtendedGridLayout, superlattice_hartree
 from . import ffi
@@ -165,8 +166,8 @@ def _make_orbital_superlattice_fock_fn(
 def _make_native_superlattice_fock_fn(layout, n_G, dim_orb, nkx, nky):
     """``rho -> Σ_F[rho]`` through the native streaming kernel (CPU only).
 
-    Σ_F is linear in rho, so the JVP applies the same kernel to the tangent
-    (without the Hermitian ΔG halving, as a tangent need not be Hermitian).
+    Σ_F is linear in rho, so the JVP applies the same kernel to the tangent,
+    with the Hermitian ΔG halving only when the tangent is Hermitian.
     """
     D = n_G * dim_orb
     shape = (nkx, nky, D, D)
@@ -199,7 +200,14 @@ def _make_native_superlattice_fock_fn(layout, n_G, dim_orb, nkx, nky):
     @fock_fn.defjvp
     def _fock_jvp(primals, tangents):
         (rho,), (drho,) = primals, tangents
-        return apply(rho, True), apply(drho, False)
+        # Response tangents are usually Hermitian; those keep the halving.
+        drho = jnp.asarray(drho, dtype=jnp.complex128)
+        skew = jnp.max(jnp.abs(drho - jnp.conj(jnp.swapaxes(drho, -1, -2))))
+        hermitian = skew <= 1e-14 * jnp.maximum(jnp.max(jnp.abs(drho)), 1e-300)
+        tangent = lax.cond(
+            hermitian, lambda d: apply(d, True), lambda d: apply(d, False), drho,
+        )
+        return apply(rho, True), tangent
 
     return jax.jit(fock_fn)
 
