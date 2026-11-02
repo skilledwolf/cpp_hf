@@ -1,4 +1,4 @@
-"""Solver configurations and result types shared by every backend."""
+"""Solver configurations and result types."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from numbers import Integral
 from typing import Any, NamedTuple
 
-_OPTIMIZERS = ("cg", "newton", "auto")
+_OPTIMIZERS = ("cg", "newton")
 _ACCELERATIONS = ("linear", "diis", "oda", "rdiis", "anderson")
 
 
@@ -44,12 +44,10 @@ class SolverConfig:
 
     Attributes
     ----------
-    optimizer : {"cg", "newton", "auto"}
+    optimizer : {"cg", "newton"}
         ``"cg"``: Riemannian conjugate gradients. ``"newton"``: a Steihaug
         truncated-CG trust region on the exact (Q, p) Hessian; needs float64
         and ignores ``max_step``, ``cg_restart``, ``bt_shrink`` and ``bt_max``.
-        ``"auto"`` (native only): CG, then Newton once the iterate is in the
-        quadratic regime.
     max_iter : int
         Iteration limit.
     tol_E, tol_grad, plateau_window : float, float, int
@@ -163,11 +161,6 @@ class SCFConfig:
     safeguard : bool
         Let RDIIS and Anderson accept a free-energy rise within floating-point
         noise of the objective.
-    preconditioner : {"none", "hartree"}
-        ``"hartree"`` applies the Hartree response to the RDIIS or Anderson
-        residual (native only).
-    block_sizes : tuple of int, optional
-        Block sizes of a block-diagonal Fock matrix.
     project_fn : callable, optional
         Symmetry projection, as in :class:`SolverConfig`.
     return_density, return_fock : bool
@@ -185,8 +178,6 @@ class SCFConfig:
     diis_damping: float = 1.0
     trust_radius: float = 0.0
     safeguard: bool = True
-    preconditioner: str = "none"
-    block_sizes: tuple[int, ...] | None = None
     project_fn: Callable[[Any], Any] | None = None
     return_density: bool = True
     return_fock: bool = True
@@ -202,10 +193,6 @@ class SCFConfig:
             raise ValueError(
                 f"acceleration must be one of {_ACCELERATIONS}, got {self.acceleration!r}"
             )
-        if self.preconditioner not in ("none", "hartree"):
-            raise ValueError("preconditioner must be 'none' or 'hartree'")
-        if self.preconditioner != "none" and self.acceleration not in ("anderson", "rdiis"):
-            raise ValueError("preconditioner requires acceleration='anderson' or 'rdiis'")
         if self.diis_size <= 0:
             raise ValueError("diis_size must be positive")
         for name in ("density_tol", "comm_tol", "diis_start", "trust_radius"):
@@ -216,7 +203,6 @@ class SCFConfig:
                 raise ValueError(f"{name} must be between 0 and 1")
         if not isinstance(self.safeguard, bool):
             raise ValueError("safeguard must be a bool")
-        _check_blocks(self.block_sizes)
         if self.project_fn is not None and not callable(self.project_fn):
             raise ValueError("project_fn must be callable or None")
 

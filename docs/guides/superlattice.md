@@ -11,7 +11,7 @@ in a plane-wave basis $|\mathbf k, \mathbf G, \alpha\rangle$: $\mathbf k$ runs
 over a mesh of the superlattice Brillouin zone, $\mathbf G$ over a set of
 its reciprocal-lattice vectors and $\alpha$ over orbitals, so the matrix
 dimension is `D = n_G · dim_orb` with the `G` index slow. The solvers are
-the same as for the dense kernel, on both backends.
+the same as for the dense kernel.
 
 ## Theory
 

@@ -187,4 +187,4 @@ if(APPLE AND HF_USE_ACCELERATE)
     target_link_libraries(_native PRIVATE "-framework Accelerate")
 endif()
 
-install(TARGETS _native DESTINATION hartreefock/_backends/native)
+install(TARGETS _native DESTINATION hartreefock)

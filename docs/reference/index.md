@@ -27,13 +27,12 @@ everything public.
 | {func}`~hartreefock.stability_analysis` | The lowest free-energy curvature at a density | {class}`~hartreefock.StabilityResult` |
 | {func}`~hartreefock.solve_minimum` | Solve, test, step down unstable directions, repeat | {class}`~hartreefock.MinimumResult` |
 
-## Symmetry and backends
+## Symmetry and the Fock map
 
 | Name | What it does |
 | --- | --- |
 | {func}`~hartreefock.symmetry.make_project_fn` | A projection onto a symmetry sector, for `project_fn` |
-| {func}`~hartreefock.available_backends` | The backends that import here |
-| {func}`~hartreefock.get_backend` | One backend as a module |
+| {func}`~hartreefock.fock_operators` | The Fock matrix and energy of a density, and the Fock response |
 
 ```{toctree}
 :hidden:

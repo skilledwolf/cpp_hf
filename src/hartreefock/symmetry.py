@@ -1,10 +1,9 @@
-"""Symmetry projectors for density and Fock matrices, for either backend.
+"""Symmetry projectors for density and Fock matrices.
 
 :func:`make_project_fn` returns a callable that averages a
 ``(nk1, nk2, nb, nb)`` array over unitary, spatial and time-reversal
-symmetries.  It works on NumPy arrays (native backend) and on JAX arrays,
-including under ``jax.jit`` (JAX backend): the array namespace is taken from
-the input on every call.
+symmetries.  It works on NumPy arrays and on JAX arrays, including under
+``jax.jit``: the array namespace is taken from the input on every call.
 """
 
 from __future__ import annotations

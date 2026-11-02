@@ -1,4 +1,4 @@
-"""Stability analysis and stability-checked minimization on both backends."""
+"""Stability analysis and stability-checked minimization."""
 
 from dataclasses import replace
 from types import SimpleNamespace
@@ -11,23 +11,13 @@ import hartreefock.stability as module
 from hartreefock import (
     HartreeFockKernel,
     SCFConfig,
-    get_backend,
+    fock_operators,
     solve_minimum,
     solve_scf,
     stability_analysis,
 )
 
 
-@pytest.fixture(params=["native", "jax"])
-def backend(request):
-    if request.param == "jax":
-        jax = pytest.importorskip("jax")
-        previous = jax.config.read("jax_enable_x64")
-        jax.config.update("jax_enable_x64", True)
-        yield "jax"
-        jax.config.update("jax_enable_x64", previous)
-    else:
-        yield "native"
 
 
 def saddle_kernel():
@@ -40,9 +30,9 @@ def saddle_kernel():
 HALF = np.eye(2, dtype=complex)[None, None] / 2
 
 
-def omega(kernel, P, backend):
-    """Actual free energy E[P] - T S[P] through the backend's Fock build."""
-    E = get_backend(backend).fock_operators(kernel).evaluate(P)[1]
+def omega(kernel, P):
+    """Actual free energy E[P] - T S[P] through the Fock build."""
+    E = fock_operators(kernel).evaluate(P)[1]
     p = np.clip(np.linalg.eigvalsh(P), 0, 1)
     w = np.asarray(kernel.w2d)[..., None]
     return E + kernel.T * np.sum(w * (xlogy(p, p) + xlogy(1 - p, 1 - p)))
@@ -51,52 +41,52 @@ def omega(kernel, P, backend):
 # ----- stability_analysis -------------------------------------------------------
 
 
-def test_degenerate_paramagnet_has_negative_exchange_curvature(backend):
-    s = stability_analysis(saddle_kernel(), HALF, 1.0, backend=backend)
+def test_degenerate_paramagnet_has_negative_exchange_curvature():
+    s = stability_analysis(saddle_kernel(), HALF, 1.0)
     assert s.stationary and s.eigen_converged and s.stable is False
     np.testing.assert_allclose(s.lowest_eigenvalue, -1.5, atol=1e-10)
     np.testing.assert_allclose(np.trace(s.direction[0, 0]), 0.0, atol=1e-14)
 
 
-def test_contact_response_matches_its_explicit_tangent(backend):
+def test_contact_response_matches_its_explicit_tangent():
     # For two flavours the identity contact has tangent response -g D; its
     # scalar Hartree part is removed by the fixed-trace constraint.
     kernel = HartreeFockKernel(
         np.ones((1, 1)), np.zeros((1, 1, 2, 2), complex), np.zeros((1, 1, 1, 1)), T=0.1,
         contact_terms=[(1.0, np.eye(2), np.eye(2))],
     )
-    s = stability_analysis(kernel, HALF, 1.0, backend=backend)
+    s = stability_analysis(kernel, HALF, 1.0)
     np.testing.assert_allclose(s.lowest_eigenvalue, -1.5, atol=1e-10)
 
 
-def test_repulsive_hartree_minimum_has_positive_curvature(backend):
+def test_repulsive_hartree_minimum_has_positive_curvature():
     h = np.diag([-0.2, 0.3]).astype(complex)[None, None]
     kernel = HartreeFockKernel(
         np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=0.5, include_exchange=False,
         include_hartree=True, reference_density=np.zeros_like(h), hartree_matrix=3 * np.eye(2),
     )
     config = SCFConfig(acceleration="rdiis", density_tol=1e-9, comm_tol=1e-9)
-    r = solve_scf(kernel, HALF, 1.0, config=config, backend=backend)
-    s = stability_analysis(kernel, np.asarray(r.density), 1.0, backend=backend)
+    r = solve_scf(kernel, HALF, 1.0, config=config)
+    s = stability_analysis(kernel, np.asarray(r.density), 1.0)
     assert s.stationary and s.eigen_converged and s.stable is True
     assert s.lowest_eigenvalue > 0
 
 
-def test_curvature_matches_free_energy_second_difference(backend):
+def test_curvature_matches_free_energy_second_difference():
     w = np.array([[0.2, 0.8]])
     h = np.broadcast_to(np.array([[-0.2, 0.1j], [-0.1j, 0.3]]), (1, 2, 2, 2)).copy()
     kernel = HartreeFockKernel(w, h, np.full((1, 2, 1, 1), 0.2), T=0.4)
     config = SCFConfig(acceleration="rdiis", density_tol=1e-11, comm_tol=1e-11)
-    r = solve_scf(kernel, np.zeros_like(h), 0.8, config=config, backend=backend)
+    r = solve_scf(kernel, np.zeros_like(h), 0.8, config=config)
     P = np.asarray(r.density)
-    s = stability_analysis(kernel, P, 0.8, backend=backend)
+    s = stability_analysis(kernel, P, 0.8)
     assert s.stable
     D = s.direction
     np.testing.assert_allclose(np.sum(w * np.trace(D, axis1=-2, axis2=-1)), 0, atol=1e-14)
     e = 1e-4
     curvature = (
-        omega(kernel, P + e * D, backend) + omega(kernel, P - e * D, backend)
-        - 2 * omega(kernel, P, backend)
+        omega(kernel, P + e * D) + omega(kernel, P - e * D)
+        - 2 * omega(kernel, P)
     ) / (e * e * w.sum())
     np.testing.assert_allclose(curvature, s.lowest_eigenvalue, rtol=2e-6, atol=1e-7)
 
@@ -156,8 +146,8 @@ def test_host_fermi_density_preserves_particle_count_in_extreme_tails(number):
 # ----- solve_minimum ------------------------------------------------------------
 
 
-def test_recovery_escapes_exact_degenerate_paramagnetic_saddle(backend):
-    r = solve_minimum(saddle_kernel(), HALF, 1.0, backend=backend)
+def test_recovery_escapes_exact_degenerate_paramagnetic_saddle():
+    r = solve_minimum(saddle_kernel(), HALF, 1.0)
     assert r.converged and r.stability.stable
     assert r.escapes >= 1 and r.total_iterations > r.solution.n_iter
     assert r.fock_builds > r.solution.history["fock_builds"]
@@ -168,25 +158,25 @@ def test_recovery_escapes_exact_degenerate_paramagnetic_saddle(backend):
 
 
 @pytest.mark.parametrize("number", [1e-6, 2.0 - 1e-6])
-def test_flat_band_minimum_is_certified_near_empty_and_full_filling(backend, number):
+def test_flat_band_minimum_is_certified_near_empty_and_full_filling(number):
     kernel = HartreeFockKernel(
         np.ones((1, 1)), np.zeros((1, 1, 2, 2), complex), np.zeros((1, 1, 1, 1)), T=0.1
     )
-    r = solve_minimum(kernel, np.eye(2)[None, None] * (number / 2), number, backend=backend)
+    r = solve_minimum(kernel, np.eye(2)[None, None] * (number / 2), number)
     assert r.converged and r.stability.stable and r.escapes == 0
     assert r.stability.density_residual < 1e-12
 
 
-def test_fermi_escape_preserves_unstable_tangent_and_saturated_occupations(backend):
+def test_fermi_escape_preserves_unstable_tangent_and_saturated_occupations():
     rng = np.random.default_rng(37)
     Q = np.linalg.qr(rng.normal(size=(1, 2, 4, 4)) + 1j * rng.normal(size=(1, 2, 4, 4)))[0]
     F = (Q * np.array([-4.0, -0.03, 0.03, 4.0])) @ Q.conj().swapaxes(-2, -1)
     w = np.array([[0.2, 0.8]])
     P = module._host_fermi_density(F, w, 2.0, 0.1)[0]
     kernel = HartreeFockKernel(w, F, np.ones((1, 2, 1, 1)), T=0.1, reference_density=P)
-    s = stability_analysis(kernel, P, 2.0, backend=backend)
+    s = stability_analysis(kernel, P, 2.0)
     assert s.stationary and s.stable is False
-    ops = get_backend(backend).fock_operators(kernel)
+    ops = fock_operators(kernel)
     response = np.asarray(ops.response(P, s.direction)) / (1 - s.lowest_eigenvalue)
 
     def retract(step):
@@ -202,8 +192,8 @@ def test_fermi_escape_preserves_unstable_tangent_and_saturated_occupations(backe
         occupations = np.linalg.eigvalsh(trial)
         assert occupations.min() > -1e-13 and occupations.max() < 1 + 1e-13
         np.testing.assert_allclose(np.sum(w[..., None] * occupations), 2.0, atol=1e-13)
-        energies.append(omega(kernel, trial, backend))
-    assert min(energies) < omega(kernel, P, backend) - 1e-6
+        energies.append(omega(kernel, trial))
+    assert min(energies) < omega(kernel, P) - 1e-6
 
 
 def test_zero_escape_budget_reports_saddle_without_false_success():
@@ -227,8 +217,8 @@ def test_nonstationary_iterate_is_not_reported_as_a_minimum():
 
 
 def test_near_saddle_local_stall_can_propose_a_validated_escape(monkeypatch):
-    native = get_backend("native")
-    actual_solve = native.solve_scf
+    engine = module._jax
+    actual_solve = engine.solve_scf
     calls = []
 
     def first_local_budget_is_short(*args, config, **kwargs):
@@ -236,7 +226,7 @@ def test_near_saddle_local_stall_can_propose_a_validated_escape(monkeypatch):
         calls.append(result)
         return result
 
-    monkeypatch.setattr(native, "solve_scf", first_local_budget_is_short)
+    monkeypatch.setattr(engine, "solve_scf", first_local_budget_is_short)
     r = solve_minimum(saddle_kernel(), np.diag([0.5 + 2e-8, 0.5 - 2e-8])[None, None], 1.0)
     residual = max(
         float(calls[0].history["density_residual"][-1]),
@@ -272,15 +262,15 @@ def test_projected_density_fallback_remains_available_when_fermi_trials_stall(mo
 
 
 def test_free_energy_describes_returned_state_not_stale_history(monkeypatch):
-    native = get_backend("native")
-    actual_solve = native.solve_scf
+    engine = module._jax
+    actual_solve = engine.solve_scf
 
     def stale_history(*args, **kwargs):
         result = actual_solve(*args, **kwargs)
         history = dict(result.history, free_energy=np.asarray(result.history["free_energy"]) + 1)
         return replace(result, history=history)
 
-    monkeypatch.setattr(native, "solve_scf", stale_history)
+    monkeypatch.setattr(engine, "solve_scf", stale_history)
     # The saddle is real, but neither escape construction moves the density,
     # so neither may pass the finite-step descent safeguard.
     monkeypatch.setattr(module, "_fermi_escape_density", lambda *a, **k: HALF.copy())
@@ -290,18 +280,18 @@ def test_free_energy_describes_returned_state_not_stale_history(monkeypatch):
     assert r.solution.converged and r.stability.stable is False
     assert not r.converged and r.escapes == 0
     assert "no finite feasible descent" in r.message
-    np.testing.assert_allclose(r.free_energies, [omega(kernel, HALF, "native")], atol=1e-14)
+    np.testing.assert_allclose(r.free_energies, [omega(kernel, HALF)], atol=1e-14)
 
 
 def test_escape_requires_descent_above_kernel_precision(monkeypatch):
     """A float32 kernel must not accept float64-only progress."""
-    native = get_backend("native")
+    engine = module._jax
     kernel = HartreeFockKernel(
         np.ones((1, 1), np.float32), np.zeros((1, 1, 2, 2), np.complex64),
         np.zeros((1, 1, 1, 1), np.float32), T=1e-9,
     )
     density = HALF.astype(np.complex64)
-    local = native.solve_scf(saddle_kernel(), HALF, 1.0)
+    local = engine.solve_scf(saddle_kernel(), HALF, 1.0)
     local = replace(local, density=density, fock=np.zeros_like(density), energy=0.0)
     direction = np.diag([1.0, -1.0]).astype(complex)[None, None]
     saddle = module.StabilityResult(-1.0, 0.0, True, True, False, 0.0, 0.0, 1, direction)
@@ -314,8 +304,8 @@ def test_escape_requires_descent_above_kernel_precision(monkeypatch):
     ops = SimpleNamespace(
         evaluate=evaluate, response=lambda P, dP: np.zeros_like(P), dtype=np.dtype(np.complex64)
     )
-    monkeypatch.setattr(native, "solve_scf", lambda *a, **k: local)
-    monkeypatch.setattr(native, "fock_operators", lambda kernel: ops)
+    monkeypatch.setattr(engine, "solve_scf", lambda *a, **k: local)
+    monkeypatch.setattr(engine, "fock_operators", lambda kernel: ops)
     monkeypatch.setattr(module, "stability_analysis", lambda *a, **k: saddle)
     config = SCFConfig(acceleration="rdiis", density_tol=1e-4, comm_tol=1e-4)
     r = solve_minimum(kernel, density, 1.0, eigen_tol=1e-4, config=config)

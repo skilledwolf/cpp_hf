@@ -1,13 +1,11 @@
 # hartreefock: Hartree-Fock on 2D k-meshes
 
 `hartreefock` solves the finite-temperature Hartree-Fock problem on uniform 2D
-k-meshes. One kernel object describes the problem, and two interchangeable
-backends solve it:
-
-* `backend="native"` (default): a pybind11 extension on FFTW + Eigen, double
-  precision, GIL released for every solver call.
-* `backend="jax"` (extra `hartreefock[jax]`): jitted JAX solvers,
-  differentiable and GPU-capable.
+k-meshes. One kernel object describes the problem, and jitted JAX solvers
+(differentiable, GPU-capable) solve it. On the CPU the batched eigensolvers,
+complex matrix products and the superlattice exchange run as OpenMP C++
+kernels (FFTW + Eigen) through `jax.ffi`. Importing hartreefock turns on
+`jax_enable_x64`; a solve runs in the dtype of the kernel's arrays.
 
 Two kernel types cover the problems:
 
@@ -17,13 +15,12 @@ Two kernel types cover the problems:
   streamed exchange and scalar or orbital-resolved interactions, plus
   `potential_at` for off-mesh self-energies.
 
-Solvers, all available on both backends unless noted:
+Solvers:
 
-* `solve`: direct minimization by Riemannian CG or trust-region Newton, or
-  (native) `optimizer="auto"`, which hands CG over to Newton near convergence.
+* `solve`: direct minimization by Riemannian CG or trust-region Newton.
 * `solve_scf`: Roothaan SCF with linear, DIIS or ODA mixing, or the
   free-energy-safeguarded full-residual `rdiis` (recommended at finite T) and
-  `anderson` schemes; native adds `preconditioner="hartree"`.
+  `anderson` schemes.
 * `solve_minimum`: RDIIS plus a local stability check and bounded saddle
   recovery; `stability_analysis` is the standalone curvature test.
 * `solve_continuation` (coarse to fine) and `solve_deflated` (several distinct
@@ -32,14 +29,14 @@ Solvers, all available on both backends unless noted:
 ## Documentation
 
 The Sphinx site in `docs/` has install notes, a quickstart, guides to the
-kernel, the solvers, superlattices and the backends, and the full API
+kernel, the solvers, superlattices, precision and speed, and the full API
 reference. It is published at https://skilledwolf.github.io/cpp_hf/ from
 `main`; build it locally with `pip install -e ".[docs]"` and
 `sphinx-build -W -b html docs docs/_build/html`.
 
 ## Install
 
-Requires FFTW (double precision: `fftw3`) and a C++17 compiler.
+Requires JAX, FFTW (double precision: `fftw3`), Eigen and a C++17 compiler.
 
 ```bash
 # macOS
@@ -51,8 +48,6 @@ sudo apt install libfftw3-dev libeigen3-dev
 pip install -e .
 ```
 
-For the JAX backend: `pip install -e ".[jax]"`.
-
 ## Minimal example
 
 ```python
@@ -63,7 +58,7 @@ kernel = hf.HartreeFockKernel(weights, h, Vq, T=0.1)
 P0 = np.zeros_like(h)
 
 dm = hf.solve(kernel, P0, n_electrons, config=hf.SolverConfig(tol_E=1e-8))
-scf = hf.solve_scf(kernel, P0, n_electrons, config=hf.SCFConfig(acceleration="diis"), backend="jax")
+scf = hf.solve_scf(kernel, P0, n_electrons, config=hf.SCFConfig(acceleration="diis"))
 # dm.density, dm.fock, dm.energy, dm.mu, dm.n_iter, dm.converged, dm.history
 ```
 
@@ -80,8 +75,8 @@ check = hf.stability_analysis(kernel, minimum.solution.density, n_electrons)
 ```
 
 Both are local checks in the supplied basis, not a global-minimum certificate;
-compare free energies across seeds for phase comparisons. SCF and `auto`
-histories report `free_energy` and the total `fock_builds`.
+compare free energies across seeds for phase comparisons. SCF histories
+report `free_energy` and the total `fock_builds`.
 
 Coarse-to-fine continuation runs `solve_scf` for stages configured with an
 `SCFConfig` and `solve` otherwise:
@@ -96,7 +91,8 @@ result = hf.solve_continuation(
 
 Both kernels expose the interaction as NumPy linear maps, `kernel.exchange(rho)`,
 `kernel.hartree(rho)` and `kernel.potential(rho)`; the solvers' Fock matrix is
-`h + kernel.potential(P - refP)`. `hartreefock._backends` is private.
+`h + kernel.potential(P - refP)`, and `hf.fock_operators(kernel)` evaluates
+it with the energy and its response. `hartreefock._jax` is private.
 
 Energies are the variational functional
 `E_var = Tr(h P) + 1/2 Tr(V_HF[P - P_ref] (P - P_ref))`. For an embedded
@@ -110,18 +106,16 @@ kernel.embedded_hartree_shift * n_electrons` and
 python -m pytest -n 4 tests --deselect tests/test_bilayer_regression.py
 ```
 
-`tests/` holds the backend-independent checks (superlattice, continuation,
-symmetry, backend parity); `tests/native` and `tests/jax` hold the
-backend-specific ones. `test_bilayer_regression.py` (about a minute on 4 cores; needs contimod) pins
+`test_bilayer_regression.py` (about a minute on 4 cores; needs contimod) pins
 energies against `tests/data/bilayer_reference.npz`.
 
 ## License
 
 MIT, see `LICENSE`.
 
-The native backend links FFTW, which is GPLv2+. Binary wheels that bundle
-FFTW are therefore distributed under the GPL as a whole; the source code and
-the JAX backend alone are MIT.
+The extension links FFTW, which is GPLv2+. Binary wheels that bundle FFTW
+are therefore distributed under the GPL as a whole; the source code alone is
+MIT.
 
 ## Acknowledgments
 

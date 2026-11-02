@@ -9,8 +9,7 @@ kernelspec:
 hartreefock solves the finite-temperature Hartree-Fock problem on uniform 2D
 k-meshes. You describe the problem once as a kernel (the single-particle
 Hamiltonian, the interaction and the quadrature weights) and solve it with
-one of two interchangeable backends: a C++ extension on FFTW and Eigen, or
-jitted JAX. It is the engine behind the mean-field solvers of
+jitted JAX solvers, which call C++ kernels for the hot loops on the CPU. It is the engine behind the mean-field solvers of
 [contimod](https://github.com/skilledwolf/contimod), and works on any
 Hamiltonian you can put on a k-mesh.
 
@@ -77,8 +76,8 @@ Stoner instability. Each checks its result against a closed form.
 :link: guides/index
 :link-type: doc
 
-The kernel, the solvers, superlattices and the two backends, each with a
-check.
+The kernel, the solvers, superlattices, and precision and speed, each with
+a check.
 :::
 
 :::{grid-item-card} Python API

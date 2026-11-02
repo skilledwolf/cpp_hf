@@ -1,8 +1,7 @@
-"""Hartree-Fock kernel: the precomputed problem shared by both backends.
+"""Hartree-Fock kernel: the precomputed problem the solvers run on.
 
-The kernel is plain NumPy.  The JAX backend feeds ``_as_args()`` to its
-jitted loop; the native backend lowers the same arrays into the C++
-``HFKernel`` struct.  Both evaluate::
+The kernel is plain NumPy; the jitted solvers read ``_as_args()``.  The
+exchange it describes is::
 
     Σ(k) = -Σ_q V(k - q) w(q) [P(q) - refP(q)]
 

@@ -1,4 +1,4 @@
-"""Hartree-Fock for a superlattice (moiré) plane-wave basis, for either backend.
+"""Hartree-Fock for a superlattice (moiré) plane-wave basis.
 
 The Hamiltonian is written in a basis ``|k, G_a, α⟩`` with ``G_a`` from a
 discrete reciprocal-lattice basis and ``α`` an orbital index, so
@@ -10,12 +10,12 @@ discrete reciprocal-lattice basis and ``α`` an orbital index, so
 is one aperiodic 2D convolution in ``p`` per channel ``(ΔG = G_a - G_b, α, β)``.
 :func:`build_extended_layout` precomputes the zero-padded extended grid, the
 FFT of ``V`` on it and the CSR grouping of ``(G_a, G_b)`` pairs by ``ΔG``; the
-native and JAX backends stream the channels through one scratch buffer.  The
+exchange streams the channels through one scratch buffer.  The
 Hartree term is k-independent and couples ``ΔG``-components of the BZ-averaged
 density.
 
 :class:`SuperlatticeHartreeFockKernel` is solved by :func:`hartreefock.solve`
-and :func:`hartreefock.solve_scf` on either backend, exactly like the dense
+and :func:`hartreefock.solve_scf` exactly like the dense
 :class:`~hartreefock.HartreeFockKernel`.
 """
 
@@ -301,6 +301,7 @@ class SuperlatticeHartreeFockKernel:
         else:
             self.refP = np.broadcast_to(np.zeros((), dtype=np.complex128), h.shape)
 
+        self._exchange_fn = None
         self.layout = build_extended_layout(
             self.g_fractional, self.reciprocal_basis, nkx, nky, coulomb_V, w_scalar,
             coulomb_V_orbital=coulomb_V_orbital,
@@ -316,7 +317,7 @@ class SuperlatticeHartreeFockKernel:
             hartree_matrix, hartree_matrix_orbital
         )
 
-        # Dense-kernel fields: the backends read them, the superlattice paths
+        # Dense-kernel fields: the solvers read them, the superlattice paths
         # bypass them.
         self.VR_shifted = np.zeros((nkx, nky, 1, 1), dtype=np.complex128)
         self.HH = np.zeros((D, D))
@@ -367,9 +368,13 @@ class SuperlatticeHartreeFockKernel:
         """Fock self-energy ``Σ_F[rho]`` on the BZ mesh."""
         if not self.include_exchange:
             return np.zeros(self.h.shape, dtype=np.complex128)
-        from ._backends.native.fock import superlattice_exchange
+        if self._exchange_fn is None:
+            from ._jax.superlattice import make_superlattice_fock_fn
 
-        return superlattice_exchange(rho, self.layout, self.n_G)
+            self._exchange_fn = make_superlattice_fock_fn(
+                self.layout, self.n_G, self.dim_orb, self.nkx, self.nky
+            )
+        return np.asarray(self._exchange_fn(np.asarray(rho)))
 
     def hartree(self, rho) -> np.ndarray:
         """k-independent Hartree potential ``(D, D)`` of ``rho``."""

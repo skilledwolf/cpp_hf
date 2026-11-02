@@ -1,10 +1,8 @@
 """Bilayer graphene energies against the saved SCF reference.
 
 Three densities (hole side, near neutrality, electron side) on both branches.
-SCF runs native RDIIS (the reference was made with linear mixing, so this
-also checks that RDIIS reaches the same fixed point) and direct minimization
-runs on JAX (native when JAX is missing); backend agreement itself is covered
-by test_backend_parity.
+SCF runs RDIIS (the reference was made with linear mixing, so this also
+checks that RDIIS reaches the same fixed point); direct minimization runs CG.
 
 Needs contimod.  Reference data come from
 ``tests/generate_bilayer_reference.py``.
@@ -32,7 +30,6 @@ DATA_PATH = Path(__file__).parent / "data" / "bilayer_reference.npz"
 PER_CM = 0.246e-7
 E_ATOL = 1e-4
 DENSITIES = [-0.60, -0.12, 0.25]
-DIRECT_BACKEND = "jax" if "jax" in hf.available_backends() else "native"
 
 
 @pytest.fixture(scope="module")
@@ -111,7 +108,7 @@ def test_scf_energy_matches_reference(bilayer_setup, branch, n_cm12):
         acceleration="rdiis", max_iter=500, density_tol=1e-7, comm_tol=1e-6,
         project_fn=bilayer_setup[5][branch],
     )
-    result = hf.solve_scf(kernel, P0, n_e, config=config, backend="native")
+    result = hf.solve_scf(kernel, P0, n_e, config=config)
 
     np.testing.assert_allclose(float(result.energy), E_ref, atol=E_ATOL)
     if not result.converged:
@@ -129,6 +126,6 @@ def test_direct_solver_energy_matches_reference(bilayer_setup, branch, n_cm12):
     E_ref = _reference_energy(ref, branch, n_cm12)
     P0, n_e = _initial_state(bilayer_setup, branch, n_cm12)
     config = hf.SolverConfig(max_iter=200, tol_E=1e-7, project_fn=bilayer_setup[5][branch])
-    result = hf.solve(kernel, P0, n_e, config=config, backend=DIRECT_BACKEND)
+    result = hf.solve(kernel, P0, n_e, config=config)
 
     np.testing.assert_allclose(float(result.energy), E_ref, atol=E_ATOL)

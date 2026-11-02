@@ -4,7 +4,7 @@ requires = [
     "pybind11>=2.11",
     "numpy",
     "setuptools_scm[toml]>=8",
-    # jaxlib ships the XLA FFI headers the JAX backend's C++ kernels compile against.
+    # jaxlib ships the XLA FFI headers the C++ kernels compile against.
     "jax>=0.5.3",
 ]
 build-backend = "scikit_build_core.build"
@@ -12,7 +12,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "hartreefock"
 dynamic = ["version"]
-description = "Hartree-Fock solvers on 2D k-meshes with native (C++) and JAX backends"
+description = "Hartree-Fock solvers on 2D k-meshes in JAX, with C++ kernels for the CPU hot paths"
 readme = "Readme.md"
 requires-python = ">=3.10"
 authors = [{ name = "Tobias Wolf", email = "public@wolft.xyz" }]
@@ -20,6 +20,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["hartree-fock", "fftw", "eigen", "pybind11", "condensed-matter", "physics"]
 dependencies = [
+    "jax>=0.5.3",
     "numpy",
     "scipy",
 ]
@@ -33,8 +34,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-jax = ["jax>=0.5.3"]
-dev = ["pytest", "pytest-xdist", "jax>=0.5.3"]
+dev = ["pytest", "pytest-xdist"]
 docs = [
     "sphinx>=8",
     "pydata-sphinx-theme>=0.16",
@@ -45,7 +45,6 @@ docs = [
     "sphinxcontrib-bibtex",
     "linkify-it-py",
     "matplotlib",
-    "jax>=0.5.3",
 ]
 
 [project.urls]

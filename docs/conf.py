@@ -41,8 +41,6 @@ autoapi_dirs = [str(REPO / "src/hartreefock")]
 autoapi_generate_api_docs = False
 autoapi_options = ["members", "show-inheritance", "show-module-summary", "imported-members"]
 autoapi_python_class_content = "class"
-# The compiled extension cannot be parsed; its Python wrappers are private.
-autoapi_ignore = ["*/_backends/native/*"]
 autodoc_typehints = "description"
 napoleon_use_ivar = True
 napoleon_google_docstring = False

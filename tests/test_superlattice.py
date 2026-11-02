@@ -1,4 +1,4 @@
-"""Superlattice kernel: exchange and Hartree against direct sums, backend parity,
+"""Superlattice kernel: exchange and Hartree against direct sums, the ffi kernel,
 reference embedding and spectral upsampling."""
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ import pytest
 
 import hartreefock as hf
 from hartreefock.superlattice import SuperlatticeHartreeFockKernel, upsample_density
+
 
 G = np.array([[0, 0], [1, 0], [0, -1], [-1, 1]])
 B = np.array([[1.0, 0.35], [0.1, 0.8]])
@@ -107,13 +108,11 @@ def test_exchange_and_hartree_match_direct_sums(orb):
     [dict(), dict(coulomb_V_orbital=orbital), dict(embed_reference_potential=True, center_embedded_hartree=False)],
     ids=["scalar", "orbital", "embedded"],
 )
-def test_jax_fock_matches_native(x64, case):
-    pytest.importorskip("jax")
+def test_fock_matches_the_kernel_linear_maps(x64, case):
     import jax
     import jax.numpy as jnp
 
-    from hartreefock._backends.jax.fock import fock_builder, hf_energy
-    from hartreefock._backends.native import build_fock
+    from hartreefock._jax.fock import fock_builder
 
     rng = np.random.default_rng(5)
     D = len(G) * NO
@@ -123,7 +122,7 @@ def test_jax_fock_matches_native(x64, case):
         hartree_degeneracy=2.0, **case,
     )
     P = hermitian(rng, (NX, NY, D, D))
-    _, _, F, E = build_fock(kernel, P)
+    F, _ = hf.fock_operators(kernel).evaluate(P)
     np.testing.assert_allclose(F, kernel.h + kernel.potential(P - kernel.refP), atol=1e-13)
 
     args = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in kernel._as_args().items()}
@@ -133,11 +132,6 @@ def test_jax_fock_matches_native(x64, case):
         include_exchange=True, include_hartree=True, exchange_hermitian_channel_packing=False,
         contact_g=args["contact_g"], contact_Oi=args["contact_Oi"], contact_Oj=args["contact_Oj"],
     )
-    Sj, Hj, Fj = build(jnp.asarray(P), **fock_args)
-    Ej = hf_energy(jnp.asarray(P), h=args["h"], Sigma=Sj, H=Hj, weights_b=args["weights_b"], refP=args["refP"])
-    np.testing.assert_allclose(np.asarray(Fj), F, atol=1e-13)
-    np.testing.assert_allclose(float(Ej), float(E), atol=1e-13)
-
     # The builder is affine: its JVP is the self-adjoint interaction response.
     X, Y = (jnp.asarray(hermitian(rng, P.shape)) for _ in range(2))
     response = lambda dP: jax.jvp(lambda A: build(A, **fock_args)[2], (jnp.asarray(P),), (dP,))[1]
@@ -158,17 +152,13 @@ def test_embedding_solves_standard_hf(x64):
     )
     n = 0.3 * D * W * NX * NY
     config = hf.SCFConfig(max_iter=300, density_tol=1e-10, comm_tol=1e-10, mixing=0.3, acceleration="diis")
-    results = {}
-    for backend in hf.available_backends():
-        for name, kernel in (("plain", plain), ("embedded", embedded)):
-            r = hf.solve_scf(kernel, ref, n, config=config, backend=backend)
-            assert r.converged, (backend, name, r.message)
-            results[backend, name] = r
-    E_plain = float(results["native", "plain"].energy)
-    for (backend, name), r in results.items():
-        offset = embedded.embedded_energy_offset if name == "embedded" else 0.0
-        np.testing.assert_allclose(float(r.energy) - offset, E_plain, atol=1e-9)
-        np.testing.assert_allclose(r.density, results["native", "plain"].density, atol=1e-7)
+    r_plain = hf.solve_scf(plain, ref, n, config=config)
+    r_embedded = hf.solve_scf(embedded, ref, n, config=config)
+    assert r_plain.converged and r_embedded.converged, (r_plain.message, r_embedded.message)
+    np.testing.assert_allclose(
+        float(r_embedded.energy) - embedded.embedded_energy_offset, float(r_plain.energy), atol=1e-9
+    )
+    np.testing.assert_allclose(r_embedded.density, r_plain.density, atol=1e-7)
 
 
 def test_upsample_density_is_exact_for_band_limited_densities():
@@ -193,10 +183,8 @@ def test_upsample_density_is_exact_for_band_limited_densities():
 
 @pytest.mark.parametrize("hermitian", [False, True])
 @pytest.mark.parametrize("kind", ["diagonal", "tiny_coherence"])
-def test_sparse_channels_preserve_exact_convolution(hermitian, kind):
-    """The native channel stream must not drop sparse or tiny ΔG channels."""
-    from hartreefock._backends.native import superlattice_exchange
-
+def test_sparse_channels_preserve_exact_convolution(x64, hermitian, kind):
+    """The channel stream must not drop sparse or tiny ΔG channels."""
     rng = np.random.default_rng(14)
     D = len(G) * NO
     kernel = make_kernel(band_hamiltonian(rng))
@@ -209,7 +197,7 @@ def test_sparse_channels_preserve_exact_convolution(hermitian, kind):
         rho[0, 1, 0, NO] = 1e-30 + 2e-30j  # far below any SCF tolerance, still nonzero
     if hermitian:
         rho = 0.5 * (rho + rho.conj().swapaxes(-2, -1))
-    actual = superlattice_exchange(rho, kernel.layout, len(G), hermitian_rho=hermitian)
+    actual = kernel.exchange(rho)
     expected = direct_exchange(rho, scalar)
     scale = np.max(np.abs(expected))
     assert scale > 0
@@ -217,13 +205,12 @@ def test_sparse_channels_preserve_exact_convolution(hermitian, kind):
 
 
 @pytest.mark.parametrize("orb", [False, True], ids=["scalar", "orbital"])
-def test_native_ffi_exchange_matches_pure_jax(x64, orb):
-    pytest.importorskip("jax")
+def test_ffi_exchange_matches_pure_jax(x64, orb):
     import jax
     import jax.numpy as jnp
 
-    from hartreefock._backends.jax import ffi
-    from hartreefock._backends.jax import superlattice as sl
+    from hartreefock._jax import ffi
+    from hartreefock._jax import superlattice as sl
 
     if not ffi.available(ffi.SUPERLATTICE_FOCK):
         pytest.skip("built without the XLA FFI headers")
@@ -231,7 +218,7 @@ def test_native_ffi_exchange_matches_pure_jax(x64, orb):
     D = len(G) * NO
     kernel = make_kernel(hermitian(rng, (NX, NY, D, D)), coulomb_V_orbital=orbital if orb else None)
     layout = kernel.layout
-    native = sl._make_native_superlattice_fock_fn(layout, len(G), NO, NX, NY)
+    kernel_fn = sl._make_ffi_superlattice_fock_fn(layout, len(G), NO, NX, NY)
     if orb:
         pure = sl._make_orbital_superlattice_fock_fn(
             layout, len(G), NO, NX, NY, layout.V_lag_fft_orbital
@@ -239,10 +226,10 @@ def test_native_ffi_exchange_matches_pure_jax(x64, orb):
     else:
         pure = sl._make_scalar_superlattice_fock_fn(layout, len(G), NO, NX, NY)
     rho = jnp.asarray(hermitian(rng, (NX, NY, D, D)))
-    np.testing.assert_allclose(native(rho), pure(rho), atol=1e-13)
+    np.testing.assert_allclose(kernel_fn(rho), pure(rho), atol=1e-13)
     # Non-Hermitian tangents go through the kernel without the ΔG halving.
     drho = jnp.asarray(rng.normal(size=rho.shape) + 1j * rng.normal(size=rho.shape))
-    _, t_native = jax.jvp(native, (rho,), (drho,))
-    np.testing.assert_allclose(t_native, pure(drho), atol=1e-13)
+    _, t_kernel = jax.jvp(kernel_fn, (rho,), (drho,))
+    np.testing.assert_allclose(t_kernel, pure(drho), atol=1e-13)
     batch = jnp.stack([rho, 2.0 * rho])
-    np.testing.assert_allclose(jax.vmap(native)(batch)[1], 2.0 * pure(rho), atol=1e-13)
+    np.testing.assert_allclose(jax.vmap(kernel_fn)(batch)[1], 2.0 * pure(rho), atol=1e-13)

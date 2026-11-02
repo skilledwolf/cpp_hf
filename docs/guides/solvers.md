@@ -8,7 +8,7 @@ kernelspec:
 
 Every solver takes a kernel, a starting density `P0` of shape
 `(nk1, nk2, nb, nb)`, the particle number `n_electrons` (counted with the
-weights), a config and a `backend`. The chemical potential is solved for at
+weights) and a config. The chemical potential is solved for at
 every step. This page runs each of them on one problem and compares.
 
 ## Theory
@@ -105,22 +105,20 @@ ax.legend();
   backtracking at $T > 0$.
 - `"rdiis"` (Fock) and `"anderson"` (density): full-residual schemes with a
   free-energy safeguard. RDIIS is the recommended default at finite
-  temperature; the native backend adds `preconditioner="hartree"` for
-  problems where the Hartree term makes the residual stiff.
+  temperature.
 
 ## Direct minimization
 
 {class}`~hartreefock.SolverConfig` picks the optimizer: `"cg"`, Riemannian
 conjugate gradients; `"newton"`, a truncated-CG trust region on the exact
-Hessian, quadratic near a solution and in need of double precision; `"auto"`
-(native only), CG first and Newton once the iterate is close. With
+Hessian, quadratic near a solution and in need of double precision. With
 `tol_grad > 0` the stationarity norm is the stopping test; otherwise CG
 stops when the free energy improves by less than `tol_E` over
 `plateau_window` iterations. Compare `result.energy`, which is recomputed at
 the end, rather than the tail of `history["E"]`.
 
 ```{code-cell} ipython3
-for optimizer in ("cg", "newton", "auto"):
+for optimizer in ("cg", "newton"):
     t = time.perf_counter()
     r = hf.solve(kernel, P0, n, config=hf.SolverConfig(optimizer=optimizer, tol_grad=1e-8, max_iter=500))
     rows.append((optimizer, bool(r.converged), int(r.n_iter), float(r.energy), time.perf_counter() - t))
@@ -128,9 +126,9 @@ for optimizer in ("cg", "newton", "auto"):
           f"E = {float(r.energy):.10f}  m = {magnetization(r.density):.4f}  {rows[-1][-1] * 1e3:5.0f} ms")
 ```
 
-Every method reaches the same polarized state. RDIIS, ODA, Anderson,
-Newton and `"auto"` take five to eight iterations, plain CG hundreds to
-reach a gradient of $10^{-8}$, which is why `"auto"` hands over to Newton.
+Every method reaches the same polarized state. RDIIS, ODA, Anderson and
+Newton take five to eight iterations, plain CG hundreds to reach a gradient
+of $10^{-8}$.
 Linear mixing and DIIS lie on top of each other in the figure: both blend
 the new density with the old one by `mixing` (0.5 by default), and on this
 problem one Roothaan step is already almost exact, so the blend halves the

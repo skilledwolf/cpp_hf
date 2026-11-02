@@ -10,17 +10,17 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._backends import get_backend
+from . import _jax
 from .config import ContinuationResult, SCFConfig, SolverConfig
 from .kernel import HartreeFockKernel
 from .superlattice import SuperlatticeHartreeFockKernel, upsample_density
 
 
-def _run_stage(backend, kernel, P0, n_electrons, config, stage):
+def _run_stage(kernel, P0, n_electrons, config, stage):
     if isinstance(config, SCFConfig):
-        return backend.solve_scf(kernel, P0, float(n_electrons), config=config)
+        return _jax.solve_scf(kernel, P0, float(n_electrons), config=config)
     if config is None or isinstance(config, SolverConfig):
-        return backend.solve(kernel, P0, float(n_electrons), config=config)
+        return _jax.solve(kernel, P0, float(n_electrons), config=config)
     raise TypeError(
         f"{stage}_config must be SolverConfig, SCFConfig, or None; got {type(config).__name__}."
     )
@@ -49,7 +49,6 @@ def solve_continuation(
     *,
     coarse_config: SolverConfig | SCFConfig | None = None,
     fine_config: SolverConfig | SCFConfig | None = None,
-    backend: str = "native",
     retain_P0_fine: bool = True,
 ) -> ContinuationResult:
     """Solve on a coarse mesh, resample the result to a fine mesh, and solve there.
@@ -70,8 +69,6 @@ def solve_continuation(
     coarse_config, fine_config : SCFConfig or SolverConfig, optional
         Solver and options of each stage; ``None`` is direct minimization with
         the defaults.
-    backend : {"native", "jax"}
-        Which implementation runs both stages.
     retain_P0_fine : bool
         Keep the resampled seed in the result.
 
@@ -81,7 +78,6 @@ def solve_continuation(
         Both stage results and the resampled seed.
     """
     _validate_kernels(coarse_kernel, fine_kernel)
-    engine = get_backend(backend)
     P0_coarse = np.asarray(P0_coarse)
     if P0_coarse.shape != coarse_kernel.h.shape:
         raise ValueError(
@@ -89,14 +85,14 @@ def solve_continuation(
             f"coarse_kernel hamiltonian shape {tuple(coarse_kernel.h.shape)}."
         )
 
-    coarse = _run_stage(engine, coarse_kernel, P0_coarse, n_electrons_coarse, coarse_config, "coarse")
+    coarse = _run_stage(coarse_kernel, P0_coarse, n_electrons_coarse, coarse_config, "coarse")
     density = coarse.density
     if density is None:
         raise ValueError("the coarse stage must return its density (return_density=True).")
     if isinstance(fine_kernel, SuperlatticeHartreeFockKernel):
         P0_fine = upsample_density(density, coarse_kernel, fine_kernel)
     else:
-        P0_fine = np.asarray(engine.resample_kgrid(density, int(fine_kernel.h.shape[0])))
+        P0_fine = np.asarray(_jax.resample_kgrid(density, int(fine_kernel.h.shape[0])))
         P0_fine = 0.5 * (P0_fine + P0_fine.conj().swapaxes(-1, -2))
-    fine = _run_stage(engine, fine_kernel, P0_fine, n_electrons_fine, fine_config, "fine")
+    fine = _run_stage(fine_kernel, P0_fine, n_electrons_fine, fine_config, "fine")
     return ContinuationResult(coarse=coarse, fine=fine, P0_fine=P0_fine if retain_P0_fine else None)

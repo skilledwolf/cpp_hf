@@ -12,9 +12,7 @@ pip install -e ".[dev]"
 python -m pytest -n 4 tests --deselect tests/test_bilayer_regression.py
 ```
 
-`tests/` has the backend-independent checks (superlattice, continuation,
-symmetry, backend parity); `tests/native` and `tests/jax` the backend-specific
-ones. `tests/test_bilayer_regression.py` takes about a minute on 4 cores (it needs contimod) and pins
+`tests/test_bilayer_regression.py` takes about a minute on 4 cores (it needs contimod) and pins
 energies against `tests/data/bilayer_reference.npz`.
 
 ## Documentation

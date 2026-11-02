@@ -1,9 +1,8 @@
-// XLA FFI handlers: the C++ kernels the JAX backend calls through jax.ffi.
+// XLA FFI handlers: the C++ kernels the JAX engine calls through jax.ffi.
 //
 // Only compiled when the build finds the XLA FFI headers that ship with
-// jaxlib (HF_HAVE_XLA_FFI).  The handlers wrap the same kernels the native
-// backend uses, so JAX gets OpenMP-threaded per-k linear algebra instead of
-// XLA CPU's serial loop over the batch.
+// jaxlib (HF_HAVE_XLA_FFI).  JAX gets OpenMP-threaded per-k linear algebra
+// instead of XLA CPU's serial loop over the batch.
 #pragma once
 
 #include "cpp_hf/linalg.hpp"

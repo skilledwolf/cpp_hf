@@ -31,7 +31,7 @@ from contimod.utils.spectrum_fermi import FermiParams
 import hartreefock
 
 from hartreefock import SCFConfig
-from hartreefock._backends.jax import solve_scf
+from hartreefock._jax import solve_scf
 from hartreefock.symmetry import make_project_fn
 
 # ---------------------------------------------------------------------------

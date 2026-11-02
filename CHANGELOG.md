@@ -8,28 +8,35 @@ This project adheres to [Semantic Versioning](https://semver.org).
 
 ### Breaking changes
 - `cpp_hf` and `jax_hf` are merged into one package, `hartreefock`, with one
-  kernel (`HartreeFockKernel`, `SuperlatticeHartreeFockKernel`), one set of
-  configs and results, and a `backend="native" | "jax"` argument on every
-  solver. `import cpp_hf` and `import jax_hf` are gone; the backend modules
-  under `hartreefock._backends` are private.
+  kernel (`HartreeFockKernel`, `SuperlatticeHartreeFockKernel`) and one set
+  of configs and results. `import cpp_hf` and `import jax_hf` are gone.
+- One engine: the solvers are jitted JAX, and JAX is a required dependency.
+  The C++ solver loops of `cpp_hf` (SCF, direct minimization, trust-region
+  Newton) are removed; the extension keeps only the OpenMP kernels JAX calls
+  through `jax.ffi` on the CPU (batched eigh and eigvalsh, batched complex
+  matmul, the superlattice Fock build), which bring a JAX SCF iteration
+  within 1.1x of the removed C++ loop. The `backend=` argument,
+  `available_backends` and `get_backend` are gone, and so are the options
+  only the C++ loops had: `optimizer="auto"`, `preconditioner="hartree"` and
+  `SCFConfig.block_sizes`. `hf.fock_operators(kernel)` evaluates the Fock
+  matrix, energy and response.
+- Importing hartreefock turns on `jax_enable_x64`; a solve runs in the dtype
+  of the kernel's arrays (complex128 from NumPy defaults).
+- `SolveResult.history` arrays are cut to `n_iter` entries, as
+  `SCFResult.history` already were.
 - Result fields follow the former `jax_hf` names: `SCFResult.density`, `.fock`,
   `.mu`, `.n_iter` (was `density_matrix`, `fock_matrix`, `chemical_potential`,
   `iterations` in `cpp_hf`). Configs are keyword-only.
-- The NumPy fallbacks of `cpp_hf` (Python `build_fock`, `hf_energy`,
-  Newton chemical potential) are removed; the native backend is C++ only.
 - The package is MIT licensed (binary wheels bundling FFTW remain GPL as a
   whole).
 
 ### Added
-- `solve_minimum` and `stability_analysis` run on either backend
-  (`backend=` argument; the native Fock response replaces the JAX JVP).
-- `rdiis` and `anderson` SCF, `optimizer="auto"` and
-  `preconditioner="hartree"` (the last two native only) from `cpp_hf` 1.2.0,
-  on the merged API; the JAX backend raises `NotImplementedError` for the
-  native-only options.
+- `solve_minimum` and `stability_analysis`, and the `rdiis` and `anderson`
+  SCF from `cpp_hf` 1.2.0, on the merged API.
 - The documentation is rebuilt as executed pages: a three-step tutorial on
   the electron gas (exchange, Bloch ferromagnetism, the Stoner instability)
-  and guides to the kernel, the solvers, superlattices and the backends.
+  and guides to the kernel, the solvers, superlattices, and precision and
+  speed.
   Each page checks its result against a closed form, and the build fails
   when a check does. The solver and result docstrings have NumPy sections.
 

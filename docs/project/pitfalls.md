@@ -22,14 +22,14 @@ The same cell couples each k-point to itself, which at low temperature
 makes {func}`~hartreefock.stability_analysis` report mesh modes as
 unstable ([Solvers](../guides/solvers.md)).
 
-## JAX in single precision
+## Single-precision kernels
 
-The JAX backend computes in the dtype of the kernel's arrays, which is
-single precision unless `jax_enable_x64` is set before the kernel is
-built. {func}`~hartreefock.stability_analysis` and
-{func}`~hartreefock.solve_minimum` refuse their default tolerances
-without it, and the Newton optimizer needs it
-([Backends](../guides/backends.md)).
+The solvers compute in the dtype of the kernel's arrays, so a kernel built
+from float32 or complex64 arrays solves in single precision.
+{func}`~hartreefock.stability_analysis` and
+{func}`~hartreefock.solve_minimum` refuse their default tolerances on
+such a kernel, and the Newton optimizer needs double precision
+([Precision and speed](../guides/performance.md)).
 
 ## A converged solve can be a saddle
 

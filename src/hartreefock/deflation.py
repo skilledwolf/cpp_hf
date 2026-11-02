@@ -17,8 +17,7 @@ The biased free energy minimised by the Newton solver is
 
 with ``sigma = deflation_sigma`` (height) and ``L = deflation_length`` (width).
 
-With the JAX backend, deflation needs float64 like the rest of the Newton
-path (enable x64).
+Deflation needs a float64 kernel like the rest of the Newton path.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from ._backends import get_backend
+from . import _jax
 from .config import DeflatedResult, SolverConfig
 
 
@@ -62,7 +61,6 @@ def solve_deflated(
     perturb: float = 1e-2,
     repolish: bool = True,
     seed: int = 0,
-    backend: str = "native",
 ) -> DeflatedResult:
     """Find distinct HF solutions by deflated trust-region Newton.
 
@@ -100,7 +98,7 @@ def solve_deflated(
     DeflatedResult
         Distinct solutions sorted by ascending physical energy.
     """
-    solve = get_backend(backend).solve
+    solve = _jax.solve
     w2d = np.asarray(kernel.w2d)
     rng = np.random.default_rng(seed)
 

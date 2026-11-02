@@ -3,8 +3,8 @@
 The tested operator is ``I + B**(1/2) L B**(1/2)`` on the fixed-particle
 density tangent, where ``B = -df(F)`` and ``L = dF/dP``. Its negative
 eigenvalues identify negative free-energy curvature, including directions
-between equally occupied orbitals. The backend supplies Fock evaluations and
-the linear response ``L``; NumPy/SciPy orchestrate the eigenvalue solve and
+between equally occupied orbitals. JAX supplies Fock evaluations and the
+linear response ``L``; NumPy/SciPy orchestrate the eigenvalue solve and
 the escape search, so neither driver is JIT-compatible.
 """
 
@@ -16,7 +16,7 @@ import numpy as np
 from scipy.sparse.linalg import ArpackNoConvergence, LinearOperator, eigsh
 from scipy.special import expit, xlogy
 
-from ._backends import get_backend
+from . import _jax
 from .config import SCFConfig, SCFResult
 
 
@@ -126,7 +126,6 @@ def stability_analysis(
     eigen_tol=1e-7,
     maxiter=200,
     seed=0,
-    backend: str = "native",
 ) -> StabilityResult:
     """Test a converged finite-temperature density for negative free-energy curvature.
 
@@ -137,6 +136,8 @@ def stability_analysis(
     kernel's Fock build (dense, contact or superlattice), and its adjoint
     consistency is checked before an eigenvalue is accepted. It is a local
     test in the basis supplied, not a proof of a global minimum.
+
+    Tolerances below ten times the kernel dtype's epsilon are rejected.
 
     Parameters
     ----------
@@ -156,10 +157,6 @@ def stability_analysis(
         Iterations of the eigenvalue solve.
     seed : int
         Seed of the random starting vector.
-    backend : {"native", "jax"}
-        Which Fock builder to linearize. With ``"jax"``, enable
-        ``jax_enable_x64`` before building the kernel; tolerances below ten
-        times the kernel dtype's epsilon are rejected.
 
     Returns
     -------
@@ -185,7 +182,7 @@ def stability_analysis(
     if min(stationarity_tol, eigen_tol) < 10 * precision:
         raise ValueError(
             "stability tolerances require greater kernel precision; "
-            "enable jax_enable_x64 before constructing the kernel"
+            "build the kernel from float64 arrays"
         )
     P = np.ascontiguousarray(density, dtype=np.result_type(dtype, np.complex64))
     if P.shape != kernel.h.shape or not np.all(np.isfinite(P)):
@@ -208,7 +205,7 @@ def stability_analysis(
         or abs(count - n_electrons) > max(1e-8, 10 * precision) * w.sum()
     ):
         raise ValueError("density must have the specified particle count")
-    ops = get_backend(backend).fock_operators(kernel)
+    ops = _jax.fock_operators(kernel)
     F = np.asarray(ops.evaluate(P)[0], dtype=complex)
     if not np.all(np.isfinite(F)) or not np.allclose(
         F, F.conj().swapaxes(-2, -1), rtol=0.0, atol=100 * precision
@@ -387,7 +384,6 @@ def solve_minimum(
     max_escapes=4,
     eigen_tol=1e-7,
     stability_maxiter=200,
-    backend: str = "native",
 ) -> MinimumResult:
     """Solve, test the stability of the solution, and step downhill until it is a local minimum.
 
@@ -417,9 +413,6 @@ def solve_minimum(
         Tolerance of each stability test.
     stability_maxiter : int
         Iterations of each stability test.
-    backend : {"native", "jax"}
-        Which implementation runs. With ``"jax"``, enable ``jax_enable_x64``
-        before building the kernel for the default tolerances.
 
     Returns
     -------
@@ -448,7 +441,7 @@ def solve_minimum(
     if eigen_tol < 10 * precision:
         raise ValueError(
             "stability tolerance requires greater kernel precision; "
-            "enable jax_enable_x64 before constructing the kernel"
+            "build the kernel from float64 arrays"
         )
     if config is None:
         config = SCFConfig(
@@ -463,8 +456,7 @@ def solve_minimum(
             "solve_minimum requires an unconstrained kernel; remove project_fn"
         )
     cfg = config
-    impl = get_backend(backend)
-    ops = impl.fock_operators(kernel)
+    ops = _jax.fock_operators(kernel)
     w = np.asarray(kernel.w2d)
     iterations = builds = escapes = 0
     energies = []
@@ -472,7 +464,7 @@ def solve_minimum(
     stability = None
     message = "Local solve did not converge"
     for cycle in range(max_escapes + 1):
-        result = impl.solve_scf(kernel, initial, n_electrons, config=cfg)
+        result = _jax.solve_scf(kernel, initial, n_electrons, config=cfg)
         iterations += result.n_iter
         # The new RDIIS/Anderson paths count every build. For legacy methods
         # without counters, -1 propagates "unavailable" rather than fabricating
@@ -508,7 +500,6 @@ def solve_minimum(
             stationarity_tol=recovery_tol,
             eigen_tol=eigen_tol,
             maxiter=stability_maxiter,
-            backend=backend,
         )
         if builds >= 0:
             builds += 1 + stability.response_builds

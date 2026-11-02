@@ -16,6 +16,5 @@ hartreefock.solve_minimum
 hartreefock.stability_analysis
 hartreefock.solve_continuation
 hartreefock.solve_deflated
-hartreefock.available_backends
-hartreefock.get_backend
+hartreefock.fock_operators
 hartreefock.symmetry.make_project_fn
