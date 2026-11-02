@@ -15,14 +15,14 @@ import os
 
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
+import jax
 import numpy as np
 import pytest
-
-import jax
 
 jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
+from _meshes import mesh_for
 
 from hartreefock import HartreeFockKernel, SolverConfig, solve_deflated
 from hartreefock._jax import solve
@@ -42,10 +42,7 @@ def _hybridized(nk=2, T=0.05, ex=0.25):
     h[..., 1, 1] = 0.5
     h[..., 0, 1] = 0.3
     h[..., 1, 0] = 0.3
-    return HartreeFockKernel(
-        weights=jnp.ones((nk, nk), jnp.float64), hamiltonian=jnp.asarray(h),
-        coulomb_q=jnp.full((nk, nk, 1, 1), ex, jnp.complex128), T=T,
-    )
+    return HartreeFockKernel(mesh_for(jnp.ones((nk, nk), jnp.float64)), jnp.asarray(h), jnp.full((nk, nk, 1, 1), ex, jnp.complex128), T=T)
 
 
 def _bistable(nk=1, T=0.02, ex=1.0, delta=0.1):
@@ -58,10 +55,7 @@ def _bistable(nk=1, T=0.02, ex=1.0, delta=0.1):
     h = np.zeros((nk, nk, 2, 2), np.complex128)
     h[..., 0, 0] = -delta
     h[..., 1, 1] = +delta
-    return HartreeFockKernel(
-        weights=jnp.ones((nk, nk), jnp.float64), hamiltonian=jnp.asarray(h),
-        coulomb_q=jnp.full((nk, nk, 1, 1), ex, jnp.complex128), T=T,
-    )
+    return HartreeFockKernel(mesh_for(jnp.ones((nk, nk), jnp.float64)), jnp.asarray(h), jnp.full((nk, nk, 1, 1), ex, jnp.complex128), T=T)
 
 
 # --- 1. project_fn respected in the Newton path -----------------------------

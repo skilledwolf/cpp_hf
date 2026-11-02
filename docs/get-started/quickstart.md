@@ -13,10 +13,10 @@ solution is a local minimum. It runs in a few seconds.
 
 ## The problem
 
-Three arrays define it, all on an `nk × nk` k-mesh: quadrature `weights`
-of shape `(nk, nk)`, the Hamiltonian `h` of shape `(nk, nk, nb, nb)`, and
-the interaction `V(q)` on the grid of momentum transfers. The units are
-yours; the solver assumes none. Here $\hbar = m = 1$, two spin bands with
+Three things define it: a {class}`~hartreefock.Mesh` of `nk × nk` k
+points, the Hamiltonian `h` on it, of shape `(nk, nk, nb, nb)`, and the
+interaction `V` as a function of `|q|`. The units are yours; the solver
+assumes none. Here $\hbar = m = 1$, two spin bands with
 dispersion $k^2/2$, and a dual-gate interaction
 $V(q) = 2\pi g \tanh(qd)/q$.
 
@@ -24,26 +24,24 @@ $V(q) = 2\pi g \tanh(qd)/q$.
 import numpy as np
 import hartreefock as hf
 
-nk, kmax = 48, 1.2
-k = np.linspace(-kmax, kmax, nk, endpoint=False) + kmax / nk
-kx, ky = np.meshgrid(k, k, indexing="ij")
-weights = np.full((nk, nk), (2 * kmax / nk) ** 2 / (2 * np.pi) ** 2)   # Σ_k w f = ∫ d²k/(2π)² f
-eps = 0.5 * (kx**2 + ky**2)
+mesh = hf.Mesh.square(kmax=1.2, nk=48)    # Σ_k mesh.weights f = ∫ d²k/(2π)² f
+eps = 0.5 * np.sum(mesh.ks**2, axis=-1)
 h = eps[..., None, None] * np.eye(2)
-
-# V(q) on the transfer grid: the k-mesh spacing, with q = 0 at index nk // 2.
-dk = k[1] - k[0]
-q1 = dk * (np.arange(nk) - nk // 2)
-q = np.hypot(*np.meshgrid(q1, q1, indexing="ij"))
 d, g = 10.0, 5.0
-V = g * 2 * np.pi * np.where(q > 0, np.tanh(q * d) / np.where(q > 0, q, 1.0), d)
 
-kernel = hf.HartreeFockKernel(weights, h, V[..., None, None], T=0.005)
-n_electrons = 0.02          # per unit area, counted with the weights
+
+def V(q):
+    return g * 2 * np.pi * np.where(q > 0, np.tanh(q * d) / np.where(q > 0, q, 1.0), d)
+
+
+kernel = hf.HartreeFockKernel(mesh, h, V, T=0.005)
+n_electrons = 0.02          # per unit area, counted with the mesh weights
 ```
 
 {class}`~hartreefock.HartreeFockKernel` holds what does not change during
-a solve. By default it keeps the exchange term only; Hartree terms, a
+a solve. It samples `V` on the momentum transfers of the mesh,
+`mesh.transfer_grid`, which has `q = 0` at index `nk // 2`. By default it
+keeps the exchange term only; Hartree terms, a
 reference density and contact couplings are options
 ([The kernel](../guides/kernel.md)).
 
@@ -59,7 +57,7 @@ results = {}
 for name, P0 in starts.items():
     r = hf.solve_scf(kernel, P0, n_electrons)
     s = hf.stability_analysis(kernel, r.density, n_electrons)
-    up, down = np.einsum("ij,ijaa->a", weights, r.density).real
+    up, down = np.einsum("ij,ijaa->a", mesh.weights, r.density).real
     results[name] = (r, s)
     print(f"{name:>9}: E = {r.energy:.6f}, spin up/down = {up:.4f}/{down:.4f}, "
           f"stable = {s.stable} (lowest curvature {s.lowest_eigenvalue:+.1e})")

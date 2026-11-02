@@ -8,10 +8,10 @@ its convergence is asserted on the energy).  These run in the suite's default
 float32.
 """
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
-
-import jax.numpy as jnp
+from _meshes import mesh_for
 
 from hartreefock import HartreeFockKernel, SCFConfig
 from hartreefock._jax import solve_scf
@@ -31,10 +31,7 @@ def _dirac(nk=4, m=0.3, v=1.0, T=0.1, ex=0.7):
     h[..., 1, 1] = -m
     h[..., 0, 1] = v * (KX - 1j * KY)
     h[..., 1, 0] = v * (KX + 1j * KY)
-    return HartreeFockKernel(
-        weights=jnp.ones((nk, nk), jnp.float32), hamiltonian=jnp.asarray(h),
-        coulomb_q=jnp.full((nk, nk, 1, 1), ex, jnp.complex64), T=T,
-    )
+    return HartreeFockKernel(mesh_for(jnp.ones((nk, nk), jnp.float32)), jnp.asarray(h), jnp.full((nk, nk, 1, 1), ex, jnp.complex64), T=T)
 
 
 _NE = 16.0
@@ -103,12 +100,7 @@ class TestODA:
 
     def test_finite_temperature_oda_optimizes_free_energy(self):
         h = jnp.array([[[[-1.0, 0.0], [0.0, 1.0]]]], dtype=jnp.complex64)
-        K = HartreeFockKernel(
-            weights=jnp.ones((1, 1), dtype=jnp.float32),
-            hamiltonian=h,
-            coulomb_q=jnp.zeros((1, 1, 1, 1), dtype=jnp.complex64),
-            T=1.0,
-        )
+        K = HartreeFockKernel(mesh_for(jnp.ones((1, 1), dtype=jnp.float32)), h, jnp.zeros((1, 1, 1, 1), dtype=jnp.complex64), T=1.0)
         P0 = jnp.array([[[[1.0, 0.0], [0.0, 0.0]]]], dtype=jnp.complex64)
         result = solve_scf(
             K, P0, 1.0,
@@ -160,12 +152,7 @@ class TestSCFConfigValidation:
     @pytest.mark.parametrize("n_electrons", [0.0, 2.0])
     def test_scf_exact_empty_and_full_fillings(self, n_electrons):
         h = jnp.array([[[[-1.0, 0.0], [0.0, 1.0]]]], dtype=jnp.complex64)
-        K = HartreeFockKernel(
-            weights=jnp.ones((1, 1), dtype=jnp.float32),
-            hamiltonian=h,
-            coulomb_q=jnp.zeros((1, 1, 1, 1), dtype=jnp.complex64),
-            T=0.1,
-        )
+        K = HartreeFockKernel(mesh_for(jnp.ones((1, 1), dtype=jnp.float32)), h, jnp.zeros((1, 1, 1, 1), dtype=jnp.complex64), T=0.1)
         result = solve_scf(K, jnp.zeros_like(h), n_electrons)
         assert result.converged
         expected = np.eye(2) * (n_electrons / 2.0)
@@ -179,6 +166,7 @@ def test_density_from_fock_only_resolves_mu_for_nonzero_shift(
     monkeypatch, level_shift, expected_solves,
 ):
     import jax
+
     import hartreefock._jax.scf as scf
 
     calls = []

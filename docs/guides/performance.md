@@ -20,22 +20,21 @@ import time
 import numpy as np
 import hartreefock as hf
 
-nk, kmax = 48, 1.2
-k = np.linspace(-kmax, kmax, nk, endpoint=False) + kmax / nk
-kx, ky = np.meshgrid(k, k, indexing="ij")
-weights = np.full((nk, nk), (2 * kmax / nk) ** 2 / (2 * np.pi) ** 2)
-eps = 0.5 * (kx**2 + ky**2)
-dk = k[1] - k[0]
-q1 = dk * (np.arange(nk) - nk // 2)
-q = np.hypot(*np.meshgrid(q1, q1, indexing="ij"))
-V = 5.0 * 2 * np.pi * np.where(q > 0, np.tanh(10 * q) / np.where(q > 0, q, 1.0), 10.0)
+mesh = hf.Mesh.square(kmax=1.2, nk=48)
+eps = 0.5 * np.sum(mesh.ks**2, axis=-1)
 h = eps[..., None, None] * np.eye(2)
+
+
+def V(q):
+    return 5.0 * 2 * np.pi * np.where(q > 0, np.tanh(10 * q) / np.where(q > 0, q, 1.0), 10.0)
+
+
 n = 0.02
 P0 = (eps < 2 * np.pi * n)[..., None, None] * np.diag([0.7, 0.3])
 
 results = {}
 for dtype, tol in ((np.complex64, 1e-5), (np.complex128, 1e-9)):
-    kernel = hf.HartreeFockKernel(weights, h.astype(dtype), V[..., None, None], T=0.005)
+    kernel = hf.HartreeFockKernel(mesh, h.astype(dtype), V, T=0.005)
     config = hf.SCFConfig(density_tol=tol)
     for attempt in ("first call", "second call"):
         t = time.perf_counter()

@@ -1,6 +1,5 @@
-import numpy as np
-
 import jax.numpy as jnp
+import numpy as np
 
 from hartreefock._jax.linalg import eigh
 from hartreefock._jax.utils import selfenergy_fft

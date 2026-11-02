@@ -10,12 +10,12 @@ transfer longer than the mesh wraps around to a short one. For the states
 that matter to be right, `kmax` must exceed $2k_F$ of the most occupied
 band; for a spin-polarized state that is $2\sqrt2\,k_F$ of the balanced
 one. States near the edge of the mesh always see the wrap ([tutorial
-step 1](../tutorial/01-exchange.md)). The superlattice kernel's
+step 1](../tutorial/01-exchange.md)). A plane-wave kernel's
 convolution is zero-padded and does not wrap.
 
 ## The q = 0 cell of a singular interaction
 
-`coulomb_q` at $q = 0$ must be finite. For $1/q$ the cell average
+A tabulated `V` at $q = 0$ must be finite. For $1/q$ the cell average
 $4\ln(1 + \sqrt2)/\Delta k$ gives exchange energies that converge as
 $1/n_k$; extrapolate them ([tutorial step 1](../tutorial/01-exchange.md)).
 The same cell couples each k-point to itself, which at low temperature

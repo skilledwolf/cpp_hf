@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from _meshes import mesh_for
 from scipy.special import xlogy
 
 import hartreefock.stability as module
@@ -18,13 +19,9 @@ from hartreefock import (
 )
 
 
-
-
 def saddle_kernel():
     """P = I/2 is exactly self-consistent, but exchange > 4T makes it a saddle."""
-    return HartreeFockKernel(
-        np.ones((1, 1)), np.zeros((1, 1, 2, 2), complex), np.ones((1, 1, 1, 1)), T=0.1
-    )
+    return HartreeFockKernel(mesh_for(np.ones((1, 1))), np.zeros((1, 1, 2, 2), complex), np.ones((1, 1, 1, 1)), T=0.1)
 
 
 HALF = np.eye(2, dtype=complex)[None, None] / 2
@@ -51,20 +48,14 @@ def test_degenerate_paramagnet_has_negative_exchange_curvature():
 def test_contact_response_matches_its_explicit_tangent():
     # For two flavours the identity contact has tangent response -g D; its
     # scalar Hartree part is removed by the fixed-trace constraint.
-    kernel = HartreeFockKernel(
-        np.ones((1, 1)), np.zeros((1, 1, 2, 2), complex), np.zeros((1, 1, 1, 1)), T=0.1,
-        contact_terms=[(1.0, np.eye(2), np.eye(2))],
-    )
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), np.zeros((1, 1, 2, 2), complex), np.zeros((1, 1, 1, 1)), T=0.1, contact_terms=[(1.0, np.eye(2), np.eye(2))])
     s = stability_analysis(kernel, HALF, 1.0)
     np.testing.assert_allclose(s.lowest_eigenvalue, -1.5, atol=1e-10)
 
 
 def test_repulsive_hartree_minimum_has_positive_curvature():
     h = np.diag([-0.2, 0.3]).astype(complex)[None, None]
-    kernel = HartreeFockKernel(
-        np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=0.5, include_exchange=False,
-        include_hartree=True, reference_density=np.zeros_like(h), hartree_matrix=3 * np.eye(2),
-    )
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), hartree=3 * np.eye(2), T=0.5, exchange=False, reference=np.zeros_like(h))
     config = SCFConfig(acceleration="rdiis", density_tol=1e-9, comm_tol=1e-9)
     r = solve_scf(kernel, HALF, 1.0, config=config)
     s = stability_analysis(kernel, np.asarray(r.density), 1.0)
@@ -73,9 +64,9 @@ def test_repulsive_hartree_minimum_has_positive_curvature():
 
 
 def test_curvature_matches_free_energy_second_difference():
-    w = np.array([[0.2, 0.8]])
-    h = np.broadcast_to(np.array([[-0.2, 0.1j], [-0.1j, 0.3]]), (1, 2, 2, 2)).copy()
-    kernel = HartreeFockKernel(w, h, np.full((1, 2, 1, 1), 0.2), T=0.4)
+    w = np.full((2, 2), 0.25)
+    h = np.broadcast_to(np.array([[-0.2, 0.1j], [-0.1j, 0.3]]), (2, 2, 2, 2)).copy()
+    kernel = HartreeFockKernel(mesh_for(w), h, np.full((2, 2, 1, 1), 0.2), T=0.4)
     config = SCFConfig(acceleration="rdiis", density_tol=1e-11, comm_tol=1e-11)
     r = solve_scf(kernel, np.zeros_like(h), 0.8, config=config)
     P = np.asarray(r.density)
@@ -93,24 +84,19 @@ def test_curvature_matches_free_energy_second_difference():
 
 def test_nonstationary_density_does_not_receive_stability_certificate():
     h = np.diag([-1.0, 1.0])[None, None].astype(complex)
-    kernel = HartreeFockKernel(np.ones((1, 1)), h, np.full((1, 1, 1, 1), 0.1), T=0.2)
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.full((1, 1, 1, 1), 0.1), T=0.2)
     s = stability_analysis(kernel, HALF, 1.0)
     assert not s.stationary and s.stable is None
 
 
 def test_precision_limited_kernel_is_not_given_a_tight_certificate():
-    kernel = HartreeFockKernel(
-        np.ones((1, 1), np.float32), np.zeros((1, 1, 2, 2), np.complex64),
-        np.zeros((1, 1, 1, 1), np.float32), T=0.1,
-    )
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1), np.float32)), np.zeros((1, 1, 2, 2), np.complex64), np.zeros((1, 1, 1, 1), np.float32), T=0.1)
     with pytest.raises(ValueError, match="precision"):
         stability_analysis(kernel, HALF, 1.0)
 
 
 def _flat_nine_band_kernel():
-    return HartreeFockKernel(
-        np.ones((1, 1)), np.zeros((1, 1, 9, 9), complex), np.zeros((1, 1, 1, 1)), T=0.1
-    )
+    return HartreeFockKernel(mesh_for(np.ones((1, 1))), np.zeros((1, 1, 9, 9), complex), np.zeros((1, 1, 1, 1)), T=0.1)
 
 
 def test_failed_iterative_eigenvalue_solve_has_no_certificate(monkeypatch):
@@ -159,9 +145,7 @@ def test_recovery_escapes_exact_degenerate_paramagnetic_saddle():
 
 @pytest.mark.parametrize("number", [1e-6, 2.0 - 1e-6])
 def test_flat_band_minimum_is_certified_near_empty_and_full_filling(number):
-    kernel = HartreeFockKernel(
-        np.ones((1, 1)), np.zeros((1, 1, 2, 2), complex), np.zeros((1, 1, 1, 1)), T=0.1
-    )
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), np.zeros((1, 1, 2, 2), complex), np.zeros((1, 1, 1, 1)), T=0.1)
     r = solve_minimum(kernel, np.eye(2)[None, None] * (number / 2), number)
     assert r.converged and r.stability.stable and r.escapes == 0
     assert r.stability.density_residual < 1e-12
@@ -169,11 +153,11 @@ def test_flat_band_minimum_is_certified_near_empty_and_full_filling(number):
 
 def test_fermi_escape_preserves_unstable_tangent_and_saturated_occupations():
     rng = np.random.default_rng(37)
-    Q = np.linalg.qr(rng.normal(size=(1, 2, 4, 4)) + 1j * rng.normal(size=(1, 2, 4, 4)))[0]
+    Q = np.linalg.qr(rng.normal(size=(2, 2, 4, 4)) + 1j * rng.normal(size=(2, 2, 4, 4)))[0]
     F = (Q * np.array([-4.0, -0.03, 0.03, 4.0])) @ Q.conj().swapaxes(-2, -1)
-    w = np.array([[0.2, 0.8]])
+    w = np.full((2, 2), 0.25)
     P = module._host_fermi_density(F, w, 2.0, 0.1)[0]
-    kernel = HartreeFockKernel(w, F, np.ones((1, 2, 1, 1)), T=0.1, reference_density=P)
+    kernel = HartreeFockKernel(mesh_for(w), F, np.ones((2, 2, 1, 1)), T=0.1, reference=P)
     s = stability_analysis(kernel, P, 2.0)
     assert s.stationary and s.stable is False
     ops = fock_operators(kernel)
@@ -209,7 +193,7 @@ def test_recovery_rejects_conflicting_symmetry_constraint():
 
 def test_nonstationary_iterate_is_not_reported_as_a_minimum():
     h = np.diag([-1.0, 1.0]).astype(complex)[None, None]
-    kernel = HartreeFockKernel(np.ones((1, 1)), h, np.full((1, 1, 1, 1), 0.1), T=0.1)
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.full((1, 1, 1, 1), 0.1), T=0.1)
     config = SCFConfig(acceleration="rdiis", max_iter=1, density_tol=1e-8, comm_tol=1e-8)
     r = solve_minimum(kernel, HALF, 1.0, config=config)
     assert not r.converged and r.stability is None
@@ -286,10 +270,7 @@ def test_free_energy_describes_returned_state_not_stale_history(monkeypatch):
 def test_escape_requires_descent_above_kernel_precision(monkeypatch):
     """A float32 kernel must not accept float64-only progress."""
     engine = module._jax
-    kernel = HartreeFockKernel(
-        np.ones((1, 1), np.float32), np.zeros((1, 1, 2, 2), np.complex64),
-        np.zeros((1, 1, 1, 1), np.float32), T=1e-9,
-    )
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1), np.float32)), np.zeros((1, 1, 2, 2), np.complex64), np.zeros((1, 1, 1, 1), np.float32), T=1e-9)
     density = HALF.astype(np.complex64)
     local = engine.solve_scf(saddle_kernel(), HALF, 1.0)
     local = replace(local, density=density, fock=np.zeros_like(density), energy=0.0)

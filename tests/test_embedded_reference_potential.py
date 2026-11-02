@@ -6,10 +6,10 @@ potential mode.
 """
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
-
-import jax.numpy as jnp
+from _meshes import mesh_for
 
 from hartreefock import HartreeFockKernel
 from hartreefock._jax.fock import build_fock, hf_energy
@@ -35,15 +35,7 @@ def _setup(nk=4, n_orb=2, T=0.05, seed=0):
 
 def _make_kernels(*, embed: bool, with_hartree: bool, refP_arg, **extra):
     weights, h, Vq, HH, T, refP = _setup()
-    return HartreeFockKernel(
-        weights=weights, hamiltonian=h, coulomb_q=Vq, T=T,
-        include_hartree=with_hartree,
-        include_exchange=True,
-        reference_density=refP_arg if refP_arg is not None else refP,
-        hartree_matrix=HH if with_hartree else None,
-        embed_reference_potential=embed,
-        **extra,
-    )
+    return HartreeFockKernel(mesh_for(weights), h, Vq, hartree=HH if with_hartree else False, T=T, exchange=True, reference=refP_arg if refP_arg is not None else refP, embed_reference=embed, **extra)
 
 
 def _build_F(kernel, P):
@@ -65,7 +57,7 @@ def _build_F(kernel, P):
 def test_embedded_F_at_refP_equals_h_plus_V_HF_refP(with_hartree):
     kernel_embed = _make_kernels(
         embed=True, with_hartree=with_hartree, refP_arg=None,
-        center_embedded_hartree=False,
+        center_hartree=False,
     )
     kernel_plain = _make_kernels(
         embed=False, with_hartree=with_hartree, refP_arg=None,
@@ -87,7 +79,7 @@ def test_embedded_F_at_refP_equals_h_plus_V_HF_refP(with_hartree):
 def test_F_difference_independent_of_P(with_hartree):
     kernel_embed = _make_kernels(
         embed=True, with_hartree=with_hartree, refP_arg=None,
-        center_embedded_hartree=False,
+        center_hartree=False,
     )
     kernel_plain = _make_kernels(
         embed=False, with_hartree=with_hartree, refP_arg=None,
@@ -109,18 +101,8 @@ def test_F_difference_independent_of_P(with_hartree):
 def test_embedding_no_op_when_refP_zero(with_hartree):
     weights, h, Vq, HH, T, _ = _setup()
     refP_zero = np.zeros_like(h)
-    if not with_hartree:
-        kwargs = dict(include_hartree=False, hartree_matrix=None)
-    else:
-        kwargs = dict(include_hartree=True, hartree_matrix=HH)
-    kernel = HartreeFockKernel(
-        weights=weights, hamiltonian=h, coulomb_q=Vq, T=T,
-        include_exchange=True,
-        reference_density=refP_zero,
-        embed_reference_potential=True,
-        center_embedded_hartree=False,
-        **kwargs,
-    )
+    kwargs = dict(hartree=HH) if with_hartree else {}
+    kernel = HartreeFockKernel(mesh_for(weights), h, Vq, T=T, exchange=True, reference=refP_zero, embed_reference=True, center_hartree=False, **kwargs)
     np.testing.assert_allclose(np.asarray(kernel.h), h, atol=1e-6)
     assert float(kernel.embedded_energy_offset) == 0.0
 
@@ -130,13 +112,9 @@ def test_embedding_no_op_when_refP_zero(with_hartree):
 def test_embedded_energy_correction_uses_the_current_particle_count(center, density_scale):
     weights, h, Vq, HH, T, refP = _setup(nk=2)
     weights *= .3  # The gauge correction uses physical, unnormalized counts.
-    common = dict(weights=weights, hamiltonian=h, coulomb_q=Vq, T=T,
-                  include_hartree=True, hartree_matrix=HH)
-    embedded = HartreeFockKernel(
-        **common, reference_density=refP, embed_reference_potential=True,
-        center_embedded_hartree=center,
-    )
-    standard = HartreeFockKernel(**common, reference_density=np.zeros_like(refP))
+    common = dict(mesh=mesh_for(weights), h=h, V=Vq, T=T, hartree=HH)
+    embedded = HartreeFockKernel(reference=refP, embed_reference=True, center_hartree=center, **common)
+    standard = HartreeFockKernel(reference=np.zeros_like(refP), **common)
     P = density_scale * refP
 
     def evaluate(kernel, density):
@@ -173,24 +151,8 @@ def test_embedding_includes_contact_reference_potential_and_offset():
     sigma_z = np.diag([1.0, -1.0]).astype(np.complex64)
     contact_terms = [(1.0, sigma_z, sigma_z)]
 
-    kernel_plain = HartreeFockKernel(
-        weights,
-        h,
-        Vq,
-        T=0.1,
-        reference_density=refP,
-        contact_terms=contact_terms,
-    )
-    kernel_embed = HartreeFockKernel(
-        weights,
-        h,
-        Vq,
-        T=0.1,
-        reference_density=refP,
-        contact_terms=contact_terms,
-        embed_reference_potential=True,
-        center_embedded_hartree=False,
-    )
+    kernel_plain = HartreeFockKernel(mesh_for(weights), h, Vq, T=0.1, reference=refP, contact_terms=contact_terms)
+    kernel_embed = HartreeFockKernel(mesh_for(weights), h, Vq, T=0.1, reference=refP, contact_terms=contact_terms, embed_reference=True, center_hartree=False)
 
     # For O_i = O_j = sigma_z and rho_bar = diag(0.8, 0.2):
     # g O_i tr(O_j rho_bar) - g O_i rho_bar O_j = diag(-0.2, -0.8).

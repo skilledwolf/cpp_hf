@@ -6,12 +6,13 @@ kernelspec:
 
 # Superlattices
 
-{class}`~hartreefock.SuperlatticeHartreeFockKernel` handles moiré problems
-in a plane-wave basis $|\mathbf k, \mathbf G, \alpha\rangle$: $\mathbf k$ runs
+{class}`~hartreefock.HartreeFockKernel` with `plane_waves=` handles moiré
+problems in a plane-wave basis $|\mathbf k, \mathbf G, \alpha\rangle$: $\mathbf k$ runs
 over a mesh of the superlattice Brillouin zone, $\mathbf G$ over a set of
 its reciprocal-lattice vectors and $\alpha$ over orbitals, so the matrix
-dimension is `D = n_G · dim_orb` with the `G` index slow. The solvers are
-the same as for the dense kernel.
+dimension is `D = n_G · dim_orb` with the `G` index slow. The kernel, its
+solvers and its `exchange`, `hartree` and `potential` maps are the ones of
+the dense case.
 
 ## Theory
 
@@ -31,22 +32,19 @@ kernel's periodic convolution, it does not wrap around. The Hartree term
 couples the $\Delta\mathbf G$ components of the zone-averaged density and is
 the same at every $\mathbf k$.
 
-**On this page:** {class}`~hartreefock.SuperlatticeHartreeFockKernel`,
-`potential_at`.
+**On this page:** {class}`~hartreefock.HartreeFockKernel` with
+`plane_waves`, `potential_at`.
 
 ## Arguments
 
 | Argument | Meaning |
 | --- | --- |
-| `weights` | uniform `(nkx, nky)` quadrature weights on the superlattice zone |
-| `hamiltonian` | `(nkx, nky, D, D)`, the G index slow |
-| `coulomb_V` | a callable `|q| -> V(|q|)`; the kernel tabulates it on the momentum transfers it needs, `q = 0` included |
-| `g_fractional` | `(n_G, 2)` integers: the G-basis in units of the reciprocal lattice vectors |
-| `reciprocal_basis` | `(2, 2)` matrix `B` with `G_cart = B @ G_frac` |
-| `coulomb_V_orbital` | optional `|q| -> V_αβ(|q|)` for an orbital-resolved interaction, such as between layers |
-| `hartree_matrix`, `hartree_matrix_orbital` | optional Hartree couplings between G components; by default taken from the interaction with `q = 0` dropped (scalar) or kept (orbital-resolved) |
-| `hartree_degeneracy` | the flavour multiplicity of the Hartree term, for spin and valley left out of the basis |
-| `k_origin` | fractional coordinates of the first mesh point, `(-0.5, -0.5)` by default; the mesh is `k_origin + i / nk` |
+| `mesh` | `Mesh.bz(B, nk)`, the superlattice zone; `B` holds the reciprocal lattice vectors as columns, `G_cart = B @ G_frac` |
+| `h` | `(nk, nk, D, D)`, the G index slow |
+| `V` | a callable `\|q\| -> V`, scalar or `(..., dim_orb, dim_orb)` for an orbital-resolved interaction such as between layers; the kernel tabulates it on the momentum transfers it needs, `q = 0` included |
+| `plane_waves` | `(n_G, 2)` integers: the G-basis in units of the reciprocal lattice vectors |
+| `hartree` | `True` for the Hartree coupling between G components taken from `V`, with `q = 0` dropped (scalar) or kept (orbital-resolved); or the `(n_G, n_G)` or `(n_G, n_G, dim_orb, dim_orb)` matrix |
+| `degeneracy` | the flavour multiplicity of the Hartree term, for spin and valley left out of the basis |
 
 ## The empty lattice
 
@@ -65,16 +63,14 @@ import hartreefock as hf
 nk, rs = 16, 1.0
 B = np.eye(2)                                            # reciprocal lattice vectors, units of k_F
 g_frac = np.array([(i, j) for i in range(-3, 4) for j in range(-3, 4) if i * i + j * j <= 5])
-f = -0.5 + np.arange(nk) / nk                            # the default k_origin
-k = np.stack(np.meshgrid(f, f, indexing="ij"), axis=-1) @ B.T
-p = k[:, :, None, :] - (g_frac @ B.T)[None, None]        # absolute momentum of each basis state
+mesh = hf.Mesh.bz(B, nk, gamma=True)                    # samples Γ
+p = mesh.ks[:, :, None, :] - (g_frac @ B.T)[None, None]  # absolute momentum of each basis state
 eps = (p**2).sum(-1)
 diag = np.arange(len(g_frac))
 h = np.zeros((nk, nk, len(g_frac), len(g_frac)), complex)
 h[:, :, diag, diag] = eps
 
-dk = 1.0 / nk
-weights = np.full((nk, nk), dk**2 / (2 * np.pi) ** 2)
+dk = mesh.dk[0]
 e2 = np.sqrt(2) * rs
 
 
@@ -83,7 +79,7 @@ def coulomb(q):
     return 2 * np.pi * e2 * np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
 
 
-kernel = hf.SuperlatticeHartreeFockKernel(weights, h, coulomb, g_frac, B, T=0.002)
+kernel = hf.HartreeFockKernel(mesh, h, coulomb, plane_waves=g_frac, T=0.002)
 n = 1 / (4 * np.pi)                                      # one spin with k_F = 1
 P0 = np.zeros_like(h)
 P0[:, :, diag, diag] = eps < 1

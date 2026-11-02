@@ -18,20 +18,19 @@ import os
 
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
+import jax
 import numpy as np
 import pytest
-
-import jax
 
 jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
+from _meshes import mesh_for
 
 from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig
 from hartreefock._jax import solve, solve_scf
 from hartreefock._jax.fock import build_fock
 from hartreefock._jax.utils import density_matrix_from_fock
-
 
 # --------------------------------------------------------------------------
 # Problem builders (float64)
@@ -42,12 +41,7 @@ def _two_band_decoupled(nk=2, T=0.1, ex=0.25):
     h = np.zeros((nk, nk, 2, 2), dtype=np.complex128)
     h[..., 0, 0] = -0.5
     h[..., 1, 1] = 0.5
-    return HartreeFockKernel(
-        weights=jnp.ones((nk, nk), dtype=jnp.float64),
-        hamiltonian=jnp.asarray(h),
-        coulomb_q=jnp.full((nk, nk, 1, 1), ex, dtype=jnp.complex128),
-        T=T,
-    )
+    return HartreeFockKernel(mesh_for(jnp.ones((nk, nk), dtype=jnp.float64)), jnp.asarray(h), jnp.full((nk, nk, 1, 1), ex, dtype=jnp.complex128), T=T)
 
 
 def _contact(g=0.3, nk=2, T=0.05):
@@ -60,13 +54,7 @@ def _contact(g=0.3, nk=2, T=0.05):
             h[i, j, 0, 1] = 0.4 + 0.1 * (i + j)
             h[i, j, 1, 0] = 0.4 + 0.1 * (i + j)
     sz = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=np.complex128)
-    return HartreeFockKernel(
-        weights=jnp.ones((nk, nk), dtype=jnp.float64),
-        hamiltonian=jnp.asarray(h),
-        coulomb_q=jnp.full((nk, nk, 1, 1), 0.1, dtype=jnp.complex128),
-        T=T,
-        contact_terms=[(0.3, sz, sz)],
-    )
+    return HartreeFockKernel(mesh_for(jnp.ones((nk, nk), dtype=jnp.float64)), jnp.asarray(h), jnp.full((nk, nk, 1, 1), 0.1, dtype=jnp.complex128), T=T, contact_terms=[(0.3, sz, sz)])
 
 
 def _multiband(nk, nb, T, ex, seed):
@@ -80,12 +68,7 @@ def _multiband(nk, nb, T, ex, seed):
         for j in range(nk):
             hk = np.diag(diag).astype(np.complex128) + A * (np.cos(kx[i]) + np.cos(kx[j]))
             h[i, j] = 0.5 * (hk + hk.conj().T)
-    return HartreeFockKernel(
-        weights=jnp.ones((nk, nk), dtype=jnp.float64),
-        hamiltonian=jnp.asarray(h),
-        coulomb_q=jnp.full((nk, nk, 1, 1), ex, dtype=jnp.complex128),
-        T=T,
-    )
+    return HartreeFockKernel(mesh_for(jnp.ones((nk, nk), dtype=jnp.float64)), jnp.asarray(h), jnp.full((nk, nk, 1, 1), ex, dtype=jnp.complex128), T=T)
 
 
 def _dirac(nk=4, m=0.3, v=1.0, T=0.1, ex=0.5):
@@ -96,12 +79,7 @@ def _dirac(nk=4, m=0.3, v=1.0, T=0.1, ex=0.5):
     h[..., 1, 1] = -m
     h[..., 0, 1] = v * (KX - 1j * KY)
     h[..., 1, 0] = v * (KX + 1j * KY)
-    return HartreeFockKernel(
-        weights=jnp.ones((nk, nk), dtype=jnp.float64),
-        hamiltonian=jnp.asarray(h),
-        coulomb_q=jnp.full((nk, nk, 1, 1), ex, dtype=jnp.complex128),
-        T=T,
-    )
+    return HartreeFockKernel(mesh_for(jnp.ones((nk, nk), dtype=jnp.float64)), jnp.asarray(h), jnp.full((nk, nk, 1, 1), ex, dtype=jnp.complex128), T=T)
 
 
 def _comm_rms(F, P, w2d):
@@ -273,16 +251,7 @@ class TestNewtonConvergence:
 
     def test_zero_orbital_gradient_still_relaxes_occupations(self):
         h = jnp.zeros((1, 1, 2, 2), dtype=jnp.complex128)
-        K = HartreeFockKernel(
-            weights=jnp.ones((1, 1), dtype=jnp.float64),
-            hamiltonian=h,
-            coulomb_q=jnp.zeros((1, 1, 1, 1), dtype=jnp.complex128),
-            T=0.5,
-            include_hartree=True,
-            include_exchange=False,
-            reference_density=jnp.zeros_like(h),
-            hartree_matrix=jnp.eye(2, dtype=jnp.float64),
-        )
+        K = HartreeFockKernel(mesh_for(jnp.ones((1, 1), dtype=jnp.float64)), h, jnp.zeros((1, 1, 1, 1), dtype=jnp.complex128), hartree=jnp.eye(2, dtype=jnp.float64), T=0.5, exchange=False, reference=jnp.zeros_like(h))
         P0 = jnp.array([[[[1.0, 0.0], [0.0, 0.0]]]], dtype=jnp.complex128)
         r = solve(
             K, P0, 1.0,
@@ -327,12 +296,7 @@ class TestNewtonDispatch:
         h = np.zeros((2, 2, 2, 2), dtype=np.complex64)
         h[..., 0, 0] = -0.5
         h[..., 1, 1] = 0.5
-        K = HartreeFockKernel(
-            weights=jnp.ones((2, 2), dtype=jnp.float32),
-            hamiltonian=jnp.asarray(h),
-            coulomb_q=jnp.full((2, 2, 1, 1), 0.25, dtype=jnp.complex64),
-            T=0.1,
-        )
+        K = HartreeFockKernel(mesh_for(jnp.ones((2, 2), dtype=jnp.float32)), jnp.asarray(h), jnp.full((2, 2, 1, 1), 0.25, dtype=jnp.complex64), T=0.1)
         P0 = jnp.zeros_like(K.h)
         with pytest.warns(UserWarning, match="float64"):
             solve(K, P0, 2.0, config=SolverConfig(max_iter=2, optimizer="newton"))

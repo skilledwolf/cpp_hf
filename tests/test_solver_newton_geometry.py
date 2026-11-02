@@ -1,17 +1,29 @@
 """Finite-difference and adjoint checks of the production Newton operator."""
+import jax
 import numpy as np
 import pytest
-import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
+from _meshes import mesh_for
 from scipy.linalg import expm
 
 from hartreefock import HartreeFockKernel, SolverConfig
 from hartreefock._jax import solve
-from hartreefock._jax.newton import _deflation_bias, _deflation_response, _joint_hvp, _joint_inner_product, _scale_joint_step_to_bounds
-from hartreefock._jax.riemannian import _density_from_Qp, _fock_in_orbital_basis, _herm, _skew_hermitian
+from hartreefock._jax.newton import (
+    _deflation_bias,
+    _deflation_response,
+    _joint_hvp,
+    _joint_inner_product,
+    _scale_joint_step_to_bounds,
+)
 from hartreefock._jax.occupations import _occupation_gradient, _project_occ
+from hartreefock._jax.riemannian import (
+    _density_from_Qp,
+    _fock_in_orbital_basis,
+    _herm,
+    _skew_hermitian,
+)
 
 
 def _random_geometry(seed=12):
@@ -109,12 +121,9 @@ def test_fraction_to_boundary_preserves_whole_model_and_particle_tangent():
 
 
 def test_stiff_coupled_occupation_problem_converges():
-    w = jnp.array([[0.2, 0.7], [0.4, 0.1]])
+    w = jnp.full((2, 2), 0.35)
     h = jnp.broadcast_to(jnp.array([[-0.6, 0.12], [0.12, 0.4]], dtype=jnp.complex128), (2, 2, 2, 2))
-    K = HartreeFockKernel(weights=w, hamiltonian=h, coulomb_q=jnp.zeros((2, 2, 1, 1)),
-                         T=0.2, include_exchange=False, include_hartree=True,
-                         reference_density=jnp.zeros_like(h),
-                         hartree_matrix=jnp.array([[30., 3.], [3., 20.]]))
+    K = HartreeFockKernel(mesh_for(w), h, jnp.zeros((2, 2, 1, 1)), hartree=jnp.array([[30., 3.], [3., 20.]]), T=0.2, exchange=False, reference=jnp.zeros_like(h))
     result = solve(K, jnp.zeros_like(h), 1.2, config=SolverConfig(optimizer="newton", max_iter=120, tol_grad=1e-8))
     assert bool(result.converged)
     np.testing.assert_allclose(jnp.sum(w[..., None] * result.p), 1.2, atol=1e-11)
@@ -124,8 +133,7 @@ def test_stiff_coupled_occupation_problem_converges():
 @pytest.mark.parametrize("optimizer", ["cg", "newton"])
 def test_projected_solver_keeps_density_spectrum_and_stationarity_consistent(optimizer):
     h = jnp.array([[[[-0.3, 0.4j], [-0.4j, 0.2]]]], dtype=jnp.complex128)
-    K = HartreeFockKernel(weights=jnp.ones((1, 1)), hamiltonian=h,
-                         coulomb_q=jnp.full((1, 1, 1, 1), 0.3), T=0.4)
+    K = HartreeFockKernel(mesh_for(jnp.ones((1, 1))), h, jnp.full((1, 1, 1, 1), 0.3), T=0.4)
     project = lambda A: A * jnp.eye(2)
     tolerance = 1e-8 if optimizer == "cg" else 1e-9
     result = solve(K, jnp.zeros_like(h), 1.0, config=SolverConfig(
@@ -147,12 +155,7 @@ def test_projected_degenerate_trials_use_the_physical_entropy(optimizer):
                             [np.sin(theta), -np.cos(theta)]])
     project = lambda A: 0.5 * (A + symmetry @ A @ symmetry)
     h = jnp.zeros((1, 1, 2, 2), dtype=jnp.complex128)
-    kernel = HartreeFockKernel(
-        weights=jnp.ones((1, 1)), hamiltonian=h,
-        coulomb_q=jnp.zeros((1, 1, 1, 1)), T=0.1,
-        reference_density=jnp.zeros_like(h), include_exchange=False,
-        include_hartree=True, hartree_matrix=jnp.diag(jnp.array([2.0, 0.0])),
-    )
+    kernel = HartreeFockKernel(mesh_for(jnp.ones((1, 1))), h, jnp.zeros((1, 1, 1, 1)), hartree=jnp.diag(jnp.array([2.0, 0.0])), T=0.1, reference=jnp.zeros_like(h), exchange=False)
 
     def run(max_iter):
         return solve(kernel, jnp.zeros_like(h), 1.0, config=SolverConfig(

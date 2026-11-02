@@ -34,16 +34,17 @@ $$
 with $\mathrm K$ and $\mathrm E$ the complete elliptic integrals, and the
 exchange energy per electron is $-8\sqrt2/(3\pi r_s)$ Ry $= -1.2004/r_s$ Ry.
 
-**You will use:** {class}`~hartreefock.HartreeFockKernel`,
+**You will use:** {class}`~hartreefock.Mesh`, {class}`~hartreefock.HartreeFockKernel`,
 {func}`~hartreefock.solve_scf`, {class}`~hartreefock.SCFConfig`.
 :::
 
 ## The mesh, the Hamiltonian and the interaction
 
-Everything lives on an `nk × nk` mesh. The Hamiltonian `h` has shape
-`(nk, nk, nb, nb)`, here two bands for the two spins. The weights make a
-k-sum an integral, $\sum_k w_k f(\mathbf k) = \int d^2k/(2\pi)^2 f(\mathbf k)$,
-and the particle number is counted with them.
+Everything lives on an `nk × nk` {class}`~hartreefock.Mesh`. The
+Hamiltonian `h` has shape `(nk, nk, nb, nb)`, here two bands for the two
+spins. The mesh weights make a k-sum an integral,
+$\sum_k w_k f(\mathbf k) = \int d^2k/(2\pi)^2 f(\mathbf k)$, and the
+particle number is counted with them.
 
 ```{code-cell} ipython3
 import numpy as np
@@ -53,30 +54,25 @@ import hartreefock as hf
 
 
 def electron_gas(nk, kmax, rs):
-    """The 2D electron gas on an nk x nk mesh over [-kmax, kmax)², in units of k_F and E_F."""
-    k = np.linspace(-kmax, kmax, nk, endpoint=False) + kmax / nk
-    kx, ky = np.meshgrid(k, k, indexing="ij")
-    dk = k[1] - k[0]
-    weights = np.full((nk, nk), dk**2 / (2 * np.pi) ** 2)
-    eps = kx**2 + ky**2
-    h = eps[..., None, None] * np.eye(2)
+    """The 2D electron gas on an nk x nk mesh over [-kmax, kmax]², in units of k_F and E_F."""
+    mesh = hf.Mesh.square(kmax, nk)
+    eps = np.sum(mesh.ks**2, axis=-1)
+    dk = mesh.dk[0]
 
-    # V(q) on the grid of transfers, q = 0 at index nk // 2. The q = 0 cell
-    # holds the average of 1/q over the cell, 4 ln(1 + √2) / dk.
-    q1 = dk * (np.arange(nk) - nk // 2)
-    q = np.hypot(*np.meshgrid(q1, q1, indexing="ij"))
-    e2 = np.sqrt(2) * rs
-    inv_q = np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
-    return weights, h, (2 * np.pi * e2 * inv_q)[..., None, None], k, eps
+    def V(q):  # 2π e²/q; at q = 0 the average of 1/q over a cell, 4 ln(1 + √2) / dk
+        return 2 * np.pi * np.sqrt(2) * rs * np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
+
+    return mesh, eps[..., None, None] * np.eye(2), V, eps
 
 
 n = 1 / (2 * np.pi)            # k_F = 1 with two spins: n = k_F² / 2π
-weights, h, coulomb_q, k, eps = electron_gas(nk=96, kmax=2.1, rs=1.0)
-print(h.shape, coulomb_q.shape)
+mesh, h, V, eps = electron_gas(nk=96, kmax=2.1, rs=1.0)
+print(h.shape, mesh.transfer_distance_grid.shape)
 ```
 
-`V(q)` is given on the grid of momentum transfers, with the spacing of the
-k-mesh. Shape `(nk, nk, 1, 1)` is one interaction for all orbitals. The
+The kernel samples `V(|q|)` on the momentum transfers of the mesh,
+`mesh.transfer_grid`, with the spacing of the k-mesh and `q = 0` at index
+`nk // 2`. A scalar `V` is one interaction for all orbitals. The
 exchange term is a convolution over the mesh, so transfers wrap around:
 the mesh must reach beyond $2k_F$ (here `kmax = 2.1`) for the transfers
 between occupied states to be represented.
@@ -88,7 +84,7 @@ a solve; by default it keeps exchange only. The start is the filled Fermi
 disc:
 
 ```{code-cell} ipython3
-kernel = hf.HartreeFockKernel(weights, h, coulomb_q, T=0.002)
+kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
 P0 = (eps < 1)[..., None, None] * np.eye(2)
 result = hf.solve_scf(kernel, P0, n)
 print(result.converged, result.n_iter, "iterations,  mu =", round(float(result.mu), 4))
@@ -105,11 +101,10 @@ def sigma_exact(k, rs):
     return -2 * np.sqrt(2) * rs / np.pi * np.where(k < 1, inside, outside)
 
 
-row = len(k) // 2
-sigma = (np.asarray(result.fock) - h)[:, row, 0, 0].real
+sigma = (np.asarray(result.fock) - h)[:, mesh.center_index, 0, 0].real
 
 fig, ax = plt.subplots()
-ax.plot(k, sigma, "o", ms=3, label="hartreefock")
+ax.plot(mesh.kx, sigma, "o", ms=3, label="hartreefock")
 kk = np.linspace(-2.1, 2.1, 801)
 ax.plot(kk, sigma_exact(kk, 1.0), color="C1", label="closed form")
 ax.set(xlabel="$k_x / k_F$", ylabel=r"$\Sigma_x / E_F$", title="$r_s = 1$")
@@ -131,11 +126,11 @@ Rydberg, at $r_s = 1$ where $E_F = 2$ Ry:
 
 ```{code-cell} ipython3
 def energies(nk, rs=1.0):
-    w, h, V, _, eps = electron_gas(nk, kmax=2.1, rs=rs)
-    kernel = hf.HartreeFockKernel(w, h, V, T=0.002)
+    mesh, h, V, eps = electron_gas(nk, kmax=2.1, rs=rs)
+    kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
     P0 = (eps < 1)[..., None, None] * np.eye(2)
     r = hf.solve_scf(kernel, P0, n)
-    kinetic = np.einsum("ij,ijab,ijba->", w, h, np.asarray(r.density)).real
+    kinetic = np.einsum("ij,ijab,ijba->", mesh.weights, h, np.asarray(r.density)).real
     to_ry = 2 / rs**2 / n        # E_F k_F² per area -> Ry per electron
     return kinetic * to_ry, (float(r.energy) - kinetic) * to_ry
 
@@ -169,8 +164,8 @@ ax.legend();
 print(f"extrapolated exchange energy: {extrapolated:.5f} Ry")
 print(f"exact:                        {exact:.5f} Ry   (-8√2 / 3π)")
 print(f"relative error:               {abs(extrapolated / exact - 1):.1e}")
-inner = (np.abs(k) < 1.5) & (np.abs(np.abs(k) - 1) > 0.1)
-dev = np.abs(sigma - sigma_exact(k, 1.0))[inner].max()
+inner = (np.abs(mesh.kx) < 1.5) & (np.abs(np.abs(mesh.kx) - 1) > 0.1)
+dev = np.abs(sigma - sigma_exact(mesh.kx, 1.0))[inner].max()
 print(f"largest Σ_x error for |k| < 1.5 k_F, away from k_F: {dev:.4f} E_F")
 ```
 

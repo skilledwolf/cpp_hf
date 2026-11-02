@@ -7,13 +7,14 @@ import numpy as np
 import pytest
 
 import hartreefock as hf
-from hartreefock.superlattice import SuperlatticeHartreeFockKernel, upsample_density
-
+from hartreefock.superlattice import upsample_density
 
 G = np.array([[0, 0], [1, 0], [0, -1], [-1, 1]])
 B = np.array([[1.0, 0.35], [0.1, 0.8]])
-NX, NY, NO = 3, 4, 2
-W = 1.0 / (NX * NY)
+NX = NY = 4
+NO = 2
+MESH = hf.Mesh.bz(B, NX, gamma=True)
+W = MESH.weight
 C = np.array([[1.0, 0.7], [0.7, 1.3]])
 DIST = np.array([[0.0, 0.4], [0.4, 0.0]])
 
@@ -75,9 +76,9 @@ def band_hamiltonian(rng):
     return h
 
 
-def make_kernel(h, **kw):
+def make_kernel(h, V=scalar, **kw):
     kw.setdefault("T", 0.1)
-    return SuperlatticeHartreeFockKernel(np.full((NX, NY), W), h, scalar, G, B, **kw)
+    return hf.HartreeFockKernel(MESH, h, V, plane_waves=G, **kw)
 
 
 @pytest.mark.parametrize("orb", [False, True], ids=["scalar", "orbital"])
@@ -86,26 +87,26 @@ def test_exchange_and_hartree_match_direct_sums(orb):
     D = len(G) * NO
     kernel = make_kernel(
         hermitian(rng, (NX, NY, D, D)),
-        include_hartree=True,
-        coulomb_V_orbital=orbital if orb else None,
-        hartree_degeneracy=2.0,
+        orbital if orb else scalar,
+        hartree=True,
+        reference=np.zeros((NX, NY, D, D)),
+        degeneracy=2.0,
     )
     rho = hermitian(rng, (NX, NY, D, D))
     np.testing.assert_allclose(kernel.exchange(rho), direct_exchange(rho, orbital if orb else scalar), atol=1e-13)
     # Scalar Hartree drops q = 0; orbital Hartree keeps the gate-screened q = 0 blocks.
-    HH = kernel.HH_GG_orbital if orb else kernel.HH_GG
+    HH = kernel.HH
     assert (np.abs(np.diagonal(HH, axis1=0, axis2=1)).max() > 0) == orb
     np.testing.assert_allclose(kernel.hartree(rho), direct_hartree(rho, HH, 2.0), atol=1e-13)
 
     # The off-mesh plane-wave sum reproduces the mesh potential on mesh points.
-    k_mesh = np.stack(np.meshgrid(np.arange(NX) / NX - 0.5, np.arange(NY) / NY - 0.5, indexing="ij"), -1)
-    off_mesh = kernel.potential_at(rho, k_mesh.reshape(-1, 2)).reshape(rho.shape)
+    off_mesh = kernel.potential_at(rho, MESH.frac_grid.reshape(-1, 2)).reshape(rho.shape)
     np.testing.assert_allclose(off_mesh, kernel.potential(rho), atol=1e-13)
 
 
 @pytest.mark.parametrize(
     "case",
-    [dict(), dict(coulomb_V_orbital=orbital), dict(embed_reference_potential=True, center_embedded_hartree=False)],
+    [dict(), dict(V=orbital), dict(embed_reference=True, center_hartree=False)],
     ids=["scalar", "orbital", "embedded"],
 )
 def test_fock_matches_the_kernel_linear_maps(x64, case):
@@ -118,8 +119,7 @@ def test_fock_matches_the_kernel_linear_maps(x64, case):
     D = len(G) * NO
     ref = np.broadcast_to(0.5 * np.eye(D), (NX, NY, D, D))
     kernel = make_kernel(
-        hermitian(rng, (NX, NY, D, D)), include_hartree=True, reference_density=ref,
-        hartree_degeneracy=2.0, **case,
+        hermitian(rng, (NX, NY, D, D)), hartree=True, reference=ref, degeneracy=2.0, **case,
     )
     P = hermitian(rng, (NX, NY, D, D))
     F, _ = hf.fock_operators(kernel).evaluate(P)
@@ -145,11 +145,9 @@ def test_embedding_solves_standard_hf(x64):
     h = band_hamiltonian(rng)
     D = h.shape[-1]
     ref = np.broadcast_to(0.5 * np.eye(D), h.shape)
-    common = dict(include_hartree=True, coulomb_V_orbital=orbital, hartree_degeneracy=2.0)
-    plain = make_kernel(h, **common)
-    embedded = make_kernel(
-        h, reference_density=ref, embed_reference_potential=True, center_embedded_hartree=False, **common,
-    )
+    common = dict(V=orbital, hartree=True, degeneracy=2.0)
+    plain = make_kernel(h, reference=np.zeros_like(ref), **common)
+    embedded = make_kernel(h, reference=ref, embed_reference=True, center_hartree=False, **common)
     n = 0.3 * D * W * NX * NY
     config = hf.SCFConfig(max_iter=300, density_tol=1e-10, comm_tol=1e-10, mixing=0.3, acceleration="rdiis")
     r_plain = hf.solve_scf(plain, ref, n, config=config)
@@ -175,9 +173,8 @@ def test_upsample_density_is_exact_for_band_limited_densities():
         return 0.5 * (P + P.conj().swapaxes(-1, -2)), (origin, origin)
 
     (Pc, oc), (Pf, of) = density(4), density(8)
-    h_c, h_f = np.zeros((4, 4, D, D)), np.zeros((8, 8, D, D))
-    coarse = SuperlatticeHartreeFockKernel(np.full((4, 4), 1 / 16), h_c, scalar, G, B, T=0.1, k_origin=oc)
-    fine = SuperlatticeHartreeFockKernel(np.full((8, 8), 1 / 64), h_f, scalar, G, B, T=0.1, k_origin=of)
+    coarse, fine = hf.Mesh.bz(B, 4), hf.Mesh.bz(B, 8)
+    assert np.isclose(coarse.frac[0], oc[0]) and np.isclose(fine.frac[0], of[0])
     np.testing.assert_allclose(upsample_density(Pc, coarse, fine), Pf, atol=1e-13)
 
 
@@ -216,7 +213,7 @@ def test_ffi_exchange_matches_pure_jax(x64, orb):
         pytest.skip("built without the XLA FFI headers")
     rng = np.random.default_rng(11)
     D = len(G) * NO
-    kernel = make_kernel(hermitian(rng, (NX, NY, D, D)), coulomb_V_orbital=orbital if orb else None)
+    kernel = make_kernel(hermitian(rng, (NX, NY, D, D)), orbital if orb else scalar)
     layout = kernel.layout
     kernel_fn = sl._make_ffi_superlattice_fock_fn(layout, len(G), NO, NX, NY)
     if orb:

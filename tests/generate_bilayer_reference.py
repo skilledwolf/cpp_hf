@@ -11,25 +11,22 @@ Usage:
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 # Force CPU for reproducibility.
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
-import numpy as np
-
-import jax
-import jax.numpy as jnp
-
 import contimod as cm
 import contimod.materials.graphene.symmetry as cg_symmetry
+import jax
+import jax.numpy as jnp
+import numpy as np
+from _meshes import mesh_for
 from contimod.meanfield import SelfEnergySeed
 from contimod.utils.spectrum_fermi import FermiParams
 
 import hartreefock
-
 from hartreefock import SCFConfig
 from hartreefock._jax import solve_scf
 from hartreefock.symmetry import make_project_fn
@@ -112,14 +109,7 @@ def init_density_from_seed(h_run, seed_op):
 
 def solve_scf_point(h_template, weights, Vq, n_electrons, P0, project_fn):
     """Solve one HF point with the reference SCF solver."""
-    kernel = hartreefock.HartreeFockKernel(
-        weights=weights,
-        hamiltonian=np.asarray(h_template.hs),
-        coulomb_q=Vq,
-        T=TEMPERATURE,
-        include_hartree=False,
-        include_exchange=True,
-    )
+    kernel = hartreefock.HartreeFockKernel(mesh_for(weights), np.asarray(h_template.hs), Vq, T=TEMPERATURE, exchange=True)
     config = SCFConfig(
         max_iter=500,
         mixing=0.2,

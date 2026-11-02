@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
+from _meshes import mesh_for
+from scipy.special import expit
 
 from hartreefock import (
     HartreeFockKernel,
-    SuperlatticeHartreeFockKernel,
     SCFConfig,
     SolverConfig,
     fock_operators,
     solve,
     solve_scf,
 )
-from scipy.special import expit
-
 from hartreefock._jax.utils import find_chemical_potential as _find_mu
-
 
 
 def find_chemical_potential(bands, weights, n_electrons, T):
@@ -39,24 +39,19 @@ def _exchange_expected(weights, interaction, density):
     return np.fft.ifftshift(expected_fft_order, axes=(0, 1))
 
 
-def _nonuniform_exchange_problem():
-    weights = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float64)
+def _exchange_problem():
+    weights = np.full((2, 2), 0.25)
     interaction = np.array([[1.0, 2.0], [3.0, 5.0]], dtype=np.float64)
     density = np.arange(1, 5, dtype=np.float64).reshape(2, 2)
     h = np.zeros((2, 2, 1, 1), dtype=np.complex128)
-    kernel = HartreeFockKernel(
-        weights=weights,
-        hamiltonian=h,
-        coulomb_q=interaction[..., None, None],
-        T=0.1,
-    )
+    kernel = HartreeFockKernel(mesh_for(weights), h, interaction[..., None, None], T=0.1)
     P = density[..., None, None].astype(np.complex128)
     expected = _exchange_expected(weights, interaction, density)
     return kernel, P, expected
 
 
 def test_exchange_weights_the_integrated_density():
-    kernel, P, expected = _nonuniform_exchange_problem()
+    kernel, P, expected = _exchange_problem()
     F, _ = fock_operators(kernel).evaluate(P)
     np.testing.assert_allclose(
         F[..., 0, 0].real,
@@ -109,12 +104,7 @@ def test_scf_config_rejects_invalid_domains(kwargs):
 @pytest.fixture
 def two_band_kernel():
     h = np.zeros((2, 2, 2, 2), dtype=np.complex128)
-    return HartreeFockKernel(
-        weights=np.full((2, 2), 0.25),
-        hamiltonian=h,
-        coulomb_q=np.zeros((2, 2, 1, 1)),
-        T=0.1,
-    )
+    return HartreeFockKernel(mesh_for(np.full((2, 2), 0.25)), h, np.zeros((2, 2, 1, 1)), T=0.1)
 
 
 @pytest.mark.parametrize("solver", [solve, solve_scf])
@@ -165,7 +155,7 @@ def test_chemical_potential_bounds_cover_low_and_high_fillings(target, bandwidth
 @pytest.mark.parametrize("acceleration", ["linear", "oda", "rdiis"])
 def test_zero_temperature_scf_preserves_flat_band_particle_count(acceleration):
     h = np.zeros((1, 1, 2, 2), complex)
-    kernel = HartreeFockKernel(np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=0.0)
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), T=0.0)
     config = SCFConfig(
         acceleration=acceleration, max_iter=4, mixing=1.0, density_tol=1e-12, comm_tol=1e-12
     )
@@ -186,24 +176,16 @@ def test_embedded_energy_correction_recovers_standard_hf(kind, center, density_s
     HH = np.array([[0.5, -0.1], [-0.1, 0.5]])
     refP = np.zeros_like(h)
     refP[..., 0, 0], refP[..., 1, 1] = 0.4, 0.6
-    common = dict(weights=weights, hamiltonian=h, T=0.05, include_hartree=True)
+    mesh = mesh_for(weights)
     if kind == "regular":
-        common.update(coulomb_q=np.full((2, 2, 1, 1), 0.3, complex), hartree_matrix=HH)
-        factory = HartreeFockKernel
+        common = dict(V=np.full((2, 2, 1, 1), 0.3, complex), hartree=HH)
     else:
-        common.update(
-            coulomb_V=lambda q: np.full_like(q, 0.3),
-            g_fractional=np.zeros((1, 2)),
-            reciprocal_basis=np.eye(2),
-            hartree_matrix_orbital=HH[None, None],
-        )
-        factory = SuperlatticeHartreeFockKernel
-
-    embedded = factory(
-        **common, reference_density=refP, embed_reference_potential=True,
-        center_embedded_hartree=center,
-    )
-    standard = factory(**common, reference_density=np.zeros_like(refP))
+        mesh = replace(mesh, periodic=True)
+        common = dict(V=lambda q: np.full_like(q, 0.3), plane_waves=np.zeros((1, 2)),
+                      hartree=HH[None, None])
+    common.update(mesh=mesh, h=h, T=0.05)
+    embedded = HartreeFockKernel(**common, reference=refP, embed_reference=True, center_hartree=center)
+    standard = HartreeFockKernel(**common, reference=np.zeros_like(refP))
     P = density_scale * refP
 
     F_standard, E_standard = fock_operators(standard).evaluate(P)

@@ -1,17 +1,24 @@
 """Hartree-Fock kernel: the precomputed problem the solvers run on.
 
-The kernel is plain NumPy; the jitted solvers read ``_as_args()``.  The
-exchange it describes is::
+One kernel covers a dense orbital basis and a superlattice plane-wave basis.
+The exchange it describes is::
 
-    Σ(k) = -Σ_q V(k - q) w(q) [P(q) - refP(q)]
+    Σ(k) = -Σ_q V(k - q) w [P(q) - refP(q)]
 
-so the quadrature weight multiplies the density, never the interaction.
+with ``w`` the mesh weight.  On a dense basis it is a periodic FFT
+convolution on the mesh; with ``plane_waves`` the basis state ``|k, G, α⟩``
+carries momentum ``k - G`` and the convolution runs on an extended grid
+(:mod:`hartreefock.superlattice`).
+
+The kernel is plain NumPy; the jitted solvers read ``_as_args()``.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import scipy.fft
+
+from .mesh import Mesh
 
 
 def validate_temperature(T, *, context: str = "T") -> float:
@@ -41,6 +48,10 @@ def _namespace(A):
     return np
 
 
+def _herm(A):
+    return 0.5 * (A + _namespace(A).conj(A.swapaxes(-1, -2)))
+
+
 def exchange_self_energy(VR_shifted: np.ndarray, wP) -> np.ndarray:
     """``Σ = -IFFT[FFT(w·P) · VR]`` with the shift phase already in ``VR``.
 
@@ -65,88 +76,167 @@ def contact_self_energy(rho_bar, contact_g, contact_Oi, contact_Oj) -> tuple[np.
 
 
 class HartreeFockKernel:
-    """Precomputed arrays for the Hartree-Fock solver loop.
+    """The Hartree-Fock problem on a k-mesh, precomputed for the solvers.
 
     Parameters
     ----------
-    weights : (nk1, nk2) array
-        Non-negative BZ quadrature weights with a positive sum.
-    hamiltonian : (nk1, nk2, nb, nb) array
-        Single-particle Hamiltonian on the meshgrid.
-    coulomb_q : (nk1, nk2, 1, 1) or (nk1, nk2, nb, nb) array
-        Interaction ``V(q)`` on the same (centred) meshgrid.
+    mesh : Mesh
+        The k-mesh; its weights are the BZ quadrature.
+    h : (nk, nk, D, D) array
+        Single-particle Hamiltonian on the mesh.  With ``plane_waves``,
+        ``D = n_G · n_orb`` with the G index slow.
+    V : callable or array, optional
+        The interaction.  A callable maps ``|q|`` to ``V`` of shape
+        ``|q|.shape`` (one coupling) or ``|q|.shape + (n, n)`` (orbital
+        resolved, ``n`` the orbitals of one plane-wave block).  A dense
+        kernel also takes the table on :attr:`Mesh.transfer_grid`, shape
+        ``(nk, nk)``, ``(nk, nk, 1, 1)`` or ``(nk, nk, D, D)``.  ``None``:
+        no long-range term, for contact-only models.
     T : float
         Temperature (energy units).
-    include_hartree, include_exchange : bool
-        Mean-field channels.  At least one must be on.
-    reference_density : (nk1, nk2, nb, nb) array, optional
-        Density subtracted before building the self-energy.  Required with
-        Hartree or with ``embed_reference_potential``.
-    hartree_matrix : (nb, nb) array, optional
-        Orbital Hartree coupling; required with ``include_hartree``.
+    plane_waves : (n_G, 2) int array, optional
+        Superlattice basis ``G`` in units of the reciprocal lattice vectors,
+        which are the columns of ``mesh.cell``.
+    exchange : bool
+        Include the exchange (Fock) term.
+    hartree : bool or array
+        Include the Hartree term.  ``True`` derives the coupling from ``V``:
+        ``V(q = 0)`` on a dense basis (all orbitals coupled for a scalar
+        ``V``); ``V`` at the ``G`` differences with a plane-wave basis (the
+        uniform ``G = 0`` term dropped for a scalar ``V``, kept for an
+        orbital one).  An array sets it: ``(D, D)`` dense, ``(n_G, n_G)`` or
+        ``(n_G, n_G, n, n)`` with plane waves.  Needs ``reference``.
+    degeneracy : float
+        Flavour multiplicity of the Hartree term, for flavours folded out of
+        the basis.
+    reference : (nk, nk, D, D) array, optional
+        Density subtracted before building the self-energy.
+    embed_reference : bool
+        Add ``V_HF[reference]`` to ``h`` once, so the loop solves standard
+        HF: ``F = h + V_HF[P]``.  The reported energy then exceeds standard
+        HF by ``embedded_energy_offset - embedded_hartree_shift * n`` (``n``
+        is ``Σ_k w_k Tr P_k``); ``mu_standard = mu + embedded_hartree_shift``.
+    center_hartree : bool
+        With embedding, subtract the mean diagonal of the reference Hartree
+        potential from ``h`` (a gauge choice that keeps E_F near zero).
     contact_terms : sequence of (g, O_i, O_j), optional
-        q-independent interactions ``H = ½ g O_i ⊗ O_j``.  Each term
-        contributes ``σ_H = g O_i tr(O_j ρ̄)`` and ``σ_F = -g O_i ρ̄ O_j``
-        with ``ρ̄ = Σ_k w_k (P_k - refP_k)``.  Pass an asymmetric pair plus
-        its h.c. partner for a Hermitian term with ``O_i ≠ O_j``.
-    embed_reference_potential : bool
-        Add ``V_HF[refP]`` (Hartree, exchange and contact) to ``h`` once, so
-        the loop solves standard HF: ``F = h + V_HF[P]``.  The reported
-        energy then exceeds standard HF by ``embedded_energy_offset -
-        embedded_hartree_shift * n_electrons`` (``n_electrons`` is
-        ``Σ_k w_k Tr P_k``); ``mu_standard = mu + embedded_hartree_shift``.
-    center_embedded_hartree : bool
-        With embedding, subtract the orbital mean of ``J[refP]`` from ``h``
-        (a gauge choice that keeps E_F near zero).
+        q-independent interactions ``H = ½ g O_i ⊗ O_j`` (dense basis).  Each
+        contributes ``σ_H = g O_i tr(O_j ρ̄)`` and ``σ_F = -g O_i ρ̄ O_j`` with
+        ``ρ̄ = Σ_k w_k (P_k - refP_k)``.  Pass an asymmetric pair plus its h.c.
+        partner for a Hermitian term with ``O_i ≠ O_j``.
     """
 
     def __init__(
         self,
-        weights,
-        hamiltonian,
-        coulomb_q,
+        mesh: Mesh,
+        h,
+        V=None,
+        *,
         T: float,
-        include_hartree: bool = False,
-        include_exchange: bool = True,
-        reference_density=None,
-        hartree_matrix=None,
+        plane_waves=None,
+        exchange: bool = True,
+        hartree=False,
+        degeneracy: float = 1.0,
+        reference=None,
+        embed_reference: bool = False,
+        center_hartree: bool = True,
         contact_terms=None,
-        embed_reference_potential: bool = False,
-        center_embedded_hartree: bool = True,
     ):
+        if not isinstance(mesh, Mesh):
+            raise TypeError(f"mesh must be a hartreefock.Mesh, got {type(mesh).__name__}")
+        self.mesh = mesh
         self.T = validate_temperature(T)
-        h = np.asarray(hamiltonian)
-        if not np.iscomplexobj(h):
-            h = h.astype(np.result_type(h.dtype, np.complex64))
-        real_dtype = h.real.dtype
-        self.h = h
+        self.superlattice = plane_waves is not None
+        h = np.asarray(h)
+        if self.superlattice or not np.iscomplexobj(h):
+            h = h.astype(np.complex128 if self.superlattice else np.result_type(h.dtype, np.complex64))
+        if h.ndim != 4 or h.shape[:2] != mesh.shape or h.shape[-1] != h.shape[-2]:
+            raise ValueError(f"h must have shape {mesh.shape} + (D, D), got {h.shape}")
+        self.h = np.ascontiguousarray(h)
+        D = h.shape[-1]
+        self.w2d = mesh.weights.astype(h.real.dtype)
+        self.weights_b = self.w2d[..., None, None]
+        self.weight_sum = float(self.w2d.sum())
 
-        w2d = np.asarray(weights, dtype=real_dtype)
-        if w2d.shape != h.shape[:2]:
-            raise ValueError(f"weights must have shape {h.shape[:2]}, got {w2d.shape}")
-        if not np.all(np.isfinite(w2d)):
-            raise ValueError("weights must be finite")
-        if np.any(w2d < 0):
-            raise ValueError("weights must be non-negative")
-        if float(w2d.sum()) <= 0:
-            raise ValueError("weights must have a positive sum")
-        self.w2d = w2d
-        self.weights_b = w2d[..., None, None]
-        self.weight_sum = float(w2d.sum())
+        self.include_exchange = bool(exchange)
+        self.include_hartree = hartree is not False and hartree is not None
+        if not (self.include_exchange or self.include_hartree):
+            raise ValueError("HartreeFockKernel needs exchange or Hartree.")
+        if V is None and (self.superlattice or (self.include_hartree and hartree is True)):
+            raise ValueError("V is required with plane_waves or hartree=True")
+        self.degeneracy = float(degeneracy)
 
-        self.include_hartree = bool(include_hartree)
-        self.include_exchange = bool(include_exchange)
-        if not (self.include_hartree or self.include_exchange):
-            raise ValueError("HartreeFockKernel must include at least one of Hartree or exchange.")
+        if reference is not None:
+            ref = np.asarray(reference, dtype=h.dtype)
+            if ref.shape != h.shape:
+                raise ValueError(f"reference must have shape {h.shape}, got {ref.shape}")
+            self.refP = ref
+        else:
+            if self.include_hartree:
+                raise ValueError("hartree needs a reference density")
+            # Read-only zero view: no (nk, nk, D, D) allocation.
+            self.refP = np.broadcast_to(np.zeros((), dtype=h.dtype), h.shape)
+        self.has_reference_density = reference is not None
 
-        Vq = np.asarray(coulomb_q)
+        self._contact(contact_terms, D)
+        if self.superlattice:
+            self._init_plane_waves(np.asarray(plane_waves, dtype=np.int64), V, hartree)
+        else:
+            self._init_dense(V, hartree)
+
+        self.embed_reference = bool(embed_reference)
+        self.center_hartree = bool(center_hartree)
+        self.embedded_energy_offset = 0.0
+        self.embedded_hartree_shift = 0.0
+        if self.embed_reference:
+            if reference is None:
+                raise ValueError("embed_reference needs a reference density")
+            self._embed_reference()
+
+    # ----- construction -------------------------------------------------------------
+
+    def _contact(self, terms, D) -> None:
+        # Always at least one (possibly zero) term, so jitted shapes are static.
+        terms = list(terms or ()) or [(0.0, np.zeros((D, D)), np.zeros((D, D)))]
+        if self.superlattice and any(float(t[0]) for t in terms):
+            raise ValueError("contact_terms need a dense basis")
+        gs, Ois, Ojs = [], [], []
+        for k, term in enumerate(terms):
+            if len(term) != 3:
+                raise ValueError(f"contact_terms[{k}] must be (g, O_i, O_j); got len={len(term)}")
+            g_t, Oi_t, Oj_t = term
+            for name, arr in (("O_i", Oi_t), ("O_j", Oj_t)):
+                if np.shape(arr) != (D, D):
+                    raise ValueError(
+                        f"contact_terms[{k}].{name} must have shape {(D, D)}, got {np.shape(arr)}"
+                    )
+            gs.append(float(g_t))
+            Ois.append(np.asarray(Oi_t, dtype=self.h.dtype))
+            Ojs.append(np.asarray(Oj_t, dtype=self.h.dtype))
+        self.contact_g = np.asarray(gs, dtype=self.h.real.dtype)
+        self.contact_Oi = np.stack(Ois)
+        self.contact_Oj = np.stack(Ojs)
+
+    def _init_dense(self, V, hartree) -> None:
+        h, mesh = self.h, self.mesh
+        D = h.shape[-1]
+        if V is None:
+            Vq = np.zeros((*mesh.shape, 1, 1))
+        else:
+            Vq = np.asarray(V(mesh.transfer_distance_grid) if callable(V) else V)
+            if Vq.shape == mesh.shape:
+                Vq = Vq[..., None, None]
+            if Vq.shape not in ((*mesh.shape, 1, 1), (*mesh.shape, D, D)):
+                raise ValueError(
+                    f"V on the mesh must have shape {mesh.shape}, {(*mesh.shape, 1, 1)} "
+                    f"or {(*mesh.shape, D, D)}, got {Vq.shape}"
+                )
         if np.iscomplexobj(Vq) and float(np.max(np.abs(Vq.imag))) <= 1e-8:
             Vq = Vq.real
         self.exchange_hermitian_channel_packing = bool(
             Vq.shape[-2:] == (1, 1) and not np.iscomplexobj(Vq)
         )
-        n0, n1 = int(h.shape[0]), int(h.shape[1])
-        phase = _shift_phase(n0, n1)
+        phase = _shift_phase(*mesh.shape)
         shifted = np.fft.fftn(Vq.astype(h.dtype), axes=(0, 1)) * phase
         # A sampled radial V(q) need not obey periodic inversion on even
         # oblique grids.  The quadratic energy only sees the self-adjoint part
@@ -155,127 +245,174 @@ class HartreeFockKernel:
             np.linalg.norm(shifted.imag) / max(np.linalg.norm(shifted), np.finfo(float).tiny)
         )
         self.VR_shifted = np.ascontiguousarray(shifted.real.astype(h.dtype))
-        self.VR = self.VR_shifted / phase
 
-        self.has_reference_density = reference_density is not None
-        if self.has_reference_density:
-            ref = np.asarray(reference_density, dtype=h.dtype)
-            if ref.shape != h.shape:
-                raise ValueError(f"reference_density must have shape {h.shape}, got {ref.shape}")
-            self.refP = ref
+        real = h.real.dtype
+        if not self.include_hartree:
+            HH = np.zeros((D, D))
+        elif hartree is True:
+            c = mesh.center_index
+            V0 = np.real(Vq[c, c])
+            HH = V0[0, 0] * np.ones((D, D)) if V0.shape == (1, 1) else V0
         else:
-            # Read-only zero view: no (nk1, nk2, nb, nb) allocation.
-            self.refP = np.broadcast_to(np.zeros((), dtype=h.dtype), h.shape)
+            HH = np.asarray(hartree, dtype=real)
+            if HH.shape != (D, D):
+                raise ValueError(f"hartree must have shape {(D, D)}, got {HH.shape}")
+        self.HH = self.degeneracy * np.asarray(HH, dtype=real)
 
-        n_orb = int(h.shape[-1])
-        if self.include_hartree:
-            if hartree_matrix is None:
-                raise ValueError("include_hartree=True requires hartree_matrix to be provided")
-            if not self.has_reference_density:
-                raise ValueError("include_hartree=True requires reference_density to be provided")
-            HH = np.asarray(hartree_matrix, dtype=real_dtype)
-            if HH.shape != (n_orb, n_orb):
-                raise ValueError(f"hartree_matrix must have shape {(n_orb, n_orb)}, got {HH.shape}")
-            self.HH = HH
+    def _init_plane_waves(self, g, V, hartree) -> None:
+        from .superlattice import build_extended_layout
+
+        mesh, D = self.mesh, self.h.shape[-1]
+        if not mesh.periodic:
+            raise ValueError("plane_waves need a periodic (Brillouin-zone) mesh")
+        if not callable(V):
+            raise ValueError("with plane_waves, V must be a callable of |q|")
+        n_G = g.shape[0]
+        if D % n_G:
+            raise ValueError(f"h dimension D={D} is not a multiple of n_G={n_G}")
+        self.plane_waves, self.n_G, self.dim_orb = g, n_G, D // n_G
+        probe = np.asarray(V(np.ones(1)))
+        self.orbital_V = probe.ndim == 3
+        if self.orbital_V and probe.shape[1:] != (self.dim_orb, self.dim_orb):
+            raise ValueError(
+                f"V returns {probe.shape[1:]} blocks but a plane-wave block has "
+                f"{self.dim_orb} orbitals"
+            )
+        self.V = V
+        self.layout = build_extended_layout(g, mesh.cell, mesh.nk, mesh.nk, V, mesh.weight)
+        self._exchange_fn = None
+        self.HH = self._plane_wave_hartree(hartree)
+        # Dense-kernel solver inputs; the plane-wave Fock builder ignores them.
+        self.VR_shifted = np.zeros((*mesh.shape, 1, 1), dtype=np.complex128)
+        self.exchange_hermitian_channel_packing = False
+
+    def _plane_wave_hartree(self, hartree):
+        n_G, no = self.n_G, self.dim_orb
+        if not self.include_hartree:
+            return np.zeros((n_G, n_G))
+        if hartree is True:
+            g_cart = self.plane_waves @ self.mesh.cell.T
+            g_diff = np.linalg.norm(g_cart[:, None, :] - g_cart[None, :, :], axis=-1)
+            HH = np.asarray(self.V(g_diff), dtype=np.float64)
+            if not self.orbital_V:
+                np.fill_diagonal(HH, 0.0)  # the gate neutralises the uniform charge
         else:
-            self.HH = np.zeros((n_orb, n_orb), dtype=real_dtype)
+            HH = np.asarray(hartree, dtype=np.float64)
+        if HH.shape not in ((n_G, n_G), (n_G, n_G, no, no)):
+            raise ValueError(
+                f"hartree must have shape {(n_G, n_G)} or {(n_G, n_G, no, no)}, got {HH.shape}"
+            )
+        if not np.all(np.isfinite(HH)):
+            raise ValueError("hartree must be finite")
+        return np.ascontiguousarray(HH)
 
-        # Always at least one (possibly zero) contact term, so jitted shapes
-        # are static.
-        terms = list(contact_terms or ())
-        if not terms:
-            terms = [(0.0, np.zeros((n_orb, n_orb)), np.zeros((n_orb, n_orb)))]
-        gs, Ois, Ojs = [], [], []
-        for k, term in enumerate(terms):
-            if len(term) != 3:
-                raise ValueError(f"contact_terms[{k}] must be (g, O_i, O_j); got len={len(term)}")
-            g_t, Oi_t, Oj_t = term
-            for name, arr in (("O_i", Oi_t), ("O_j", Oj_t)):
-                if np.shape(arr) != (n_orb, n_orb):
-                    raise ValueError(
-                        f"contact_terms[{k}].{name} must have shape {(n_orb, n_orb)}, "
-                        f"got {np.shape(arr)}"
-                    )
-            gs.append(float(g_t))
-            Ois.append(np.asarray(Oi_t, dtype=h.dtype))
-            Ojs.append(np.asarray(Oj_t, dtype=h.dtype))
-        self.contact_g = np.asarray(gs, dtype=real_dtype)
-        self.contact_Oi = np.stack(Ois)
-        self.contact_Oj = np.stack(Ojs)
+    def _embed_reference(self) -> None:
+        ref = self.refP
+        V_ref = self.potential(ref)
+        # The offset uses the uncentred potential; centring separately
+        # subtracts shift * N(P) from the reported energy.
+        self.embedded_energy_offset = 0.5 * float(
+            np.einsum("ij,ijab,ijba->", self.w2d, V_ref, ref).real
+        )
+        if self.center_hartree and self.include_hartree:
+            self.embedded_hartree_shift = float(np.mean(np.diag(self._long_range_hartree(ref)).real))
+            V_ref = V_ref - self.embedded_hartree_shift * np.eye(V_ref.shape[-1])
+        self.h = np.ascontiguousarray(self.h + V_ref.astype(self.h.dtype))
 
-        self.embed_reference_potential = bool(embed_reference_potential)
-        self.center_embedded_hartree = bool(center_embedded_hartree)
-        self.embedded_energy_offset = 0.0
-        self.embedded_hartree_shift = 0.0
-        if self.embed_reference_potential:
-            if not self.has_reference_density:
-                raise ValueError("embed_reference_potential=True requires reference_density.")
-            self._embed_reference_potential()
-
-    def _embed_reference_potential(self) -> None:
-        ref, w2d, h = self.refP, self.w2d, self.h
-        offset = 0.0
-        h_eff = h.copy()
-        if self.include_hartree:
-            diag_R = np.einsum("ij,ijaa->a", w2d, ref).real
-            J_ref = self.HH @ diag_R
-            # The offset uses the uncentered potential; centering separately
-            # subtracts shift * N(P) from the reported energy.
-            offset += float(np.sum(J_ref * diag_R))
-            if self.center_embedded_hartree:
-                self.embedded_hartree_shift = float(np.mean(J_ref))
-                J_ref = J_ref - self.embedded_hartree_shift
-            h_eff += np.diag(J_ref).astype(h.dtype)
-        if self.include_exchange:
-            sigma_ref = exchange_self_energy(self.VR_shifted, self.weights_b * ref)
-            # The solvers only see the Hermitian part; keep h Hermitian too.
-            sigma_ref = 0.5 * (sigma_ref + np.conj(np.swapaxes(sigma_ref, -1, -2)))
-            offset += float(np.einsum("ij,ijab,ijba->", w2d, sigma_ref, ref).real)
-            h_eff += sigma_ref.astype(h.dtype)
-        rho_bar = np.einsum("ij,ijab->ab", w2d, ref)
-        sigma_contact = sum(contact_self_energy(rho_bar, self.contact_g, self.contact_Oi, self.contact_Oj))
-        offset += float(np.einsum("ab,ba->", sigma_contact, rho_bar).real)
-        h_eff += sigma_contact.astype(h.dtype)
-        self.h = h_eff
-        self.embedded_energy_offset = 0.5 * offset
-
-    # ----- linear maps (no reference subtraction) ---------------------------------
+    # ----- linear maps (no reference subtraction) -----------------------------------
 
     def exchange(self, rho) -> np.ndarray:
-        """Fock self-energy ``Σ_F[rho]`` on the mesh: FFT exchange plus the contact Fock part.
+        """Fock self-energy ``Σ_F[rho]`` on the mesh, with the contact Fock part.
 
-        Accepts NumPy or JAX ``rho``; with JAX input it traces, so it can sit
-        inside ``jax.jit`` / ``lax.scan``.
+        On a dense basis it accepts NumPy or JAX ``rho`` and traces under
+        ``jax.jit``.
         """
+        if self.superlattice:
+            if not self.include_exchange:
+                return np.zeros(self.h.shape, dtype=self.h.dtype)
+            if self._exchange_fn is None:
+                from ._jax.superlattice import make_superlattice_fock_fn
+
+                self._exchange_fn = make_superlattice_fock_fn(
+                    self.layout, self.n_G, self.dim_orb, self.mesh.nk, self.mesh.nk
+                )
+            return np.asarray(self._exchange_fn(np.asarray(rho)))
         xp = _namespace(rho)
         rho = xp.asarray(rho, dtype=self.h.dtype)
         out = xp.zeros(self.h.shape, dtype=self.h.dtype)
         if self.include_exchange:
             out = out + exchange_self_energy(self.VR_shifted, self.weights_b * rho)
         if np.any(self.contact_g):
-            out = out + self._contact(rho)[1][None, None]
+            out = out + self._contact_terms(rho)[1][None, None]
         return out
 
     def hartree(self, rho) -> np.ndarray:
-        """k-independent Hartree potential ``(nb, nb)``: orbital Hartree plus the contact Hartree part."""
-        rho = np.asarray(rho, dtype=self.h.dtype)
-        out = self._contact(rho)[0]
-        if self.include_hartree:
-            n = np.einsum("ij,ijaa->a", self.w2d, rho).real
-            out = out + np.diag(self.HH @ n)
+        """k-independent Hartree potential ``(D, D)``, with the contact Hartree part."""
+        out = self._long_range_hartree(rho)
+        if np.any(self.contact_g):
+            out = out + self._contact_terms(np.asarray(rho, dtype=self.h.dtype))[0]
         return out
 
     def potential(self, rho) -> np.ndarray:
         """Hermitized ``V_HF[rho] = Σ_F[rho] + σ_H[rho]``; the solver's Fock is ``h + potential(P - refP)``."""
-        V = self.exchange(rho) + self.hartree(rho)[None, None]
-        return 0.5 * (V + np.conj(np.swapaxes(V, -1, -2)))
+        return _herm(self.exchange(rho) + self.hartree(rho)[None, None])
 
-    def _contact(self, rho) -> tuple[np.ndarray, np.ndarray]:
+    def _long_range_hartree(self, rho) -> np.ndarray:
+        D = self.h.shape[-1]
+        if not self.include_hartree:
+            return np.zeros((D, D), dtype=self.h.dtype)
+        rho = np.asarray(rho, dtype=self.h.dtype)
+        if self.superlattice:
+            from .superlattice import superlattice_hartree
+
+            rho_bar = np.einsum("ij,ijab->ab", self.w2d, rho)
+            return superlattice_hartree(
+                rho_bar, self.layout.pair_to_delta, self.HH, degeneracy=self.degeneracy
+            )
+        n = np.einsum("ij,ijaa->a", self.w2d, rho).real
+        return np.diag(self.HH @ n).astype(self.h.dtype)
+
+    def _contact_terms(self, rho) -> tuple[np.ndarray, np.ndarray]:
         rho_bar = _namespace(rho).einsum("ij,ijab->ab", self.w2d, rho)
         return contact_self_energy(rho_bar, self.contact_g, self.contact_Oi, self.contact_Oj)
 
+    def potential_at(self, P, k_fractional, *, include_embedded_reference: bool = True):
+        """``V_HF[P - refP]`` at arbitrary fractional k (e.g. a band path); plane waves only.
+
+        Direct plane-wave sum ``O(n_k · nk² · n_G²)``: matrix elements of
+        ``Σ(k)`` in a truncated G basis are not gauge-periodic, so they cannot
+        be interpolated from the mesh.  With ``include_embedded_reference``
+        the embedded ``V_HF[refP]`` is added, so ``h_bare + potential_at``
+        reproduces the mean-field Hamiltonian of an embedded kernel.
+        """
+        if not self.superlattice:
+            raise ValueError("potential_at needs a plane-wave kernel")
+        from .superlattice import exchange_at
+
+        k = np.asarray(k_fractional, dtype=float)
+        squeeze = k.ndim == 1
+        k = np.atleast_2d(k)
+        if k.shape[-1] != 2:
+            raise ValueError(f"k_fractional must have shape (n, 2); got {k.shape}")
+        P = np.asarray(P, dtype=np.complex128)
+        refP = np.asarray(self.refP)
+        embedded = include_embedded_reference and self.embed_reference
+        rho = P if embedded else P - refP
+        sigma = exchange_at(self, rho, k) if self.include_exchange else 0.0
+        if self.include_hartree:
+            sigma = sigma + self.hartree(P - refP)[None]
+            if embedded:
+                sigma_ref = self.hartree(refP)
+                if self.center_hartree:
+                    sigma_ref = sigma_ref - self.embedded_hartree_shift * np.eye(self.h.shape[-1])
+                sigma = sigma + sigma_ref[None]
+        D = self.h.shape[-1]
+        sigma = _herm(np.broadcast_to(sigma, (k.shape[0], D, D)))
+        return sigma[0] if squeeze else sigma
+
     def _as_args(self) -> dict:
         """Dynamic solver inputs (passed to jitted functions, never captured)."""
+        D = self.h.shape[-1]
         return dict(
             h=self.h,
             weights_b=self.weights_b,
@@ -283,7 +420,7 @@ class HartreeFockKernel:
             VR=self.VR_shifted,
             T=self.T,
             refP=self.refP,
-            HH=self.HH,
+            HH=np.zeros((D, D)) if self.superlattice else self.HH,
             include_hartree=self.include_hartree,
             include_exchange=self.include_exchange,
             exchange_hermitian_channel_packing=self.exchange_hermitian_channel_packing,

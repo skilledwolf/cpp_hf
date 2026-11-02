@@ -1,9 +1,9 @@
 """Tests for the new direct-minimization solver."""
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
-
-import jax.numpy as jnp
+from _meshes import mesh_for
 
 from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig, SolveResult
 from hartreefock._jax import solve, solve_scf
@@ -25,12 +25,7 @@ def _make_two_band_kernel(nk=1, T=0.2, exchange_strength=0.25):
     hamiltonian[..., 0, 0] = -0.5
     hamiltonian[..., 1, 1] = 0.5
     coulomb_q = jnp.full((nk, nk, 1, 1), exchange_strength, dtype=jnp.complex64)
-    return HartreeFockKernel(
-        weights=weights,
-        hamiltonian=jnp.asarray(hamiltonian),
-        coulomb_q=coulomb_q,
-        T=T,
-    )
+    return HartreeFockKernel(mesh_for(weights), jnp.asarray(hamiltonian), coulomb_q, T=T)
 
 
 def _solve_problem(kernel, n_electrons=1.0, config=None):
@@ -171,12 +166,7 @@ class TestGradientStop:
         h[..., 0, 0] = -0.5
         h[..., 1, 1] = 0.5
         h[..., 0, 1] = h[..., 1, 0] = 0.2
-        return HartreeFockKernel(
-            weights=jnp.ones((nk, nk), dtype=jnp.float64),
-            hamiltonian=jnp.asarray(h),
-            coulomb_q=jnp.full((nk, nk, 1, 1), 0.5, dtype=jnp.complex128),
-            T=T,
-        )
+        return HartreeFockKernel(mesh_for(jnp.ones((nk, nk), dtype=jnp.float64)), jnp.asarray(h), jnp.full((nk, nk, 1, 1), 0.5, dtype=jnp.complex128), T=T)
 
     def _solve(self, config):
         kernel = self._hybridized_kernel()
@@ -255,13 +245,7 @@ class TestContactTerms:
         coulomb_q = jnp.full((nk, nk, 1, 1), 0.1, dtype=jnp.complex64)
         sigma_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex64)
         contact_terms = [(jnp.float32(g), sigma_z, sigma_z)]
-        return HartreeFockKernel(
-            weights=weights,
-            hamiltonian=jnp.asarray(h),
-            coulomb_q=coulomb_q,
-            T=T,
-            contact_terms=contact_terms,
-        )
+        return HartreeFockKernel(mesh_for(weights), jnp.asarray(h), coulomb_q, T=T, contact_terms=contact_terms)
 
     def test_direct_minimization_matches_scf_with_contact(self):
         """Both solvers must land on the same density and energy with a contact term.
@@ -386,7 +370,11 @@ class TestSpectralCayley:
 
     def test_spectral_unitary_matches_cayley_lu(self):
         """U(τ) from spectral form must match U(τ) from Cayley LU to roundoff."""
-        from hartreefock._jax.riemannian import _cayley_retract, _cayley_spectral_setup, _cayley_unitary_from_spectrum
+        from hartreefock._jax.riemannian import (
+            _cayley_retract,
+            _cayley_spectral_setup,
+            _cayley_unitary_from_spectrum,
+        )
         rng = np.random.default_rng(0)
         d = self._make_skew(rng, (3, 3, 6, 6))
         V_d, lam_d = _cayley_spectral_setup(d)
@@ -403,7 +391,11 @@ class TestSpectralCayley:
 
     def test_spectral_diag_matches_lu_diag(self):
         """diag(U(τ)†·Ft·U(τ)) from spectral form must match LU-built form."""
-        from hartreefock._jax.riemannian import _cayley_retract, _cayley_spectral_setup, _diag_UFU_from_spectrum
+        from hartreefock._jax.riemannian import (
+            _cayley_retract,
+            _cayley_spectral_setup,
+            _diag_UFU_from_spectrum,
+        )
         rng = np.random.default_rng(1)
         d = self._make_skew(rng, (3, 3, 6, 6))
         Ft = self._make_herm(rng, (3, 3, 6, 6))
@@ -425,7 +417,10 @@ class TestSpectralCayley:
 
     def test_spectral_unitary_is_unitary(self):
         """Even for τ=0 (eigh roundoff worst case), U†U must equal I."""
-        from hartreefock._jax.riemannian import _cayley_spectral_setup, _cayley_unitary_from_spectrum
+        from hartreefock._jax.riemannian import (
+            _cayley_spectral_setup,
+            _cayley_unitary_from_spectrum,
+        )
         rng = np.random.default_rng(2)
         d = self._make_skew(rng, (2, 2, 8, 8))
         V_d, lam_d = _cayley_spectral_setup(d)
@@ -446,16 +441,7 @@ class TestAdversarialStationarity:
     @staticmethod
     def _repulsive_hartree(T=0.5):
         h = jnp.zeros((1, 1, 2, 2), dtype=jnp.complex64)
-        return HartreeFockKernel(
-            weights=jnp.ones((1, 1), dtype=jnp.float32),
-            hamiltonian=h,
-            coulomb_q=jnp.zeros((1, 1, 1, 1), dtype=jnp.complex64),
-            T=T,
-            include_hartree=True,
-            include_exchange=False,
-            reference_density=jnp.zeros_like(h),
-            hartree_matrix=jnp.eye(2, dtype=jnp.float32),
-        )
+        return HartreeFockKernel(mesh_for(jnp.ones((1, 1), dtype=jnp.float32)), h, jnp.zeros((1, 1, 1, 1), dtype=jnp.complex64), hartree=jnp.eye(2, dtype=jnp.float32), T=T, exchange=False, reference=jnp.zeros_like(h))
 
     def test_zero_orbital_gradient_does_not_hide_wrong_occupations(self):
         """Diagonal F and P have zero commutator even at a maximally wrong P."""

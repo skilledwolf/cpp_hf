@@ -7,6 +7,18 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- One kernel and a mesh type. `hf.Mesh(cell, nk, offset, periodic)` (with
+  `Mesh.square` and `Mesh.bz`) holds the k-points, their weights, the
+  transfer grid, the −k map and resampling, and `HartreeFockKernel(mesh, h,
+  V=None, *, T, plane_waves=None, ...)` replaces both `HartreeFockKernel(
+  weights, h, Vq, ...)` and `SuperlatticeHartreeFockKernel`. `V` is a
+  callable of |q| (evaluated on `mesh.transfer_distance_grid`) or a table,
+  scalar or orbital-resolved; `V=None` is a contact-only model. A moiré
+  basis is `plane_waves=g_frac` on a periodic mesh. The keywords
+  `reference_density`, `embed_reference_density` and `center_hartree_density`
+  are `reference`, `embed_reference` and `center_hartree`; `hartree=` takes
+  `True` or an explicit q=0 table. Non-uniform weight arrays are gone: a
+  mesh's weight is its cell area over nk².
 - `SCFConfig(acceleration="diis")`, Pulay DIIS on the commutator `[F, P]`,
   is removed and `"rdiis"` is the default. The commutator vanishes for any
   collinear state, so commutator DIIS never engaged there and ran as plain

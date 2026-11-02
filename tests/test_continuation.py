@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from _meshes import mesh_for
 
 import hartreefock as hf
 from hartreefock._jax import resample_kgrid
 
 
-
 def _kernel(nk, *, exchange=0.6, nb=2):
     h = np.zeros((nk, nk, nb, nb), dtype=np.complex128)
     h[..., 0, 0], h[..., 1, 1] = -0.5, 0.5
-    return hf.HartreeFockKernel(
-        np.ones((nk, nk)), h, np.full((nk, nk, 1, 1), exchange), T=0.2
-    )
+    return hf.HartreeFockKernel(mesh_for(np.ones((nk, nk))), h, np.full((nk, nk, 1, 1), exchange), T=0.2)
 
 
 def test_continuation_matches_manual_coarse_then_fine():
@@ -55,16 +53,10 @@ def test_stages_can_mix_scf_and_minimization():
 
 def test_continuation_validates_inputs():
     kc = _kernel(2)
-    mismatched = hf.HartreeFockKernel(
-        np.ones((4, 4)), np.zeros((4, 4, 3, 3), complex), np.full((4, 4, 1, 1), 0.1), T=0.1
-    )
+    mismatched = hf.HartreeFockKernel(mesh_for(np.ones((4, 4))), np.zeros((4, 4, 3, 3), complex), np.full((4, 4, 1, 1), 0.1), T=0.1)
     with pytest.raises(ValueError, match="orbital dimensions"):
         hf.solve_continuation(kc, mismatched, np.zeros_like(kc.h), 1.0, 1.0)
-    hartree = hf.HartreeFockKernel(
-        np.ones((4, 4)), np.zeros((4, 4, 2, 2), complex), np.full((4, 4, 1, 1), 0.1), T=0.1,
-        include_hartree=True, reference_density=np.zeros((4, 4, 2, 2), complex),
-        hartree_matrix=np.eye(2),
-    )
+    hartree = hf.HartreeFockKernel(mesh_for(np.ones((4, 4))), np.zeros((4, 4, 2, 2), complex), np.full((4, 4, 1, 1), 0.1), hartree=np.eye(2), T=0.1, reference=np.zeros((4, 4, 2, 2), complex))
     with pytest.raises(ValueError, match="include_hartree"):
         hf.solve_continuation(kc, hartree, np.zeros_like(kc.h), 1.0, 1.0)
     with pytest.raises(ValueError, match="P0_coarse shape"):

@@ -43,27 +43,24 @@ nearly 1 right above $U_c$.
 
 `contact_terms` adds q-independent couplings $\tfrac12 g\,O_i\otimes O_j$
 as `(g, O_i, O_j)` triples. The Hubbard term $U n_\uparrow n_\downarrow$ is two
-of them, with the spin projectors; the Coulomb table is zero.
+of them, with the spin projectors; with no `V` there is no long-range term.
 
 ```{code-cell} ipython3
 import numpy as np
 import matplotlib.pyplot as plt
 import hartreefock as hf
 
-nk, kmax, T = 64, 2.0, 0.05
-k = np.linspace(-kmax, kmax, nk, endpoint=False) + kmax / nk
-kx, ky = np.meshgrid(k, k, indexing="ij")
-weights = np.full((nk, nk), (k[1] - k[0]) ** 2 / (2 * np.pi) ** 2)
-eps = kx**2 + ky**2
+T = 0.05
+mesh = hf.Mesh.square(kmax=2.0, nk=64)
+weights = mesh.weights
+eps = np.sum(mesh.ks**2, axis=-1)
 h = eps[..., None, None] * np.eye(2)
 n = 1 / (2 * np.pi)                                  # k_F = 1, E_F = 1
 up, down = np.diag([1.0, 0.0]), np.diag([0.0, 1.0])
-no_coulomb = np.zeros((nk, nk, 1, 1))
 
 
 def hubbard(U):
-    return hf.HartreeFockKernel(weights, h, no_coulomb, T=T,
-                                contact_terms=[(U, up, down), (U, down, up)])
+    return hf.HartreeFockKernel(mesh, h, T=T, contact_terms=[(U, up, down), (U, down, up)])
 
 
 P_para = (eps < 1)[..., None, None] * np.eye(2)

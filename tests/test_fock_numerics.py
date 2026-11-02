@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import numpy as np
-
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from hartreefock._jax.fock import build_fock, hf_energy, occupation_entropy
-from hartreefock.kernel import HartreeFockKernel
 
 
 def test_reference_subtracted_energy_gradient_matches_fock():
@@ -77,53 +75,6 @@ def test_reference_subtracted_energy_gradient_matches_fock():
         np.asarray(gradient),
         np.asarray(weights_b * F),
         atol=2e-6,
-        rtol=2e-6,
-    )
-
-
-def test_exchange_applies_nonuniform_weights_to_density():
-    """Σ(k) = -sum_q w(q) V(k-q) P(q), including nonuniform w(q)."""
-    weights = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32)
-    Vq = np.array([[1.0, 2.0], [3.0, 5.0]], dtype=np.float32)
-    density = np.arange(1, 5, dtype=np.float32).reshape(2, 2)
-    h = np.zeros((2, 2, 1, 1), dtype=np.complex64)
-    kernel = HartreeFockKernel(
-        weights=weights,
-        hamiltonian=h,
-        coulomb_q=Vq[..., None, None],
-        T=0.1,
-    )
-
-    Sigma, _, _ = build_fock(
-        jnp.asarray(density[..., None, None], dtype=jnp.complex64),
-        h=kernel.h,
-        VR=kernel.VR_shifted,
-        refP=kernel.refP,
-        HH=kernel.HH,
-        w2d=kernel.w2d,
-        include_exchange=True,
-        include_hartree=False,
-        exchange_hermitian_channel_packing=(
-            kernel.exchange_hermitian_channel_packing
-        ),
-    )
-
-    expected_fft_order = np.empty((2, 2), dtype=np.float32)
-    for kx in range(2):
-        for ky in range(2):
-            expected_fft_order[kx, ky] = -sum(
-                weights[qx, qy]
-                * Vq[(kx - qx) % 2, (ky - qy) % 2]
-                * density[qx, qy]
-                for qx in range(2)
-                for qy in range(2)
-            )
-    expected = np.fft.ifftshift(expected_fft_order, axes=(0, 1))
-
-    np.testing.assert_allclose(
-        np.asarray(Sigma[..., 0, 0]).real,
-        expected,
-        atol=2e-5,
         rtol=2e-6,
     )
 

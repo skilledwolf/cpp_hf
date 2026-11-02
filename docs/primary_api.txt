@@ -1,7 +1,7 @@
 # Public names the pages link to. Each needs a NumPy docstring with a
 # Parameters, Returns or Attributes section; conf.py checks it at build time.
+hartreefock.Mesh
 hartreefock.HartreeFockKernel
-hartreefock.SuperlatticeHartreeFockKernel
 hartreefock.SCFConfig
 hartreefock.SolverConfig
 hartreefock.SCFResult

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
-from hartreefock.kernel import HartreeFockKernel
+from _meshes import mesh_for
 
 import hartreefock as hf
+from hartreefock.kernel import HartreeFockKernel
 
 
 def _herm(rng, shape):
@@ -15,28 +15,20 @@ def _herm(rng, shape):
     return 0.5 * (X + np.conj(np.swapaxes(X, -1, -2)))
 
 
-def _kernel(rng, *, uniform, orbital_V, embed, nk=5, nb=3):
+def _kernel(rng, *, orbital_V, embed, nk=5, nb=3):
     h = _herm(rng, (nk, nk, nb, nb))
-    w = np.full((nk, nk), 1.0 / nk**2) if uniform else rng.uniform(0.2, 1.0, (nk, nk))
+    w = np.full((nk, nk), 1.0 / nk**2)
     V_shape = (nk, nk, nb, nb) if orbital_V else (nk, nk, 1, 1)
     V = rng.uniform(0.5, 1.5, V_shape)
     O = np.diag(rng.normal(size=nb)).astype(complex)
-    return HartreeFockKernel(
-        w, h, V, T=0.1,
-        include_hartree=True,
-        reference_density=0.3 * _herm(rng, h.shape),
-        hartree_matrix=0.2 + 0.1 * np.eye(nb),
-        contact_terms=[(0.4, O, O)],
-        embed_reference_potential=embed,
-    )
+    return HartreeFockKernel(mesh_for(w), h, V, hartree=0.2 + 0.1 * np.eye(nb), T=0.1, reference=0.3 * _herm(rng, h.shape), contact_terms=[(0.4, O, O)], embed_reference=embed)
 
 
-@pytest.mark.parametrize("uniform", [True, False])
 @pytest.mark.parametrize("orbital_V", [False, True])
 @pytest.mark.parametrize("embed", [False, True])
-def test_fock_matches_the_kernel_linear_maps(uniform, orbital_V, embed, x64):
+def test_fock_matches_the_kernel_linear_maps(orbital_V, embed, x64):
     rng = np.random.default_rng(7)
-    kernel = _kernel(rng, uniform=uniform, orbital_V=orbital_V, embed=embed)
+    kernel = _kernel(rng, orbital_V=orbital_V, embed=embed)
     P = _herm(rng, kernel.h.shape)
 
     F, _ = hf.fock_operators(kernel).evaluate(P)
@@ -45,7 +37,7 @@ def test_fock_matches_the_kernel_linear_maps(uniform, orbital_V, embed, x64):
 
 def test_fock_is_energy_gradient(x64):
     rng = np.random.default_rng(3)
-    kernel = _kernel(rng, uniform=False, orbital_V=False, embed=False)
+    kernel = _kernel(rng, orbital_V=False, embed=False)
     P = _herm(rng, kernel.h.shape)
     dP = _herm(rng, kernel.h.shape)
 
@@ -67,7 +59,7 @@ def test_oda_moves_a_start_with_the_wrong_particle_count_onto_it(x64):
     h = np.zeros((nk, nk, 2, 2), complex)
     h[..., 0, 0], h[..., 1, 1] = 0.3, -0.3
     h[..., 0, 1], h[..., 1, 0] = KX - 1j * KY, KX + 1j * KY
-    kernel = HartreeFockKernel(np.full((nk, nk), 1.0 / nk**2), h, np.full((nk, nk, 1, 1), 0.7), T=0.1)
+    kernel = HartreeFockKernel(mesh_for(np.full((nk, nk), 1.0 / nk**2)), h, np.full((nk, nk, 1, 1), 0.7), T=0.1)
     n_e = 0.25
     # The filled lower band (N = 1): its free energy is below every density with N = 1/4.
     _, U = np.linalg.eigh(h)

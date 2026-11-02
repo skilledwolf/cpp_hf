@@ -1,16 +1,15 @@
 """Full-residual acceleration: monotone descent, feasibility, and Fock reuse."""
 import numpy as np
 import pytest
+from _meshes import mesh_for
+
 from hartreefock import HartreeFockKernel, SCFConfig, fock_operators, solve_scf
 from hartreefock._jax.utils import density_matrix_from_fock
 
 
-
 def charge_kernel(strength=30.):
     h=np.broadcast_to(np.diag([-.2,.1,.3]),(2,2,3,3)).astype(complex).copy()
-    K=HartreeFockKernel(np.array([[.1,.2],[.3,.4]]),h,np.zeros((2,2,1,1)),T=.5,
-        include_hartree=True,include_exchange=False,reference_density=np.zeros_like(h),
-        hartree_matrix=strength*(np.eye(3)+.2*np.ones((3,3))))
+    K=HartreeFockKernel(mesh_for(np.full((2, 2), .25)), h, np.zeros((2,2,1,1)), hartree=strength*(np.eye(3)+.2*np.ones((3,3))), T=.5, exchange=False, reference=np.zeros_like(h))
     return K,np.broadcast_to(np.diag([.8,.4,.3]),h.shape).astype(complex).copy()
 
 

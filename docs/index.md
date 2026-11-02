@@ -7,8 +7,8 @@ kernelspec:
 # hartreefock
 
 hartreefock solves the finite-temperature Hartree-Fock problem on uniform 2D
-k-meshes. You describe the problem once as a kernel (the single-particle
-Hamiltonian, the interaction and the quadrature weights) and solve it with
+k-meshes. You describe the problem once as a kernel (a k-mesh, the
+single-particle Hamiltonian on it and the interaction) and solve it with
 jitted JAX solvers, which call C++ kernels for the hot loops on the CPU. It is the engine behind the mean-field solvers of
 [contimod](https://github.com/skilledwolf/contimod), and works on any
 Hamiltonian you can put on a k-mesh.
@@ -27,17 +27,17 @@ from scipy.special import ellipe, ellipk
 import hartreefock as hf
 
 nk, kmax, rs = 64, 2.1, 1.0                      # units of k_F and E_F
-k = np.linspace(-kmax, kmax, nk, endpoint=False) + kmax / nk
-kx, ky = np.meshgrid(k, k, indexing="ij")
-dk = k[1] - k[0]
-weights = np.full((nk, nk), dk**2 / (2 * np.pi) ** 2)
-eps = kx**2 + ky**2
+mesh = hf.Mesh.square(kmax, nk)
+eps = np.sum(mesh.ks**2, axis=-1)
 h = eps[..., None, None] * np.eye(2)
-q1 = dk * (np.arange(nk) - nk // 2)
-q = np.hypot(*np.meshgrid(q1, q1, indexing="ij"))
-V = 2 * np.pi * np.sqrt(2) * rs * np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
+dk = mesh.dk[0]
 
-kernel = hf.HartreeFockKernel(weights, h, V[..., None, None], T=0.002)
+
+def V(q):  # bare Coulomb; at q = 0 its average over one mesh cell
+    return 2 * np.pi * np.sqrt(2) * rs * np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
+
+
+kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
 result = hf.solve_scf(kernel, (eps < 1)[..., None, None] * np.eye(2), 1 / (2 * np.pi))
 sigma = (np.asarray(result.fock) - h)[:, nk // 2, 0, 0].real
 
@@ -47,7 +47,7 @@ exact = -2 * np.sqrt(2) * rs / np.pi * np.where(
     kk < 1, ellipe(np.minimum(kk, 1) ** 2), kk * (ellipe(x**2) - (1 - x**2) * ellipk(x**2)))
 
 fig, ax = plt.subplots()
-ax.plot(np.abs(k), sigma, "o", ms=3, label="hartreefock, 64 × 64 mesh")
+ax.plot(np.abs(mesh.kx), sigma, "o", ms=3, label="hartreefock, 64 × 64 mesh")
 ax.plot(kk, exact, color="C1", label="closed form")
 ax.set(xlabel="$k / k_F$", ylabel=r"$\Sigma_x / E_F$", xlim=(0, 1.8))
 ax.legend();

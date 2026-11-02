@@ -141,7 +141,7 @@ def stability_analysis(
 
     Parameters
     ----------
-    kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+    kernel : HartreeFockKernel
         The problem; needs ``T > 0`` and positive weights.
     density : (nk1, nk2, nb, nb) array
         A Hermitian density with eigenvalues in [0, 1], such as a solver's
@@ -398,7 +398,7 @@ def solve_minimum(
 
     Parameters
     ----------
-    kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+    kernel : HartreeFockKernel
         The problem; needs ``T > 0`` and positive weights.
     P0 : (nk1, nk2, nb, nb) array
         Starting density.

@@ -13,7 +13,7 @@ import numpy as np
 from . import _jax
 from .config import ContinuationResult, SCFConfig, SolverConfig
 from .kernel import HartreeFockKernel
-from .superlattice import SuperlatticeHartreeFockKernel, upsample_density
+from .superlattice import upsample_density
 
 
 def _run_stage(kernel, P0, n_electrons, config, stage):
@@ -35,9 +35,6 @@ def _validate_kernels(coarse: HartreeFockKernel, fine: HartreeFockKernel) -> Non
     for flag in ("include_hartree", "include_exchange"):
         if getattr(coarse, flag) != getattr(fine, flag):
             raise ValueError(f"coarse_kernel and fine_kernel must agree on {flag}.")
-    for name, k in (("coarse_kernel", coarse), ("fine_kernel", fine)):
-        if k.h.shape[0] != k.h.shape[1]:
-            raise ValueError(f"{name} must have a square k-mesh, got shape {tuple(k.h.shape[:2])}.")
 
 
 def solve_continuation(
@@ -60,7 +57,7 @@ def solve_continuation(
 
     Parameters
     ----------
-    coarse_kernel, fine_kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+    coarse_kernel, fine_kernel : HartreeFockKernel
         The same problem on two meshes.
     P0_coarse : (nk1, nk2, nb, nb) array
         Starting density on the coarse mesh.
@@ -89,8 +86,8 @@ def solve_continuation(
     density = coarse.density
     if density is None:
         raise ValueError("the coarse stage must return its density (return_density=True).")
-    if isinstance(fine_kernel, SuperlatticeHartreeFockKernel):
-        P0_fine = upsample_density(density, coarse_kernel, fine_kernel)
+    if fine_kernel.superlattice:
+        P0_fine = upsample_density(density, coarse_kernel.mesh, fine_kernel.mesh)
     else:
         P0_fine = np.asarray(_jax.resample_kgrid(density, int(fine_kernel.h.shape[0])))
         P0_fine = 0.5 * (P0_fine + P0_fine.conj().swapaxes(-1, -2))

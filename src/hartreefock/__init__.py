@@ -1,10 +1,13 @@
 """Hartree-Fock solvers on 2D k-meshes.
 
-Build a :class:`HartreeFockKernel` (or, for a moiré plane-wave basis, a
-:class:`SuperlatticeHartreeFockKernel`) once, then solve it::
+Build a :class:`HartreeFockKernel` on a :class:`Mesh` once, then solve it::
 
-    kernel = hartreefock.HartreeFockKernel(weights, h, Vq, T=0.01)
+    mesh = hartreefock.Mesh.square(kmax=1.2, nk=48)
+    kernel = hartreefock.HartreeFockKernel(mesh, h, V, T=0.01)
     result = hartreefock.solve(kernel, P0, n_electrons)
+
+``V`` is a function of ``|q|`` (or its table on ``mesh.transfer_grid``); a
+moiré plane-wave basis adds ``plane_waves=``.
 
 The solvers are jitted JAX (differentiable, GPU-capable).  On CPU the batched
 eigensolvers, complex products and the superlattice exchange run as C++
@@ -36,8 +39,8 @@ from .config import (
 from .continuation import solve_continuation
 from .deflation import solve_deflated
 from .kernel import HartreeFockKernel
+from .mesh import Mesh
 from .stability import MinimumResult, StabilityResult, solve_minimum, stability_analysis
-from .superlattice import SuperlatticeHartreeFockKernel
 
 try:  # pragma: no cover - metadata only
     __version__ = metadata.version("hartreefock")
@@ -50,7 +53,7 @@ def fock_operators(kernel):
 
     Parameters
     ----------
-    kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+    kernel : HartreeFockKernel
         The problem.
 
     Returns
@@ -68,7 +71,7 @@ def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None):
 
     Parameters
     ----------
-    kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+    kernel : HartreeFockKernel
         The problem.
     P0 : (nk1, nk2, nb, nb) array
         Starting density. Its occupations seed the iteration; the particle
@@ -92,7 +95,7 @@ def solve_scf(kernel, P0, n_electrons, *, config: SCFConfig | None = None):
 
     Parameters
     ----------
-    kernel : HartreeFockKernel or SuperlatticeHartreeFockKernel
+    kernel : HartreeFockKernel
         The problem.
     P0 : (nk1, nk2, nb, nb) array
         Starting density; its particle number is corrected to
@@ -115,13 +118,13 @@ __all__ = [
     "ContinuationResult",
     "DeflatedResult",
     "HartreeFockKernel",
+    "Mesh",
     "MinimumResult",
     "SCFConfig",
     "SCFResult",
     "SolveResult",
     "SolverConfig",
     "StabilityResult",
-    "SuperlatticeHartreeFockKernel",
     "fock_operators",
     "solve",
     "solve_continuation",

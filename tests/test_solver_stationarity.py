@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from _meshes import mesh_for
 
 from hartreefock import (
     HartreeFockKernel,
@@ -15,19 +16,9 @@ from hartreefock import (
 from hartreefock._jax.utils import density_matrix_from_fock
 
 
-
 def _repulsive_hartree(*, temperature: float = 0.5) -> HartreeFockKernel:
     h = np.zeros((1, 1, 2, 2), dtype=np.complex128)
-    return HartreeFockKernel(
-        weights=np.ones((1, 1), dtype=np.float64),
-        hamiltonian=h,
-        coulomb_q=np.zeros((1, 1, 1, 1), dtype=np.complex128),
-        T=temperature,
-        include_hartree=True,
-        include_exchange=False,
-        reference_density=np.zeros_like(h),
-        hartree_matrix=np.eye(2, dtype=np.float64),
-    )
+    return HartreeFockKernel(mesh_for(np.ones((1, 1), dtype=np.float64)), h, np.zeros((1, 1, 1, 1), dtype=np.complex128), hartree=np.eye(2, dtype=np.float64), T=temperature, exchange=False, reference=np.zeros_like(h))
 
 
 def _fixed_point_residual(
@@ -90,16 +81,7 @@ def test_zero_orbital_gradient_does_not_hide_wrong_occupations(
 
 def test_finite_temperature_oda_descends_free_energy() -> None:
     h = np.array([[[[-1.0, 0.0], [0.0, 1.0]]]], dtype=np.complex128)
-    kernel = HartreeFockKernel(
-        weights=np.ones((1, 1), dtype=np.float64),
-        hamiltonian=h,
-        coulomb_q=np.zeros((1, 1, 1, 1), dtype=np.complex128),
-        T=1.0,
-        include_hartree=True,
-        include_exchange=False,
-        reference_density=np.zeros_like(h),
-        hartree_matrix=np.zeros((2, 2), dtype=np.float64),
-    )
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1), dtype=np.float64)), h, np.zeros((1, 1, 1, 1), dtype=np.complex128), hartree=np.zeros((2, 2), dtype=np.float64), T=1.0, exchange=False, reference=np.zeros_like(h))
     initial = np.array(
         [[[[1.0, 0.0], [0.0, 0.0]]]], dtype=np.complex128
     )
@@ -146,11 +128,7 @@ def test_scf_returns_the_density_whose_stationarity_was_certified(acceleration):
     # The fixed-point map amplifies a density error by 500, so replacing the
     # certified state with its undamped Fermi density would invalidate the stop.
     h = np.zeros((1, 1, 2, 2), dtype=np.complex128)
-    kernel = HartreeFockKernel(
-        np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=0.5,
-        include_hartree=True, include_exchange=False,
-        reference_density=h, hartree_matrix=1000.0 * np.eye(2),
-    )
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), hartree=1000.0 * np.eye(2), T=0.5, exchange=False, reference=h)
     initial = np.diag([0.5 + 1e-10, 0.5 - 1e-10])[None, None]
     tolerance = 1e-7
     result = solve_scf(
@@ -194,12 +172,7 @@ def _wide_band_kernel(nk: int = 6, nb: int = 4, T: float = 0.5, ex: float = 0.6)
     A = (rng.normal(scale=0.5, size=(nk, nk, nb, nb))
          + 1j * rng.normal(scale=0.5, size=(nk, nk, nb, nb)))
     h = h + 0.5 * (A + np.conj(A.swapaxes(-1, -2)))
-    return HartreeFockKernel(
-        weights=np.ones((nk, nk), dtype=np.float64) / (nk * nk),
-        hamiltonian=h,
-        coulomb_q=np.full((nk, nk, 1, 1), ex, dtype=np.complex128),
-        T=T,
-    )
+    return HartreeFockKernel(mesh_for(np.ones((nk, nk), dtype=np.float64) / (nk * nk)), h, np.full((nk, nk, 1, 1), ex, dtype=np.complex128), T=T)
 
 
 def test_rdiis_engages_when_the_residual_history_is_nearly_rank_deficient() -> None:

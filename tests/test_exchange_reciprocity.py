@@ -3,8 +3,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from _meshes import mesh_for
 
-from hartreefock import HartreeFockKernel
+from hartreefock import HartreeFockKernel, Mesh
 from hartreefock._jax.operators import _evaluate_fock, _fock_kwargs
 
 jax.config.update("jax_enable_x64", True)
@@ -19,14 +20,14 @@ def test_sampled_exchange_preserves_energy_and_restores_its_gradient(nk, orbital
     V = (1/np.sqrt(.3+qx*qx+qy*qy+qx*qy))[..., None, None]
     if orbital_resolved:
         V = V*np.array([[1, .4, .2], [.4, 1, .6], [.2, .6, 1]])
-    w = rng.uniform(.1, 1, size=(nk, nk))
+    w = np.full((nk, nk), .5)
     w /= w.sum()
     h = np.broadcast_to(np.diag([-.2, .1, .4]), (nk, nk, nb, nb)).astype(complex)
     def hermitian():
         a = rng.normal(size=h.shape)+1j*rng.normal(size=h.shape)
         return .5*(a+a.conj().swapaxes(-2, -1))
     P, R, A, B = hermitian(), hermitian(), hermitian(), hermitian()
-    kernel = HartreeFockKernel(w, h, V, T=.2, reference_density=R)
+    kernel = HartreeFockKernel(mesh_for(w), h, V, T=.2, reference=R)
     kwargs = _fock_kwargs(kernel)
     def evaluate(density, args=kwargs):
         return _evaluate_fock(jnp.asarray(density), **args)
@@ -43,13 +44,16 @@ def test_sampled_exchange_preserves_energy_and_restores_its_gradient(nk, orbital
     assert kernel.exchange_reciprocity_defect >= 0
 
 
-@pytest.mark.parametrize("weights, match", [
-    (np.array([[-1., 2.]]), "non-negative"),
-    (np.array([[0., 0.]]), "positive sum"),
-    (np.array([[1., np.nan]]), "finite"),
-    (np.ones((2, 1)), "shape"),
+@pytest.mark.parametrize("cell, nk, match", [
+    (np.zeros((2, 2)), 2, "non-singular"),
+    (np.array([[1., np.nan], [0., 1.]]), 2, "finite"),
+    (np.eye(2), 0, "positive"),
 ])
-def test_kernel_rejects_invalid_quadrature(weights, match):
+def test_mesh_rejects_invalid_cells(cell, nk, match):
     with pytest.raises(ValueError, match=match):
-        HartreeFockKernel(weights, np.zeros((1, 2, 2, 2), complex),
-                          np.ones((1, 2, 1, 1)), T=.2)
+        Mesh(cell, nk)
+
+
+def test_kernel_rejects_a_hamiltonian_off_the_mesh():
+    with pytest.raises(ValueError, match="h must have shape"):
+        HartreeFockKernel(Mesh(np.eye(2), 2), np.zeros((1, 2, 2, 2), complex), np.ones((1, 2, 1, 1)), T=.2)

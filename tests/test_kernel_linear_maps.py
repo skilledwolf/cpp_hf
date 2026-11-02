@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from _meshes import mesh_for
 
 import hartreefock as hf
 
@@ -13,10 +14,10 @@ def _kernel(nk=6, nb=3, seed=0):
     h = rng.normal(size=(nk, nk, nb, nb)) + 1j * rng.normal(size=(nk, nk, nb, nb))
     h = h + np.conj(np.swapaxes(h, -1, -2))
     V = rng.uniform(0.5, 2.0, size=(nk, nk, nb, nb))
-    weights = rng.uniform(0.5, 1.5, size=(nk, nk))
+    weights = np.full((nk, nk), 0.03)
     g = 0.7
     Oi = np.diag(rng.normal(size=nb)).astype(complex)
-    return hf.HartreeFockKernel(weights, h, V, T=0.1, contact_terms=[(g, Oi, Oi)])
+    return hf.HartreeFockKernel(mesh_for(weights), h, V, T=0.1, contact_terms=[(g, Oi, Oi)])
 
 
 def test_exchange_traces_under_jax_and_matches_numpy():

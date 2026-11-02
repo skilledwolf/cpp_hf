@@ -8,8 +8,8 @@ everything public.
 
 | Name | What it is |
 | --- | --- |
-| {class}`~hartreefock.HartreeFockKernel` | Hamiltonian on a k-mesh, interaction `V(q)`, weights, temperature; Hartree, contact and reference terms |
-| {class}`~hartreefock.SuperlatticeHartreeFockKernel` | The same for a moiré plane-wave basis `|k, G, α⟩` |
+| {class}`~hartreefock.Mesh` | A k-mesh: cell, points, weights, transfer grid, −k map, resampling |
+| {class}`~hartreefock.HartreeFockKernel` | Hamiltonian on a mesh, interaction `V(q)`, temperature; Hartree, contact and reference terms; `plane_waves=` for a moiré basis `|k, G, α⟩` |
 
 ## Solve
 

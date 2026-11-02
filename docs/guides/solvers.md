@@ -46,16 +46,14 @@ import numpy as np
 import hartreefock as hf
 
 
+def V(q):
+    return 5.0 * 2 * np.pi * np.where(q > 0, np.tanh(10 * q) / np.where(q > 0, q, 1.0), 10.0)
+
+
 def gated_gas(nk, kmax=1.2, T=0.005):
-    k = np.linspace(-kmax, kmax, nk, endpoint=False) + kmax / nk
-    kx, ky = np.meshgrid(k, k, indexing="ij")
-    weights = np.full((nk, nk), (2 * kmax / nk) ** 2 / (2 * np.pi) ** 2)
-    eps = 0.5 * (kx**2 + ky**2)
-    dk = k[1] - k[0]
-    q1 = dk * (np.arange(nk) - nk // 2)
-    q = np.hypot(*np.meshgrid(q1, q1, indexing="ij"))
-    V = 5.0 * 2 * np.pi * np.where(q > 0, np.tanh(10 * q) / np.where(q > 0, q, 1.0), 10.0)
-    return hf.HartreeFockKernel(weights, eps[..., None, None] * np.eye(2), V[..., None, None], T=T), eps
+    mesh = hf.Mesh.square(kmax, nk)
+    eps = 0.5 * np.sum(mesh.ks**2, axis=-1)
+    return hf.HartreeFockKernel(mesh, eps[..., None, None] * np.eye(2), V, T=T), eps
 
 
 n = 0.02
@@ -158,7 +156,7 @@ give: compare energies across starts to compare phases.
 
 :::{admonition} Singular interactions and the q = 0 cell
 :class: warning
-On a mesh, the $q = 0$ entry of `coulomb_q` couples each k-point to
+On a mesh, the $q = 0$ entry of `V` couples each k-point to
 itself with strength $w_k V(0)$. When that exceeds the thermal stiffness
 of a Fermi-surface state, about $4T$, filling single k-points lowers the
 free energy, and the test reports these mesh modes as unstable. For the

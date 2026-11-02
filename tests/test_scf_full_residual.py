@@ -5,10 +5,11 @@ from dataclasses import replace
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from _meshes import mesh_for
 
 from hartreefock import HartreeFockKernel, SCFConfig
 from hartreefock._jax import solve_scf
-from hartreefock._jax.fock import build_fock, hf_energy, free_energy
+from hartreefock._jax.fock import build_fock, free_energy, hf_energy
 from hartreefock._jax.scf import _density_from_fock
 from hartreefock._jax.scf_acceleration import _residual_coefficients
 
@@ -21,10 +22,7 @@ def double_precision(enable_x64):
 
 def charge_kernel(strength=30.0):
     h = np.broadcast_to(np.diag([-.2, .1, .3]), (2, 2, 3, 3)).astype(complex).copy()
-    kernel = HartreeFockKernel(
-        np.array([[.1, .2], [.3, .4]]), h, np.zeros((2, 2, 1, 1)), T=.5,
-        include_hartree=True, include_exchange=False, reference_density=np.zeros_like(h),
-        hartree_matrix=strength * (np.eye(3) + .2 * np.ones((3, 3))))
+    kernel = HartreeFockKernel(mesh_for(np.full((2, 2), .25)), h, np.zeros((2, 2, 1, 1)), hartree=strength * (np.eye(3) + .2 * np.ones((3, 3))), T=.5, exchange=False, reference=np.zeros_like(h))
     return kernel, np.broadcast_to(np.diag([.8, .4, .3]), h.shape).astype(complex).copy()
 
 
@@ -96,7 +94,7 @@ def test_duplicate_residual_history_stays_finite_and_affine():
 @pytest.mark.parametrize("method", ["rdiis", "anderson"])
 def test_entropy_descent_can_increase_internal_energy_and_shift_does_not_bias_solution(method):
     h = np.diag([-1., 1.]).astype(complex)[None, None]
-    kernel = HartreeFockKernel(np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=1.0)
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), T=1.0)
     P = np.diag([1., 0.]).astype(complex)[None, None]
     result = solve_scf(kernel, P, 1.0, config=SCFConfig(
         acceleration=method, mixing=1.0, level_shift=.8,
@@ -152,10 +150,7 @@ def test_complex_coupled_problem_damping_trust_and_precision(method, dtype):
     rng = np.random.default_rng(712)
     A = rng.normal(size=(2, 2, 4, 4)) + 1j * rng.normal(size=(2, 2, 4, 4))
     h = (.5 * (A + A.conj().swapaxes(-1, -2))).astype(dtype)
-    kernel = HartreeFockKernel(
-        np.array([[.1, .2], [.3, .4]]), h, np.full((2, 2, 1, 1), .4), T=.4,
-        include_hartree=True, include_exchange=True,
-        reference_density=np.zeros_like(h), hartree_matrix=2.0 * np.eye(4))
+    kernel = HartreeFockKernel(mesh_for(np.full((2, 2), .25)), h, np.full((2, 2, 1, 1), .4), hartree=2.0 * np.eye(4), T=.4, exchange=True, reference=np.zeros_like(h))
     tol = 3e-6 if dtype == np.complex64 else 1e-8
     result = solve_scf(kernel, np.zeros_like(h), 1.6, config=SCFConfig(
         acceleration=method, diis_size=8, mixing=.7, diis_damping=.8,
@@ -176,11 +171,7 @@ def test_legacy_scf_returns_the_density_whose_residual_was_certified(method):
     # This Fermi map amplifies density errors by 500.  A final undamped step
     # would move a certified state outside the requested tolerance.
     h = np.zeros((1, 1, 2, 2), dtype=complex)
-    kernel = HartreeFockKernel(
-        np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=.5,
-        include_hartree=True, include_exchange=False,
-        reference_density=h, hartree_matrix=1000.0 * np.eye(2),
-    )
+    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), hartree=1000.0 * np.eye(2), T=.5, exchange=False, reference=h)
     initial = np.diag([.5 + 1e-10, .5 - 1e-10]).astype(complex)[None, None]
     tolerance = 1e-7
     result = solve_scf(kernel, initial, 1.0, config=SCFConfig(

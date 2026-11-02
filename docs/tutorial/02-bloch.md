@@ -47,16 +47,14 @@ import hartreefock as hf
 
 def electron_gas(nk, kmax, rs):
     """The 2D electron gas on an nk x nk mesh, in units of the paramagnetic k_F and E_F."""
-    k = np.linspace(-kmax, kmax, nk, endpoint=False) + kmax / nk
-    kx, ky = np.meshgrid(k, k, indexing="ij")
-    dk = k[1] - k[0]
-    weights = np.full((nk, nk), dk**2 / (2 * np.pi) ** 2)
-    eps = kx**2 + ky**2
-    q1 = dk * (np.arange(nk) - nk // 2)
-    q = np.hypot(*np.meshgrid(q1, q1, indexing="ij"))
-    inv_q = np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
-    V = 2 * np.pi * np.sqrt(2) * rs * inv_q
-    return weights, eps[..., None, None] * np.eye(2), V[..., None, None], eps
+    mesh = hf.Mesh.square(kmax, nk)
+    eps = np.sum(mesh.ks**2, axis=-1)
+    dk = mesh.dk[0]
+
+    def V(q):
+        return 2 * np.pi * np.sqrt(2) * rs * np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
+
+    return mesh, eps[..., None, None] * np.eye(2), V, eps
 
 
 n = 1 / (2 * np.pi)
@@ -64,8 +62,9 @@ n = 1 / (2 * np.pi)
 
 def solve_both(nk, rs):
     """Paramagnetic and fully polarized solutions: (kinetic, exchange, magnetization) of each, Ry per electron."""
-    w, h, V, eps = electron_gas(nk, kmax=3.0, rs=rs)
-    kernel = hf.HartreeFockKernel(w, h, V, T=0.002)
+    mesh, h, V, eps = electron_gas(nk, kmax=3.0, rs=rs)
+    kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
+    w = mesh.weights
     starts = {
         "para": (eps < 1)[..., None, None] * np.eye(2),
         "ferro": (eps < 2)[..., None, None] * np.diag([1.0, 0.0]),

@@ -1,7 +1,7 @@
 """Superlattice Fock builder.
 
-:func:`superlattice_build_fock` turns a
-:class:`~hartreefock.superlattice.SuperlatticeHartreeFockKernel` into a Fock
+:func:`superlattice_build_fock` turns a plane-wave
+:class:`~hartreefock.HartreeFockKernel` into a Fock
 builder with the signature of :func:`~hartreefock._jax.fock.build_fock`,
 so the jitted SCF, direct-minimization and stability loops run on it
 unchanged.  Exchange streams one ``ΔG`` channel (or one ``(ΔG, α, β)``
@@ -172,8 +172,12 @@ def _make_ffi_superlattice_fock_fn(layout, n_G, dim_orb, nkx, nky):
     D = n_G * dim_orb
     shape = (nkx, nky, D, D)
     V_orb = layout.V_lag_fft_orbital
+    # The handler reads the extended grid size off the scalar table.
+    V_scalar = layout.V_lag_fft
+    if V_scalar is None:
+        V_scalar = np.zeros((layout.N_ext_x, layout.N_ext_y), np.complex128)
     tables = (
-        jnp.asarray(layout.V_lag_fft, dtype=jnp.complex128),
+        jnp.asarray(V_scalar, dtype=jnp.complex128),
         jnp.asarray(
             np.zeros((0,), np.complex128) if V_orb is None else V_orb, dtype=jnp.complex128
         ),
@@ -224,10 +228,10 @@ def superlattice_build_fock(kernel) -> Callable:
     if cached is not None:
         return cached
     n_G, dim_orb = kernel.n_G, kernel.dim_orb
-    fock_fn = make_superlattice_fock_fn(kernel.layout, n_G, dim_orb, kernel.nkx, kernel.nky)
+    nk = kernel.mesh.nk
+    fock_fn = make_superlattice_fock_fn(kernel.layout, n_G, dim_orb, nk, nk)
     pair_to_delta = np.asarray(kernel.layout.pair_to_delta)
-    HH_GG, HH_GG_orbital = kernel.HH_GG, kernel.HH_GG_orbital
-    degeneracy = kernel.hartree_degeneracy
+    HH, degeneracy = kernel.HH, kernel.degeneracy
 
     def build_fock_sl(P, *, h, refP, w2d, include_exchange, include_hartree,
                       project_fn=None, **_dense_only):
@@ -236,8 +240,7 @@ def superlattice_build_fock(kernel) -> Callable:
         if include_hartree:
             rho_bar = jnp.einsum("ij,ijab->ab", w2d, rho)
             Sigma = Sigma + superlattice_hartree(
-                rho_bar, pair_to_delta, HH_GG=HH_GG, HH_GG_orbital=HH_GG_orbital,
-                degeneracy=degeneracy,
+                rho_bar, pair_to_delta, HH, degeneracy=degeneracy
             )[None, None]
         F = h + Sigma
         F = 0.5 * (F + jnp.conj(jnp.swapaxes(F, -1, -2)))

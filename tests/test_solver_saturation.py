@@ -20,17 +20,17 @@ import os
 
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
-import numpy as np
-import pytest
-
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
+from _meshes import mesh_for
 
+import hartreefock._jax.occupations as O
+import hartreefock._jax.riemannian as R
 from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig
 from hartreefock._jax import solve, solve_scf
 from hartreefock._jax.fock import build_fock, free_energy, hf_energy
-import hartreefock._jax.occupations as O
-import hartreefock._jax.riemannian as R
 
 
 @pytest.fixture(autouse=True)
@@ -48,12 +48,7 @@ def _wide_band_kernel(nk=6, nb=4, T=0.01, ex=0.3, seed=0):
     h[..., np.arange(nb), np.arange(nb)] = np.linspace(-20.0, 20.0, nb)
     A = rng.normal(scale=0.5, size=(nk, nk, nb, nb)) + 1j * rng.normal(scale=0.5, size=(nk, nk, nb, nb))
     h = h + 0.5 * (A + np.conj(A.swapaxes(-1, -2)))
-    return HartreeFockKernel(
-        weights=jnp.ones((nk, nk), dtype=jnp.float64) / (nk * nk),
-        hamiltonian=jnp.asarray(h),
-        coulomb_q=jnp.full((nk, nk, 1, 1), ex, dtype=jnp.complex128),
-        T=T,
-    )
+    return HartreeFockKernel(mesh_for(jnp.ones((nk, nk), dtype=jnp.float64) / (nk * nk)), jnp.asarray(h), jnp.full((nk, nk, 1, 1), ex, dtype=jnp.complex128), T=T)
 
 
 def _fock(kernel, P):
@@ -420,12 +415,7 @@ class TestSolveMuEarlyStop:
             ham = np.zeros((nk, nk, nb, nb), dtype=np.complex64)
             ham[..., 0, 0] = -0.5
             ham[..., 1, 1] = 0.5
-            kernel = HartreeFockKernel(
-                weights=jnp.ones((nk, nk), dtype=jnp.float32),
-                hamiltonian=jnp.asarray(ham),
-                coulomb_q=jnp.full((nk, nk, 1, 1), 0.6, dtype=jnp.complex64),
-                T=0.2,
-            )
+            kernel = HartreeFockKernel(mesh_for(jnp.ones((nk, nk), dtype=jnp.float32)), jnp.asarray(ham), jnp.full((nk, nk, 1, 1), 0.6, dtype=jnp.complex64), T=0.2)
             assert kernel.h.dtype == jnp.complex64
             n_e = 1.0                      # 1 electron in 128 states
             capacity = float(kernel.weight_sum) * nb

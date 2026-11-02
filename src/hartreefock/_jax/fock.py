@@ -159,10 +159,8 @@ def free_energy(
 
 
 def fock_builder(kernel):
-    """The Fock builder for ``kernel``: :func:`build_fock`, or the superlattice one."""
-    from ..superlattice import SuperlatticeHartreeFockKernel
-
-    if isinstance(kernel, SuperlatticeHartreeFockKernel):
+    """The Fock builder for ``kernel``: :func:`build_fock`, or the plane-wave one."""
+    if kernel.superlattice:
         from .superlattice import superlattice_build_fock
 
         return superlattice_build_fock(kernel)

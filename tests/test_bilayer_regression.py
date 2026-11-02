@@ -19,6 +19,7 @@ contimod = pytest.importorskip("contimod")
 cg_symmetry = pytest.importorskip("contimod.materials.graphene.symmetry")
 
 import contimod as cm  # noqa: E402
+from _meshes import mesh_for
 from contimod.kdiscrete import Mesh  # noqa: E402
 from contimod.meanfield import SelfEnergySeed  # noqa: E402
 from contimod.utils.spectrum_fermi import FermiParams  # noqa: E402
@@ -50,10 +51,7 @@ def bilayer_setup():
     Vq = cm.coulomb.dualgate_coulomb(
         h.kmesh.transfer_distance_grid, epsilon_r=float(ref["epsilon_r"]), d_gate=float(ref["d_gate"])
     )
-    kernel = hf.HartreeFockKernel(
-        np.asarray(h.kmesh.weights), np.asarray(h.hs), np.asarray(Vq)[..., None, None],
-        T=temperature,
-    )
+    kernel = hf.HartreeFockKernel(mesh_for(np.asarray(h.kmesh.weights)), np.asarray(h.hs), np.asarray(Vq)[..., None, None], T=temperature)
 
     identity = np.asarray(model.identity)
     s1, s2, s3 = (np.asarray(model.spin_op(i)) for i in (1, 2, 3))

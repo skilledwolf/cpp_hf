@@ -7,13 +7,12 @@ complex matrix products and the superlattice exchange run as OpenMP C++
 kernels (FFTW + Eigen) through `jax.ffi`. Importing hartreefock turns on
 `jax_enable_x64`; a solve runs in the dtype of the kernel's arrays.
 
-Two kernel types cover the problems:
-
-* `HartreeFockKernel`: dense meshgrid problems (FFT exchange, optional Hartree
-  and contact terms, reference-density embedding).
-* `SuperlatticeHartreeFockKernel`: moiré plane-wave bases (`g_basis`), with
-  streamed exchange and scalar or orbital-resolved interactions, plus
-  `potential_at` for off-mesh self-energies.
+A `Mesh` holds the k-points and their weights. One `HartreeFockKernel(mesh,
+h, V, T=...)` covers dense meshgrid problems (FFT exchange, optional Hartree
+and contact terms, reference-density embedding) and, with `plane_waves=`,
+moiré plane-wave bases with streamed exchange and `potential_at` for
+off-mesh self-energies. `V` is a callable of |q| or a table on the mesh,
+scalar or orbital-resolved.
 
 Solvers:
 
@@ -54,7 +53,9 @@ pip install -e .
 import numpy as np
 import hartreefock as hf
 
-kernel = hf.HartreeFockKernel(weights, h, Vq, T=0.1)
+mesh = hf.Mesh.square(kmax=1.0, nk=32)
+# h: (32, 32, D, D) Hamiltonian at mesh.ks
+kernel = hf.HartreeFockKernel(mesh, h, lambda q: 2 * np.pi / (q + 0.1), T=0.1)
 P0 = np.zeros_like(h)
 
 dm = hf.solve(kernel, P0, n_electrons, config=hf.SolverConfig(tol_E=1e-8))
