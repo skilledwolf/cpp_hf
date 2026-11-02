@@ -1,7 +1,10 @@
 """The one momentum mesh: integer index arithmetic, Γ rules, transfers."""
 
+import itertools
+
 import numpy as np
 import pytest
+
 from hartreefock import Mesh
 
 _B_TRI = np.array([[1.0, 0.5], [0.0, np.sqrt(3.0) / 2.0]]) * 2 * np.pi
@@ -139,5 +142,5 @@ def test_square_mesh_midpoint_quadrature_converges_for_smooth_function():
         actual = float(np.sum(mesh.weights * values)) * (2.0 * np.pi) ** 2
         errors.append(abs(actual - 8.0 / 3.0))
 
-    assert all(later < earlier for earlier, later in zip(errors, errors[1:]))
+    assert all(later < earlier for earlier, later in itertools.pairwise(errors))
     assert errors[-1] < 3e-3
