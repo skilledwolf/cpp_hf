@@ -118,10 +118,10 @@ def solve_deflated(
 
     # 2. auto-scale bias width/height from the first solution
     if length is None:
-        d0 = float(np.sqrt(max(_wnorm2(np.asarray(r0.density), w2d), 0.0)))
+        d0 = float(np.sqrt(max(_wnorm2(r0.density, w2d), 0.0)))
         length = 0.5 * d0 if d0 > 0.0 else 1.0
     if sigma is None:
-        sigma = max(abs(float(r0.energy)), 1.0)
+        sigma = max(abs(r0.energy), 1.0)
     if distinct_tol is None:
         distinct_tol = 0.25 * length
 
@@ -130,7 +130,7 @@ def solve_deflated(
         found_new = False
         cur_sigma = float(sigma)
         for attempt in range(max_retries):
-            targets = np.stack([np.asarray(s.density) for s in solutions])
+            targets = np.stack([s.density for s in solutions])
             biased_cfg = replace(
                 newton_cfg,
                 deflation_targets=targets,
@@ -164,9 +164,9 @@ def solve_deflated(
         if not found_new:
             break  # no new basin reachable within the budget
 
-    order = np.argsort([float(s.energy) for s in solutions])
+    order = np.argsort([s.energy for s in solutions])
     solutions = [solutions[i] for i in order]
-    energies = np.array([float(s.energy) for s in solutions])
+    energies = np.array([s.energy for s in solutions])
     return DeflatedResult(
         solutions=solutions,
         energies=energies,

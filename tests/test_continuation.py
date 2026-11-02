@@ -33,7 +33,7 @@ def test_continuation_matches_manual_coarse_then_fine():
 
     assert isinstance(combined.fine, hf.SolveResult)
     np.testing.assert_allclose(np.asarray(combined.P0_fine), seed, atol=1e-10)
-    np.testing.assert_allclose(np.asarray(combined.fine.density), np.asarray(fine.density), atol=1e-10)
+    np.testing.assert_allclose(np.asarray(combined.fine.density), fine.density, atol=1e-10)
     assert bool(combined.fine.converged)
     np.testing.assert_allclose(float(combined.fine.energy), float(cold.energy), atol=1e-6)
 

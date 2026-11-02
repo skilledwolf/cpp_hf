@@ -353,8 +353,8 @@ class TestLineSearchAcceptsWhenSaturated:
         monkeypatch.setattr(solver_module, "fock_builder", lambda _: fock_fn)
         result = solve(kernel, P0, n_e, config=cfg)
         jax.block_until_ready(result.energy)
-        assert bool(result.converged)
-        n = int(result.n_iter)
+        assert result.converged
+        n = result.n_iter
         assert n > 0
         # Ceiling when every candidate is rejected: one build at the current
         # state, ``bt_max`` line-search trials, and a fallback trial.
@@ -368,7 +368,7 @@ class TestLineSearchAcceptsWhenSaturated:
                              density_tol=1e-10, comm_tol=1e-9),
         )
         assert bool(scf.converged)
-        np.testing.assert_allclose(float(result.energy), float(scf.energy), atol=1e-7)
+        np.testing.assert_allclose(result.energy, float(scf.energy), atol=1e-7)
 
     def test_newton_converges_and_matches_cg(self):
         kernel = _wide_band_kernel()
@@ -424,7 +424,7 @@ class TestSolveMuEarlyStop:
                 kernel, jnp.zeros_like(kernel.h), n_e,
                 config=SolverConfig(method="cg", max_iter=200, tol_E=1e-10),
             )
-            assert bool(result.converged)
+            assert result.converged
             for label, count in (
                 ("occupations", float(jnp.sum(kernel.w2d[..., None] * result.p))),
                 ("density", float(jnp.sum(

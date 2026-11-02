@@ -7,7 +7,7 @@ import warnings
 
 import jax.numpy as jnp
 
-from ..config import SolverConfig, SolveResult, drop_unrequested
+from ..config import SolverConfig, SolveResult
 from .fock import build_fock, fock_builder
 from .newton import _solve_newton_jitted
 from .riemannian import _solve_jitted
@@ -158,7 +158,7 @@ def minimize(
             block_sizes=config.block_sizes,
             project_fn=config.project_fn,
             fock_build_fn=custom_fock,
-        ), config)
+        ))
 
     return _finish(_solve_jitted(
         P0_arr,
@@ -177,14 +177,12 @@ def minimize(
         block_sizes=config.block_sizes,
         project_fn=config.project_fn,
         fock_build_fn=custom_fock,
-    ), config)
+    ))
 
 
-def _finish(result, config):
-    """Trim the fixed-length history to the iterations run and drop unrequested arrays."""
-    if not _has_tracer(result.n_iter):
-        n_iter = int(result.n_iter)
-        result = result._replace(
-            history={key: value[:n_iter] for key, value in result.history.items()}
-        )
-    return drop_unrequested(result, config)
+def _finish(result):
+    """Trim the fixed-length history to the iterations run."""
+    if _has_tracer(result.n_iter):
+        return result
+    n_iter = int(result.n_iter)
+    return result._replace(history={key: value[:n_iter] for key, value in result.history.items()})

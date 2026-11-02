@@ -211,5 +211,6 @@ def test_noninteracting_start():
     up, down = np.diag(kernel.mean_density(kernel.noninteracting_density(n, field=np.diag([-1.0, 1.0])))).real
     assert up > 10 * down
     result = solve(kernel, None, n)
-    assert result.converged
-    np.testing.assert_allclose(float(result.energy), float(solve(kernel, P, n).energy), atol=1e-8)
+    assert result.converged is True and type(result.energy) is float
+    assert type(result.density) is np.ndarray
+    np.testing.assert_allclose(result.energy, float(solve(kernel, P, n).energy), atol=1e-8)

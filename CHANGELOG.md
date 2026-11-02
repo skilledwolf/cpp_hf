@@ -7,6 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- `hf.solve` results hold NumPy arrays and Python scalars (`float` energy
+  and mu, `int` n_iter, `bool` converged), so callers no longer wrap them in
+  `float()` or `np.asarray()`. Traced calls still return JAX values.
 - An embedded reference (`embed_reference=True`) reports the standard HF
   energy, chemical potential and Fock matrix from `hf.solve`, the
   continuation, deflation and stability tools and `fock_operators`.

@@ -54,7 +54,7 @@ def test_strong_hartree_occupation_residual_and_monotone_free_energy(method):
     np.testing.assert_allclose(result.fock, F, atol=2e-13)
     np.testing.assert_allclose(result.energy, E, atol=2e-13)
     assert np.all(np.diff(np.asarray(result.history["free_energy"])) <= 2e-12)
-    p = np.linalg.eigvalsh(np.asarray(result.density))
+    p = np.linalg.eigvalsh(result.density)
     np.testing.assert_allclose(np.sum(np.asarray(kernel.w2d)[..., None] * p), 1.5, atol=2e-13)
     assert p.min() >= -1e-13 and p.max() <= 1 + 1e-13
     assert result.history["line_search_rejections"] > 0
@@ -67,7 +67,7 @@ def test_budget_one_returns_repaired_exact_consistent_state(method):
     P[..., 0, 0] = 1.8
     P[..., 2, 2] = -.8
     result = solve(kernel, P, 1.5, config=SolverConfig(method=method, max_iter=1))
-    p = np.linalg.eigvalsh(np.asarray(result.density))
+    p = np.linalg.eigvalsh(result.density)
     assert p.min() >= -2e-14 and p.max() <= 1.0 + 2e-14
     np.testing.assert_allclose(np.sum(np.asarray(kernel.w2d)[..., None] * p), 1.5, atol=2e-13)
     F, E, dr, cr = independent_state(kernel, result.density, 1.5)
@@ -99,7 +99,7 @@ def test_entropy_descent_can_increase_internal_energy_and_shift_does_not_bias_so
         density_tol=1e-9, comm_tol=1e-9, max_iter=20))
     assert result.converged, result.message
     expected = np.diag([1.0 / (1.0 + np.exp(-1.0)), 1.0 / (1.0 + np.exp(1.0))])
-    np.testing.assert_allclose(np.asarray(result.density)[0, 0], expected, atol=1e-11)
+    np.testing.assert_allclose(result.density[0, 0], expected, atol=1e-11)
     assert result.energy > -1.0
     assert result.history["free_energy"][-1] < -1.0
 
@@ -158,10 +158,10 @@ def test_complex_coupled_problem_damping_trust_and_precision(method, dtype):
     assert max(dr, cr) <= tol
     np.testing.assert_allclose(result.fock, F, atol=tol)
     np.testing.assert_allclose(result.energy, E, atol=tol)
-    p = np.linalg.eigvalsh(np.asarray(result.density))
+    p = np.linalg.eigvalsh(result.density)
     assert p.min() >= -tol and p.max() <= 1 + tol
     np.testing.assert_allclose(np.sum(np.asarray(kernel.w2d)[..., None] * p), 1.6, atol=tol)
-    assert np.max(np.abs(np.asarray(result.density).imag)) > .01
+    assert np.max(np.abs(result.density.imag)) > .01
 
 
 @pytest.mark.parametrize("method", ["linear", "oda", "rdiis"])

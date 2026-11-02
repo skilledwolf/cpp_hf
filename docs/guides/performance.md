@@ -41,7 +41,7 @@ for dtype, tol in ((np.complex64, 1e-5), (np.complex128, 1e-9)):
         r = hf.solve(kernel, P0.astype(dtype), n, config=config)
         elapsed = time.perf_counter() - t
     results[dtype] = r
-    print(f"{dtype.__name__}: {r.n_iter} iterations, E = {float(r.energy):.10f}, {elapsed * 1e3:.0f} ms (second call)")
+    print(f"{dtype.__name__}: {r.n_iter} iterations, E = {r.energy:.10f}, {elapsed * 1e3:.0f} ms (second call)")
 
 gap = abs(float(results[np.complex128].energy) - float(results[np.complex64].energy))
 print(f"energy difference {gap:.1e}")

@@ -40,10 +40,10 @@ class TestBasicConvergence:
         kernel = _make_two_band_kernel()
         result = _solve_problem(kernel)
 
-        assert int(result.n_iter) <= 100
-        assert bool(result.converged)
-        assert np.isfinite(float(result.energy))
-        assert np.isfinite(float(result.mu))
+        assert result.n_iter <= 100
+        assert result.converged
+        assert np.isfinite(result.energy)
+        assert np.isfinite(result.mu)
 
     def test_density_is_hermitian(self):
         kernel = _make_two_band_kernel()
@@ -76,7 +76,7 @@ class TestBasicConvergence:
         kernel = _make_two_band_kernel()
         result = _solve_problem(kernel)
 
-        n = int(result.n_iter)
+        n = result.n_iter
         # History arrays are pre-allocated to max_iter, but first n entries
         # should be populated with finite values
         assert n > 0
@@ -104,7 +104,7 @@ class TestMultiKPoint:
             config=SolverConfig(method="cg", max_iter=100, tol_E=1e-7),
         )
 
-        assert bool(result.converged)
+        assert result.converged
         rms = _comm_rms(result.fock, result.density, kernel.w2d)
         assert rms < 1e-3
 
@@ -116,7 +116,7 @@ class TestMultiKPoint:
             config=SolverConfig(method="cg", max_iter=200, tol_E=1e-7),
         )
 
-        assert bool(result.converged)
+        assert result.converged
 
 
 class TestPlateauWindow:
@@ -133,9 +133,9 @@ class TestPlateauWindow:
         r_window = solve(kernel, P0, 4.0, config=SolverConfig(
             method="cg",
             max_iter=200, tol_E=1e-8, plateau_window=5))
-        assert bool(r_single.converged) and bool(r_window.converged)
+        assert r_single.converged and r_window.converged
         np.testing.assert_allclose(
-            float(r_window.energy), float(r_single.energy), atol=1e-6)
+            r_window.energy, r_single.energy, atol=1e-6)
 
     def test_default_is_windowed(self):
         assert SolverConfig(method="cg").plateau_window == 5
@@ -181,8 +181,8 @@ class TestGradientStop:
     def test_cg_stops_at_first_crossing_and_flags_converged(self):
         tol = 1e-4
         result = self._solve(SolverConfig(method="cg", max_iter=300, tol_grad=tol))
-        assert bool(result.converged)
-        n = int(result.n_iter)
+        assert result.converged
+        n = result.n_iter
         assert 1 < n < 300
         hG = np.asarray(result.history["grad_norm"][:n])
         # Histories end with the qualifying point, and it is the first
@@ -199,8 +199,8 @@ class TestGradientStop:
 
     def test_cg_unreachable_tolerance_flags_unconverged(self):
         result = self._solve(SolverConfig(method="cg", max_iter=3, tol_grad=1e-14))
-        assert not bool(result.converged)
-        assert int(result.n_iter) == 3
+        assert not result.converged
+        assert result.n_iter == 3
 
 
 class TestSolveResult:
@@ -294,11 +294,11 @@ class TestContactTerms:
             config=SolverConfig(method="cg", max_iter=200, tol_E=1e-9),
         )
 
-        assert bool(result.converged)
-        n = int(result.n_iter)
+        assert result.converged
+        n = result.n_iter
         last_loop_E = float(np.array(result.history["E"])[n - 1])
         np.testing.assert_allclose(
-            last_loop_E, float(result.energy), atol=1e-5, rtol=1e-6,
+            last_loop_E, result.energy, atol=1e-5, rtol=1e-6,
         )
 
     def test_direct_minimization_self_consistent_with_contact(self):
@@ -310,7 +310,7 @@ class TestContactTerms:
             config=SolverConfig(method="cg", max_iter=200, tol_E=1e-9),
         )
 
-        assert bool(result.converged)
+        assert result.converged
         rms = _comm_rms(result.fock, result.density, kernel.w2d)
         assert rms < 1e-3
 
@@ -345,8 +345,8 @@ class TestEdgeCases:
         kernel = _make_two_band_kernel(exchange_strength=0.0)
         result = _solve_problem(kernel, config=SolverConfig(method="cg", max_iter=50, tol_E=1e-8))
 
-        assert int(result.n_iter) <= 50
-        assert np.isfinite(float(result.energy))
+        assert result.n_iter <= 50
+        assert np.isfinite(result.energy)
 
 
 class TestSpectralCayley:
@@ -452,13 +452,13 @@ class TestAdversarialStationarity:
             kernel, P0, 1.0,
             config=SolverConfig(method="cg", max_iter=300, tol_grad=2e-4),
         )
-        assert bool(result.converged)
+        assert result.converged
         np.testing.assert_allclose(
             np.asarray(result.density[0, 0]),
             0.5 * np.eye(2),
             atol=2e-3,
         )
-        n = int(result.n_iter)
+        n = result.n_iter
         free_history = np.asarray(result.history["free_energy"][:n])
         assert np.all(np.diff(free_history) <= 2e-5)
 
@@ -469,7 +469,7 @@ class TestAdversarialStationarity:
             kernel, jnp.zeros_like(kernel.h), n_electrons,
             config=SolverConfig(method="cg", max_iter=20, tol_grad=1e-4),
         )
-        assert bool(result.converged)
+        assert result.converged
         expected = np.eye(2) * (n_electrons / 2.0)
         np.testing.assert_array_equal(np.asarray(result.density[0, 0]), expected)
 

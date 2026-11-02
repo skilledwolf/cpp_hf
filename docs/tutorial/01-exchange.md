@@ -86,7 +86,7 @@ a solve; by default it keeps exchange only. Without a starting density
 ```{code-cell} ipython3
 kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
 result = hf.solve(kernel, None, n)
-print(result.converged, result.n_iter, "iterations,  mu =", round(float(result.mu), 4))
+print(result.converged, result.n_iter, "iterations,  mu =", round(result.mu, 4))
 ```
 
 The Fock matrix minus `h` is the self-energy. Along $k_x$:
@@ -100,7 +100,7 @@ def sigma_exact(k, rs):
     return -2 * np.sqrt(2) * rs / np.pi * np.where(k < 1, inside, outside)
 
 
-sigma = (np.asarray(result.fock) - h)[:, mesh.center_index, 0, 0].real
+sigma = (result.fock - h)[:, mesh.center_index, 0, 0].real
 
 fig, ax = plt.subplots()
 ax.plot(mesh.kx, sigma, "o", ms=3, label="hartreefock")

@@ -23,12 +23,12 @@ def _fixed_point_residual(
     result, kernel: HartreeFockKernel, n_electrons: float
 ) -> float:
     density_fd, _ = density_matrix_from_fock(
-        np.asarray(result.fock),
+        result.fock,
         np.asarray(kernel.w2d),
         n_electrons,
         float(kernel.T),
     )
-    diff = np.asarray(result.density) - density_fd
+    diff = result.density - density_fd
     per_k = np.sum(np.abs(diff) ** 2, axis=(-2, -1))
     return float(
         np.sqrt(
@@ -63,7 +63,7 @@ def test_zero_orbital_gradient_does_not_hide_wrong_occupations(
         ),
     )
 
-    assert bool(result.converged)
+    assert result.converged
     np.testing.assert_allclose(
         np.asarray(result.density[0, 0]), 0.5 * np.eye(2), atol=atol
     )
@@ -95,7 +95,7 @@ def test_finite_temperature_oda_descends_free_energy() -> None:
         ),
     )
 
-    assert bool(result.converged)
+    assert result.converged
     np.testing.assert_allclose(
         np.asarray(result.density[0, 0]),
         np.diag([0.73105858, 0.26894142]),

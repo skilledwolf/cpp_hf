@@ -211,7 +211,7 @@ class TestNewtonConvergence:
         P0 = jnp.zeros_like(K.h)
         ne = float(nk * nk * nb * 0.5)
         r = solve(K, P0, ne, config=SolverConfig(max_iter=200, tol_grad=1e-6, method="newton"))
-        assert bool(r.converged)
+        assert r.converged
         assert _comm_rms(r.fock, r.density, K.w2d) < 1e-4
         P_fd, _ = density_matrix_from_fock(r.fock, K.w2d, ne, T)
         fixed_point_residual = float(jnp.sqrt(
@@ -258,7 +258,7 @@ class TestNewtonConvergence:
                 method="newton", max_iter=100, tol_grad=1e-8,
             ),
         )
-        assert bool(r.converged)
+        assert r.converged
         np.testing.assert_allclose(
             np.asarray(r.density[0, 0]), 0.5 * np.eye(2), atol=1e-7,
         )
@@ -282,7 +282,7 @@ class TestNewtonDispatch:
         K = _contact(nk=2)
         P0 = jnp.zeros_like(K.h)
         r = solve(K, P0, 4.0, config=SolverConfig(max_iter=100, tol_grad=1e-6, method="newton"))
-        assert np.isfinite(float(r.energy))
+        assert np.isfinite(r.energy)
 
     def test_unknown_optimizer_raises(self):
         K = _contact(nk=2)

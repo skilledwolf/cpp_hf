@@ -95,7 +95,7 @@ def sigma_exact(k, rs):
     return -2 * np.sqrt(2) * rs / np.pi * np.where(k < 1, ellipe(np.minimum(k, 1) ** 2), outside)
 
 
-sigma = np.asarray(r.fock) - h
+sigma = r.fock - h
 p_abs = np.linalg.norm(p, axis=-1).ravel()
 on_mesh = sigma[:, :, diag, diag].real.ravel()
 off_diagonal = np.abs(sigma - np.einsum("ija,ab->ijab", sigma[:, :, diag, diag], np.eye(len(g_frac)))).max()

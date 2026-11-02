@@ -119,7 +119,7 @@ layer_imbalance = np.diag(standard.mean_density(r_std.density)).real @ [1, -1] /
 print(f"layer imbalance (n1 - n2)/n = {layer_imbalance:+.4f}")
 print(f"energy: standard {r_std.energy:.8f}   embedded {r_emb.energy:.8f}")
 print(f"mu:     standard {r_std.mu:.8f}   embedded {r_emb.mu:.8f}")
-print(f"largest density difference: {np.abs(np.asarray(r_std.density) - np.asarray(r_emb.density)).max():.1e}")
+print(f"largest density difference: {np.abs(r_std.density - r_emb.density).max():.1e}")
 ```
 
 The bias $\Delta$ pushes charge into the lower layer. Without
@@ -131,7 +131,7 @@ back, more than exchange helps.
 :tags: [remove-cell]
 assert abs(r_emb.energy - r_std.energy) < 1e-8
 assert abs(r_emb.mu - r_std.mu) < 1e-7
-assert np.abs(np.asarray(r_std.density) - np.asarray(r_emb.density)).max() < 1e-6
+assert np.abs(r_std.density - r_emb.density).max() < 1e-6
 ```
 
 ## The interaction as linear maps
@@ -142,15 +142,15 @@ Fock matrix is `h + kernel.potential(P - P_ref)`, so these maps check a
 solution or build a response function by hand:
 
 ```{code-cell} ipython3
-P = np.asarray(r_std.density)
+P = r_std.density
 F = h + standard.potential(P)
-print(f"|F - result.fock| = {np.abs(F - np.asarray(r_std.fock)).max():.1e}")
+print(f"|F - result.fock| = {np.abs(F - r_std.fock).max():.1e}")
 print(f"|[F, P]|          = {np.abs(F @ P - P @ F).max():.1e}")
 ```
 
 ```{code-cell} ipython3
 :tags: [remove-cell]
-assert np.abs(F - np.asarray(r_std.fock)).max() < 1e-8
+assert np.abs(F - r_std.fock).max() < 1e-8
 ```
 
 `kernel.mean_density(P)` is the k-summed density $\bar\rho = \sum_k w_k
@@ -165,5 +165,5 @@ print({name: round(value, 6) for name, value in parts.items()}, f"sum {sum(parts
 
 ```{code-cell} ipython3
 :tags: [remove-cell]
-assert abs(sum(parts.values()) - float(r_std.energy)) < 1e-10
+assert abs(sum(parts.values()) - r_std.energy) < 1e-10
 ```

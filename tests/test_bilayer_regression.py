@@ -109,7 +109,7 @@ def test_scf_energy_matches_reference(bilayer_setup, branch, n_cm12):
     )
     result = hf.solve(kernel, P0, n_e, config=config)
 
-    np.testing.assert_allclose(float(result.energy), E_ref, atol=E_ATOL)
+    np.testing.assert_allclose(result.energy, E_ref, atol=E_ATOL)
     if not result.converged:
         last = result.n_iter - 1
         assert float(result.history["density_residual"][last]) < 3e-7, result.message
@@ -127,4 +127,4 @@ def test_direct_solver_energy_matches_reference(bilayer_setup, branch, n_cm12):
     config = hf.SolverConfig(method="cg", max_iter=200, tol_E=1e-7, project_fn=bilayer_setup[5][branch])
     result = hf.solve(kernel, P0, n_e, config=config)
 
-    np.testing.assert_allclose(float(result.energy), E_ref, atol=E_ATOL)
+    np.testing.assert_allclose(result.energy, E_ref, atol=E_ATOL)

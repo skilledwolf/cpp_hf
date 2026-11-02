@@ -45,7 +45,7 @@ class TestAccelerationAgreement:
             r = solve(K, P0, _NE, config=SolverConfig(
                 max_iter=800, density_tol=1e-6, comm_tol=1e-5,
                 mixing=0.5, method=acc))
-            energies[acc] = float(r.energy)
+            energies[acc] = r.energy
         spread = max(energies.values()) - min(energies.values())
         assert spread < 1e-3, f"schemes disagree on energy: {energies}"
 
@@ -80,7 +80,7 @@ class TestRDIIS:
         r = solve(K, P0, _NE, config=SolverConfig(
             max_iter=800, density_tol=1e-6, comm_tol=1e-5,
             method="rdiis", diis_damping=0.7))
-        assert bool(r.converged)
+        assert r.converged
 
 
 class TestODA:

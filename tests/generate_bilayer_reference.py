@@ -138,7 +138,7 @@ def main():
                 h_template, Vq, n_e, P0, project_fns[branch],
             )
 
-            E = float(result.energy)
+            E = result.energy
             conv = result.converged
 
             key = f"{branch}_{n_cm12:+.2f}"
@@ -147,7 +147,7 @@ def main():
                 "n_iter": result.n_iter,
                 "converged": conv,
                 "n_electrons": n_e,
-                "mu": float(result.mu),
+                "mu": result.mu,
             }
 
             status = "OK" if conv else "FAIL"

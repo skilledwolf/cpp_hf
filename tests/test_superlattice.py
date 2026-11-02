@@ -153,8 +153,8 @@ def test_embedding_solves_standard_hf(x64):
     r_plain = hf.solve(plain, ref, n, config=config)
     r_embedded = hf.solve(embedded, ref, n, config=config)
     assert r_plain.converged and r_embedded.converged
-    np.testing.assert_allclose(float(r_embedded.energy), float(r_plain.energy), atol=1e-9)
-    np.testing.assert_allclose(float(r_embedded.mu), float(r_plain.mu), atol=1e-9)
+    np.testing.assert_allclose(r_embedded.energy, r_plain.energy, atol=1e-9)
+    np.testing.assert_allclose(r_embedded.mu, r_plain.mu, atol=1e-9)
     np.testing.assert_allclose(r_embedded.density, r_plain.density, atol=1e-7)
 
 

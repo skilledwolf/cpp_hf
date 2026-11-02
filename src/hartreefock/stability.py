@@ -452,8 +452,8 @@ def solve_minimum(
         # Legacy SCF histories can stop before the final density/Fock rebuild.
         # Compare every escape against the actual returned state's free energy,
         # using the same spectral entropy as the accepted finite-step trials.
-        p = np.clip(np.linalg.eigvalsh(np.asarray(result.density)), 0.0, 1.0)
-        omega = float(result.energy) + kernel.T * np.sum(
+        p = np.clip(np.linalg.eigvalsh(result.density), 0.0, 1.0)
+        omega = result.energy + kernel.T * np.sum(
             w[..., None] * (xlogy(p, p) + xlogy(1 - p, 1 - p))
         )
         omega = float(omega)
@@ -510,7 +510,7 @@ def solve_minimum(
         # The actual finite-step energy check also covers slightly stalled,
         # nonstationary starting densities where this tangent equality is
         # approximate. Count the exact JVP response as one additional build.
-        density = np.asarray(result.density).astype(ops.dtype)
+        density = result.density.astype(ops.dtype)
         response_field = np.asarray(
             ops.response(density, direction.astype(ops.dtype))
         ) / (1 - stability.lowest_eigenvalue)

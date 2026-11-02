@@ -24,7 +24,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
-from ..config import SolverConfig, SolveResult, drop_unrequested
+from ..config import SolverConfig, SolveResult
 from .fock import fock_builder, free_energy, hf_energy
 from .linalg import adjoint, bmm, hermitian_eigh, hermitian_eigvalsh
 from .utils import (
@@ -188,7 +188,7 @@ def roothaan(
                        "line_search_rejections": int(run_result[11])}
 
     n_iter = int(iterations)
-    return drop_unrequested(SolveResult(
+    return SolveResult(
         density=density,
         fock=fock,
         energy=energy,
@@ -202,7 +202,7 @@ def roothaan(
             "commutator_residual": hist_comm[:n_iter],
             **diagnostics,
         },
-    ), config)
+    )
 
 
 @partial(

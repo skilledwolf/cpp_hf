@@ -59,7 +59,7 @@ def test_repulsive_hartree_minimum_has_positive_curvature():
     kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), hartree=3 * np.eye(2), T=0.5, exchange=False, reference=np.zeros_like(h))
     config = SolverConfig(method="rdiis", density_tol=1e-9, comm_tol=1e-9)
     r = solve(kernel, HALF, 1.0, config=config)
-    s = stability_analysis(kernel, np.asarray(r.density), 1.0)
+    s = stability_analysis(kernel, r.density, 1.0)
     assert s.stationary and s.eigen_converged and s.stable is True
     assert s.lowest_eigenvalue > 0
 
@@ -70,7 +70,7 @@ def test_curvature_matches_free_energy_second_difference():
     kernel = HartreeFockKernel(mesh_for(w), h, np.full((2, 2, 1, 1), 0.2), T=0.4)
     config = SolverConfig(method="rdiis", density_tol=1e-11, comm_tol=1e-11)
     r = solve(kernel, np.zeros_like(h), 0.8, config=config)
-    P = np.asarray(r.density)
+    P = r.density
     s = stability_analysis(kernel, P, 0.8)
     assert s.stable
     D = s.direction

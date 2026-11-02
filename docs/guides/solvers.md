@@ -81,7 +81,7 @@ rows, residuals = [], {}
 for acceleration in ("rdiis", "anderson", "oda", "linear"):
     t = time.perf_counter()
     r = hf.solve(kernel, P0, n, config=hf.SolverConfig(method=acceleration))
-    rows.append((acceleration, r.converged, r.n_iter, float(r.energy), time.perf_counter() - t))
+    rows.append((acceleration, r.converged, r.n_iter, r.energy, time.perf_counter() - t))
     residuals[acceleration] = np.asarray(r.history["density_residual"])
     print(f"{acceleration:>9}: converged {str(r.converged):5}  {r.n_iter:3d} iterations  "
           f"E = {r.energy:.10f}  m = {magnetization(r.density):.4f}  {rows[-1][-1] * 1e3:5.0f} ms")
@@ -124,9 +124,9 @@ the end, rather than the tail of `history["E"]`.
 for optimizer in ("cg", "newton"):
     t = time.perf_counter()
     r = hf.solve(kernel, P0, n, config=hf.SolverConfig(method=optimizer, tol_grad=1e-8, max_iter=500))
-    rows.append((optimizer, bool(r.converged), int(r.n_iter), float(r.energy), time.perf_counter() - t))
-    print(f"{optimizer:>9}: converged {str(bool(r.converged)):5}  {int(r.n_iter):3d} iterations  "
-          f"E = {float(r.energy):.10f}  m = {magnetization(r.density):.4f}  {rows[-1][-1] * 1e3:5.0f} ms")
+    rows.append((optimizer, r.converged, r.n_iter, r.energy, time.perf_counter() - t))
+    print(f"{optimizer:>9}: converged {str(r.converged):5}  {r.n_iter:3d} iterations  "
+          f"E = {r.energy:.10f}  m = {magnetization(r.density):.4f}  {rows[-1][-1] * 1e3:5.0f} ms")
 ```
 
 Every method reaches the same polarized state. Newton takes three
@@ -200,7 +200,7 @@ start = kernel.noninteracting_density(n)
 d = hf.solve_deflated(kernel, start, n, n_solutions=4)
 for s in d.solutions:
     check = hf.stability_analysis(kernel, s.density, n)
-    print(f"E = {float(s.energy):.8f}   |m| = {magnetization(s.density):.3f}   stable = {check.stable}")
+    print(f"E = {s.energy:.8f}   |m| = {magnetization(s.density):.3f}   stable = {check.stable}")
 ```
 
 It finds the paramagnetic saddle and the ferromagnet more than once. The
@@ -216,7 +216,7 @@ tell physically different solutions apart.
 assert abs(c.fine.energy - rows[3][3]) < 1e-8
 ms = sorted(round(magnetization(s.density), 2) for s in d.solutions)
 assert ms[0] == 0.0 and ms[-1] == 1.0
-assert abs(float(d.best.energy) - rows[3][3]) < 1e-6
+assert abs(d.best.energy - rows[3][3]) < 1e-6
 ```
 
 ## Symmetries

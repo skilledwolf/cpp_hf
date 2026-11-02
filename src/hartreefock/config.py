@@ -220,12 +220,6 @@ class SolveResult(NamedTuple):
     p: Any = None
 
 
-def drop_unrequested(result, config):
-    """Replace result arrays the config did not ask for with None."""
-    drop = {n: None for n in ("Q", "density", "fock") if not getattr(config, f"return_{n}")}
-    return result._replace(**drop) if drop else result
-
-
 class ContinuationResult(NamedTuple):
     """Result of :func:`hartreefock.solve_continuation`.
 

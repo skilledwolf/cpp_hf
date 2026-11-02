@@ -124,9 +124,9 @@ def test_stiff_coupled_occupation_problem_converges():
     h = jnp.broadcast_to(jnp.array([[-0.6, 0.12], [0.12, 0.4]], dtype=jnp.complex128), (2, 2, 2, 2))
     K = HartreeFockKernel(mesh_for(w), h, jnp.zeros((2, 2, 1, 1)), hartree=jnp.array([[30., 3.], [3., 20.]]), T=0.2, exchange=False, reference=jnp.zeros_like(h))
     result = solve(K, jnp.zeros_like(h), 1.2, config=SolverConfig(method="newton", max_iter=120, tol_grad=1e-8))
-    assert bool(result.converged)
+    assert result.converged
     np.testing.assert_allclose(jnp.sum(w[..., None] * result.p), 1.2, atol=1e-11)
-    assert int(result.n_iter) < 30
+    assert result.n_iter < 30
 
 
 @pytest.mark.parametrize("optimizer", ["cg", "newton"])
@@ -137,7 +137,7 @@ def test_projected_solver_keeps_density_spectrum_and_stationarity_consistent(opt
     tolerance = 1e-8 if optimizer == "cg" else 1e-9
     result = solve(K, jnp.zeros_like(h), 1.0, config=SolverConfig(
         method=optimizer, max_iter=100, tol_grad=tolerance, project_fn=project))
-    assert bool(result.converged)
+    assert result.converged
     np.testing.assert_allclose(result.density, _density_from_Qp(result.Q, result.p), atol=1e-13)
     np.testing.assert_allclose(result.fock, project(result.fock), atol=1e-13)
     eps = jnp.real(jnp.diagonal(result.fock, axis1=-2, axis2=-1))
@@ -163,10 +163,10 @@ def test_projected_degenerate_trials_use_the_physical_entropy(optimizer):
         ))
 
     def physical_free_energy(result):
-        occupations = np.linalg.eigvalsh(np.asarray(result.density))
+        occupations = np.linalg.eigvalsh(result.density)
         entropy = -np.sum(xlogy(occupations, occupations)
                           + xlogy(1.0 - occupations, 1.0 - occupations))
-        return float(result.energy) - kernel.T * entropy
+        return result.energy - kernel.T * entropy
 
     first, second = run(1), run(2)
     for result in (first, second):
@@ -175,9 +175,9 @@ def test_projected_degenerate_trials_use_the_physical_entropy(optimizer):
     np.testing.assert_allclose(second.history["free_energy"][1], physical_free_energy(first), atol=2e-13)
     assert physical_free_energy(second) <= physical_free_energy(first) + 2e-13
     result = run(200)
-    assert bool(result.converged)
+    assert result.converged
     eps, Q = jnp.linalg.eigh(result.fock)
     expected = _density_from_Qp(Q, jax.nn.sigmoid((result.mu - eps) / kernel.T))
     np.testing.assert_allclose(result.density, expected, atol=2e-7)
-    history = np.asarray(result.history["free_energy"])[:int(result.n_iter)]
+    history = np.asarray(result.history["free_energy"])[:result.n_iter]
     assert np.max(np.diff(history)) <= 2e-12

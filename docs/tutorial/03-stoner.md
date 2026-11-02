@@ -78,7 +78,7 @@ Us = np.array([8.0, 10.0, 11.0, 12.0, 12.5, 13.0, 14.0, 16.0])
 curvature, magnetization = [], []
 for U in Us:
     r = hf.solve(hubbard(U), P_para, n)
-    P = np.asarray(r.density)
+    P = r.density
     check = hf.stability_analysis(hubbard(U), P, n)
     curvature.append(check.lowest_eigenvalue)
     magnetization.append(np.einsum("ij,ij->", weights, (P[..., 0, 0] - P[..., 1, 1]).real) / n)
@@ -125,7 +125,7 @@ above = [13.0, 13.5, 14.0, 15.0]
 found = []
 for U in above:
     m = hf.solve_minimum(hubbard(U), P_para, n)
-    found.append(magnetization_length(np.asarray(m.solution.density)))
+    found.append(magnetization_length(m.solution.density))
     print(f"U = {U:4.1f}:  {m.escapes} escape,  magnetization {found[-1]:.4f},  "
           f"stable = {m.stability.stable},  free energy {m.free_energies[0]:.5f} -> {m.free_energies[-1]:.5f}")
 ```
