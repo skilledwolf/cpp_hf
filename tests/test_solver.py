@@ -483,7 +483,6 @@ class TestSolverInputValidation:
             {"tol_grad": np.inf},
             {"cg_restart": 0},
             {"bt_shrink": 1.0},
-            {"block_sizes": (1.5, 0.5)},
         ],
     )
     def test_invalid_config_domains_raise(self, kwargs):

@@ -21,7 +21,7 @@ from jax import lax
 
 from ..config import SolveResult
 from .fock import build_fock, free_energy, hf_energy
-from .linalg import adjoint, bmm, hermitian_eigh
+from .linalg import adjoint, bmm, eigh, hermitian_eigh
 from .occupations import (
     _occupation_gradient,
     _project_capped_occupations,
@@ -192,12 +192,6 @@ def _norm_vec(x: jax.Array, w_norm: jax.Array) -> jax.Array:
     return jnp.sqrt(jnp.maximum(0.0, _ip_vec(x, x, w_norm)))
 
 
-def _exchange_block_specs(block_sizes):
-    if block_sizes is None:
-        return None
-    return (("sizes", tuple(int(s) for s in block_sizes)),)
-
-
 def _solve_impl(
     P0: jax.Array,
     n_electrons: float,
@@ -225,7 +219,7 @@ def _solve_impl(
     cg_restart: int,
     mu_maxiter: int,
     plateau_window: int,
-    block_sizes: tuple | None,
+    sectors: tuple | None,
     project_fn,
     fock_build_fn=None,
 ) -> SolveResult:
@@ -239,7 +233,7 @@ def _solve_impl(
     (or the :func:`solve` alias) instead.  JIT caching is handled by that wrapper.
 
     Only structurally-static arguments (``max_iter``, ``bt_max``,
-    ``cg_restart``, ``mu_maxiter``, ``block_sizes``, ``project_fn``, plus the
+    ``cg_restart``, ``mu_maxiter``, ``sectors``, ``project_fn``, plus the
     Hartree/exchange/hcp flags from the kernel) are marked as static in the
     JIT decorator.  Float tolerances and step sizes stay dynamic so that
     tuning them does not trigger recompilation.
@@ -250,7 +244,6 @@ def _solve_impl(
 
     _project = project_fn if project_fn is not None else (lambda A: A)
     _fock_fn = fock_build_fn if fock_build_fn is not None else build_fock
-    block_specs = _exchange_block_specs(block_sizes)
 
     w2d = jnp.asarray(weights_b[..., 0, 0], dtype=real_dtype)
     weight_sum_r = jnp.asarray(weight_sum, dtype=real_dtype)
@@ -278,10 +271,10 @@ def _solve_impl(
         include_exchange=include_exchange, include_hartree=include_hartree,
         exchange_hermitian_channel_packing=exchange_hermitian_channel_packing,
         contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
-        exchange_block_specs=block_specs,
+        sectors=sectors,
         project_fn=project_fn,
     )
-    eps0, Q0 = hermitian_eigh(F0)
+    eps0, Q0 = eigh(F0, sectors)
     eps0 = eps0.astype(real_dtype)
     Q0 = Q0.astype(target_dtype)
     mu0 = _solve_mu(eps0, w_norm, n_target_norm,
@@ -379,7 +372,7 @@ def _solve_impl(
             include_exchange=include_exchange, include_hartree=include_hartree,
             exchange_hermitian_channel_packing=exchange_hermitian_channel_packing,
             contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
-            exchange_block_specs=block_specs,
+            sectors=sectors,
             project_fn=project_fn,
         )
         E = hf_energy(
@@ -401,7 +394,7 @@ def _solve_impl(
         # A Fermi-Dirac fixed-point residual remains well-defined at saturated
         # occupations, where the logit gradient is numerically singular.  Both
         # orbital and occupation stationarity are required for convergence.
-        eps_fd, Q_fd = hermitian_eigh(F)
+        eps_fd, Q_fd = eigh(F, sectors)
         mu_fd = _solve_mu(
             eps_fd.astype(real_dtype), w_norm, n_target_norm, mu, T_r,
             maxiter=mu_maxiter,
@@ -479,7 +472,7 @@ def _solve_impl(
                 include_exchange=include_exchange, include_hartree=include_hartree,
                 exchange_hermitian_channel_packing=exchange_hermitian_channel_packing,
                 contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
-                exchange_block_specs=block_specs, project_fn=None,
+                sectors=sectors, project_fn=None,
             )
             E_trial = hf_energy(
                 P_trial, h=h, Sigma=Sigma_trial, H=H_trial,
@@ -548,7 +541,7 @@ def _solve_impl(
             P_mix = _herm(
                 _project(P_cur + lam_fb.astype(target_dtype) * (P_fd - P_cur))
             )
-            p_mix, Q_mix = hermitian_eigh(P_mix)
+            p_mix, Q_mix = eigh(P_mix, sectors)
             p_mix = _project_capped_occupations(
                 p_mix.astype(real_dtype), w_norm, n_target_norm,
             )
@@ -559,7 +552,7 @@ def _solve_impl(
                 include_exchange=include_exchange, include_hartree=include_hartree,
                 exchange_hermitian_channel_packing=exchange_hermitian_channel_packing,
                 contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
-                exchange_block_specs=block_specs, project_fn=None,
+                sectors=sectors, project_fn=None,
             )
             E_mix = hf_energy(
                 P_mix, h=h, Sigma=Sigma_mix, H=H_mix,
@@ -619,7 +612,7 @@ def _solve_impl(
         include_exchange=include_exchange, include_hartree=include_hartree,
         exchange_hermitian_channel_packing=exchange_hermitian_channel_packing,
         contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
-        exchange_block_specs=block_specs,
+        sectors=sectors,
         project_fn=project_fn,
     )
     E_fin = hf_energy(
@@ -627,7 +620,7 @@ def _solve_impl(
     )
 
     # Recheck the full self-consistency residual at the exact returned state.
-    eps_check, Q_check = hermitian_eigh(F_fin)
+    eps_check, Q_check = eigh(F_fin, sectors)
     mu_check = _solve_mu(
         eps_check.astype(real_dtype), w_norm, n_target_norm, mu_fin, T_r,
         maxiter=mu_maxiter,
@@ -646,9 +639,9 @@ def _solve_impl(
             include_exchange=include_exchange, include_hartree=include_hartree,
             exchange_hermitian_channel_packing=exchange_hermitian_channel_packing,
             contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
-            exchange_block_specs=block_specs, project_fn=None,
+            sectors=sectors, project_fn=None,
         )
-        eps_next, Q_next = hermitian_eigh(F_polish)
+        eps_next, Q_next = eigh(F_polish, sectors)
         mu_next = _solve_mu(
             eps_next.astype(real_dtype), w_norm, n_target_norm, mu_check, T_r,
             maxiter=mu_maxiter,
@@ -734,7 +727,7 @@ _solve_jitted = jax.jit(
         "cg_restart",
         "mu_maxiter",
         "plateau_window",
-        "block_sizes",
+        "sectors",
         "project_fn",
         # Optional Fock build override (e.g. superlattice streaming Fock).
         # Captured by identity, so passing the same closure is cache-friendly.

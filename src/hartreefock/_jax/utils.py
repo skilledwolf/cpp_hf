@@ -10,7 +10,7 @@ import numpy as np
 from jax.numpy.fft import fftn, ifftn, ifftshift
 from jax.scipy.special import expit
 
-from .linalg import adjoint, bmm, eigh, normalize_block_specs
+from .linalg import adjoint, bmm, eigh
 
 
 def device_args(kernel) -> dict:
@@ -86,22 +86,14 @@ def selfenergy_fft(
     VR: jax.Array,
     P: jax.Array,
     *,
-    block_specs: Any | None = None,
-    check_offdiag: bool | None = None,
-    offdiag_atol: float = 1e-12,
-    offdiag_rtol: float = 0.0,
+    sectors: tuple[tuple[int, ...], ...] | None = None,
     _apply_ifftshift: bool = True,
     hermitian_channel_packing: bool = False,
 ) -> jax.Array:
-    """Exchange self-energy Σ(k) with optional block-diagonal acceleration.
+    """Exchange self-energy ``Σ(k) = -FFT⁻¹[FFT(P) · VR]``, aligned to the meshgrid.
 
-    Computes Σ(k) = -FFT⁻¹[FFT(P) · VR], aligned to meshgrid (ifftshift).
-
-    When `block_specs` is provided, contimod-style specs are supported and the
-    function will:
-      1) check the off-block magnitude of `P` against `(atol + rtol*max|P|)`,
-      2) run a reduced set of FFTs for the first compatible block partition,
-      3) fall back to the full computation when no spec is compatible.
+    With ``sectors`` (index tuples the density does not couple) only the
+    channels inside each sector are transformed.
 
     When ``_apply_ifftshift=False`` the final ifftshift is skipped.  Use this
     together with a phase-shifted ``VR`` to avoid the data permutation in hot
@@ -125,31 +117,17 @@ def selfenergy_fft(
             "with shape (..., 1, 1)."
         )
 
-    if block_specs is None:
-        result = _selfenergy_fft_full(
-            VR,
-            P,
-            hermitian_channel_packing=hermitian_channel_packing,
-        )
+    if sectors is None:
+        result = _selfenergy_fft_full(VR, P, hermitian_channel_packing=hermitian_channel_packing)
     else:
-        specs = normalize_block_specs(block_specs)
-        if not specs:
-            result = _selfenergy_fft_full(
-                VR,
-                P,
-                hermitian_channel_packing=hermitian_channel_packing,
+        result = jnp.zeros_like(P)
+        for idx in sectors:
+            i = jnp.asarray(idx, dtype=jnp.int32)
+            V_i = VR if VR.shape[-2:] == (1, 1) else VR[..., i[:, None], i[None, :]]
+            sigma = _selfenergy_fft_full(
+                V_i, P[..., i[:, None], i[None, :]], hermitian_channel_packing=hermitian_channel_packing
             )
-        else:
-            check = bool(check_offdiag) if check_offdiag is not None else True
-            result = _selfenergy_fft_block_specs(
-                VR,
-                P,
-                specs,
-                check_offdiag=check,
-                offdiag_atol=float(offdiag_atol),
-                offdiag_rtol=float(offdiag_rtol),
-                hermitian_channel_packing=hermitian_channel_packing,
-            )
+            result = result.at[..., i[:, None], i[None, :]].set(sigma)
 
     if _apply_ifftshift:
         return ifftshift(result, axes=(0, 1))
@@ -190,144 +168,6 @@ def _selfenergy_fft_full(
         return _selfenergy_fft_scalar_hermitian_channels(VR, P)
     P_fft = fftn(P, axes=(0, 1))
     return -ifftn(P_fft * VR, axes=(0, 1))
-
-
-def _mask_from_block_sizes(block_sizes: tuple[int, ...], n: int) -> jax.Array:
-    mask = np.ones((int(n), int(n)), dtype=bool)
-    start = 0
-    for size in block_sizes:
-        stop = start + int(size)
-        mask[start:stop, start:stop] = False
-        start = stop
-    return jnp.asarray(mask)
-
-
-def _mask_from_block_indices(block_indices: tuple[tuple[int, ...], ...], n: int) -> jax.Array:
-    mask = np.ones((int(n), int(n)), dtype=bool)
-    for idx in block_indices:
-        idx_arr = np.asarray(idx, dtype=int)
-        mask[np.ix_(idx_arr, idx_arr)] = False
-    return jnp.asarray(mask)
-
-
-def _slice_interaction(VR: jax.Array, idx: slice | jax.Array) -> jax.Array:
-    if VR.shape[-2] == 1 and VR.shape[-1] == 1:
-        return VR
-    return VR[..., idx, idx]
-
-
-def _take_interaction(VR: jax.Array, idx: jax.Array) -> jax.Array:
-    if VR.shape[-2] == 1 and VR.shape[-1] == 1:
-        return VR
-    return jnp.take(jnp.take(VR, idx, axis=-2), idx, axis=-1)
-
-
-def _selfenergy_fft_block_sizes(
-    VR: jax.Array,
-    P: jax.Array,
-    block_sizes: tuple[int, ...],
-    *,
-    hermitian_channel_packing: bool = False,
-) -> jax.Array:
-    n = int(P.shape[-1])
-    if sum(int(s) for s in block_sizes) != n:
-        raise ValueError(f"block_sizes must sum to {n}.")
-
-    out = jnp.zeros_like(P)
-    start = 0
-    for size in block_sizes:
-        stop = start + int(size)
-        s = slice(start, stop)
-        sigma_block = _selfenergy_fft_full(
-            _slice_interaction(VR, s),
-            P[..., s, s],
-            hermitian_channel_packing=hermitian_channel_packing,
-        )
-        out = out.at[..., s, s].set(sigma_block)
-        start = stop
-    return out
-
-
-def _selfenergy_fft_block_indices(
-    VR: jax.Array,
-    P: jax.Array,
-    block_indices: tuple[tuple[int, ...], ...],
-    *,
-    hermitian_channel_packing: bool = False,
-) -> jax.Array:
-    out = jnp.zeros_like(P)
-    for idx in block_indices:
-        idx_j = jnp.asarray(idx, dtype=jnp.int32)
-        sub = jnp.take(jnp.take(P, idx_j, axis=-2), idx_j, axis=-1)
-        sigma_block = _selfenergy_fft_full(
-            _take_interaction(VR, idx_j),
-            sub,
-            hermitian_channel_packing=hermitian_channel_packing,
-        )
-        out = out.at[..., idx_j[:, None], idx_j[None, :]].set(sigma_block)
-    return out
-
-
-def _selfenergy_fft_block_specs(
-    VR: jax.Array,
-    P: jax.Array,
-    block_specs: tuple[tuple[str, tuple[Any, ...]], ...],
-    *,
-    check_offdiag: bool,
-    offdiag_atol: float,
-    offdiag_rtol: float,
-    hermitian_channel_packing: bool = False,
-) -> jax.Array:
-    n = int(P.shape[-1])
-    if check_offdiag:
-        abs_P = jnp.abs(P)
-        scale = jnp.max(abs_P)
-        tol = jnp.asarray(offdiag_atol, dtype=abs_P.dtype) + jnp.asarray(offdiag_rtol, dtype=abs_P.dtype) * scale
-
-    def do_full(_):
-        return _selfenergy_fft_full(
-            VR,
-            P,
-            hermitian_channel_packing=hermitian_channel_packing,
-        )
-
-    fn = do_full
-
-    for kind, data in reversed(block_specs):
-        kind = str(kind).strip().lower()
-        if kind == "sizes":
-            sizes = tuple(int(x) for x in data)
-            mask = _mask_from_block_sizes(sizes, n)
-            ok = (jnp.max(abs_P * mask) <= tol) if check_offdiag else jnp.array(True)
-
-            def do_block(_, *, _sizes=sizes):
-                return _selfenergy_fft_block_sizes(
-                    VR,
-                    P,
-                    _sizes,
-                    hermitian_channel_packing=hermitian_channel_packing,
-                )
-
-        elif kind == "indices":
-            blocks = tuple(tuple(int(i) for i in b) for b in data)
-            mask = _mask_from_block_indices(blocks, n)
-            ok = (jnp.max(abs_P * mask) <= tol) if check_offdiag else jnp.array(True)
-
-            def do_block(_, *, _blocks=blocks):
-                return _selfenergy_fft_block_indices(
-                    VR,
-                    P,
-                    _blocks,
-                    hermitian_channel_packing=hermitian_channel_packing,
-                )
-
-        else:
-            raise ValueError("block_specs kind must be 'sizes' or 'indices'.")
-
-        prev_fn = fn
-        fn = (lambda _prev, _ok, _do: (lambda _: jax.lax.cond(_ok, _do, _prev, operand=None)))(prev_fn, ok, do_block)
-
-    return fn(None)
 
 
 def find_chemical_potential(
@@ -506,10 +346,7 @@ def density_matrix_from_fock(
     n_electrons: float,
     T: float,
     *,
-    eigh_block_specs: object | None = None,
-    eigh_check_offdiag: bool | None = None,
-    eigh_offdiag_atol: float = 1e-12,
-    eigh_offdiag_rtol: float = 0.0,
+    sectors: tuple[tuple[int, ...], ...] | None = None,
 ) -> tuple[jax.Array, jax.Array]:
     """Build a physical density matrix P(k) from a (Hermitian) Fock matrix F(k)."""
     F = hermitize(jnp.asarray(F))
@@ -520,13 +357,7 @@ def density_matrix_from_fock(
         n_electrons,
         context="n_electrons",
     )
-    eps, U = eigh(
-        F,
-        block_specs=eigh_block_specs,
-        check_offdiag=eigh_check_offdiag,
-        offdiag_atol=eigh_offdiag_atol,
-        offdiag_rtol=eigh_offdiag_rtol,
-    )
+    eps, U = eigh(F, sectors)
     mu = find_chemical_potential(eps, jnp.asarray(weights), n_electrons=float(n_electrons), T=float(T))
     occ = fermidirac(eps - mu, float(T))
     P = bmm(U * occ[..., None, :].astype(U.dtype), adjoint(U))

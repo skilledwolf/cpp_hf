@@ -23,7 +23,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from contimod.meanfield import SelfEnergySeed
-from contimod.utils.spectrum_fermi import FermiParams
+from contimod.utils import pauli
 
 import hartreefock
 from hartreefock import SolverConfig, solve
@@ -49,10 +49,8 @@ BRANCHES = ("PM", "SVP")
 
 def build_problem():
     """Set up bilayer graphene HF problem via contimod."""
-    model = cm.graphene.Bernal(2, valleyful=True, spinful=True, U=float(U_MEV))
-    h_template = model.discretize(
-        nk=NK, kmax=KMAX, fermi=FermiParams(T=TEMPERATURE, mu=0.0),
-    )
+    model = cm.graphene.Bernal(2, valley="conserved", spin="conserved", U=float(U_MEV))
+    h_template = model.discretize(nk=NK, kmax=KMAX, T=TEMPERATURE)
 
     ne_cn = float(h_template.state.density_from_filling(0.5 - 1e-6))
 
@@ -64,17 +62,18 @@ def build_problem():
     Vq = np.asarray(Vq)[..., None, None]
 
     # Symmetry operators
-    identity_op = np.asarray(model.identity)
-    s1, s2, s3 = [np.asarray(model.spin_op(i)) for i in (1, 2, 3)]
-    v1, v3 = np.asarray(model.valley_op(1)), np.asarray(model.valley_op(3))
+    basis = h_template.basis
+    identity_op = np.eye(basis.dim)
+    s1, s2, s3 = (basis.op("spin", pauli[i]) for i in (1, 2, 3))
+    v1, v3 = (basis.op("valley", pauli[i]) for i in (1, 3))
     U_tr = cg_symmetry.make_time_reversal_U(s2, v1)
 
     projector_sv = 0.25 * (identity_op + s3) @ (identity_op + v3)
     sv_contrast = -projector_sv + 3.0 * (identity_op - projector_sv)
 
     seeds = {
-        "PM": h_template.get_operator("zero"),
-        "SVP": -float(INIT_SCALE) * h_template.get_operator(sv_contrast),
+        "PM": np.zeros_like(identity_op),
+        "SVP": -float(INIT_SCALE) * sv_contrast,
     }
 
     G_pm = cg_symmetry.make_pm_group(identity_op, s1, s2, s3, v3)
@@ -100,13 +99,13 @@ def build_problem():
 def init_density_from_seed(h_run, seed_op):
     seed_op = np.asarray(seed_op)
     if not np.any(seed_op):  # the zero (PM) seed is the empty density
-        return np.zeros_like(np.asarray(h_run.hs))
-    return SelfEnergySeed(seed_op).to_density(h_run, h_run.state.density(), T=float(h_run.fermi.T))
+        return np.zeros_like(h_run.matrices)
+    return SelfEnergySeed(seed_op).to_density(h_run, h_run.state.density(), T=float(h_run.T))
 
 
 def solve_scf_point(h_template, Vq, n_electrons, P0, project_fn):
     """Solve one HF point with the reference SCF solver."""
-    kernel = hartreefock.HartreeFockKernel(h_template.kmesh, np.asarray(h_template.hs), Vq, T=TEMPERATURE, exchange=True)
+    kernel = hartreefock.HartreeFockKernel(h_template.kmesh, h_template.matrices, Vq, T=TEMPERATURE, exchange=True)
     config = SolverConfig(
         max_iter=500,
         mixing=0.2,
@@ -128,9 +127,7 @@ def main():
         print(f"\n=== {branch} ===")
         for n_cm12 in DENSITY_POINTS_CM12:
             dd = n_cm12 * 1e12 * (PER_CM ** 2)
-            h_run = h_template.copy()
-            h_run.fermi = FermiParams(T=TEMPERATURE, mu=0.0)
-            h_run = h_run.with_chemical_potential(density=float(ne_cn + dd))
+            h_run = h_template.with_chemical_potential(density=float(ne_cn + dd))
             n_e = float(h_run.state.density() / h_run.basis.multiplicity)
 
             P0 = init_density_from_seed(h_run, seeds[branch])

@@ -25,13 +25,6 @@ def _check_int(cfg, names):
             raise ValueError(f"{name} must be an integer")
 
 
-def _check_blocks(block_sizes):
-    if block_sizes is not None and any(
-        isinstance(s, bool) or not isinstance(s, Integral) or s <= 0 for s in block_sizes
-    ):
-        raise ValueError("block_sizes entries must be positive integers")
-
-
 @dataclass(frozen=True, kw_only=True)
 class SolverConfig:
     """Options of :func:`hartreefock.solve`: the method and its stopping rule.
@@ -91,9 +84,6 @@ class SolverConfig:
         ``deflation_length`` around each density in ``deflation_targets``
         (shape ``(n, nk1, nk2, nb, nb)``), Newton only; normally set by
         :func:`hartreefock.solve_deflated`.
-    block_sizes : tuple of int, optional
-        Block sizes of a block-diagonal Fock matrix, for a faster eigensolver
-        (direct minimization).
     project_fn : callable, optional
         A linear, orthogonal, trace-preserving projection onto a matrix algebra,
         applied to every density and Fock matrix (see :mod:`hartreefock.symmetry`).
@@ -126,7 +116,6 @@ class SolverConfig:
     deflation_targets: Any = None
     deflation_sigma: float = 0.0
     deflation_length: float = 1.0
-    block_sizes: tuple[int, ...] | None = None
     project_fn: Callable[[Any], Any] | None = None
     return_Q: bool = True
     return_density: bool = True
@@ -167,7 +156,6 @@ class SolverConfig:
             raise ValueError("bt_shrink must be strictly between 0 and 1")
         if not isinstance(self.safeguard, bool):
             raise ValueError("safeguard must be a bool")
-        _check_blocks(self.block_sizes)
         if self.project_fn is not None and not callable(self.project_fn):
             raise ValueError("project_fn must be callable or None")
 

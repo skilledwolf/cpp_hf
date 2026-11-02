@@ -69,7 +69,7 @@ def minimize(
 
     JIT cache strategy: only *structurally static* config fields trigger
     recompilation — loop-bound integers (``max_iter``, ``bt_max``,
-    ``cg_restart``, ``mu_maxiter``), the optional ``block_sizes`` tuple,
+    ``cg_restart``, ``mu_maxiter``), the kernel's ``sectors``,
     and ``project_fn`` (callable identity).  Float tolerances and step
     sizes (``tol_E``, ``tol_grad``, ``max_step``, ``bt_shrink``,
     ``denom_scale``) stay dynamic and can be tuned between calls without
@@ -89,10 +89,6 @@ def minimize(
         context="n_electrons",
     )
     validate_temperature(kernel.T, context="kernel.T")
-    if config.block_sizes is not None and sum(config.block_sizes) != kernel.h.shape[-1]:
-        raise ValueError(
-            f"block_sizes must sum to {kernel.h.shape[-1]}, got {sum(config.block_sizes)}."
-        )
 
     builder = fock_builder(kernel)
     custom_fock = None if builder is build_fock else builder
@@ -155,7 +151,6 @@ def minimize(
             max_iter=int(config.max_iter),
             tr_cg_max=int(config.tr_cg_max),
             mu_maxiter=int(config.mu_maxiter),
-            block_sizes=config.block_sizes,
             project_fn=config.project_fn,
             fock_build_fn=custom_fock,
         ))
@@ -174,7 +169,6 @@ def minimize(
         cg_restart=int(config.cg_restart),
         mu_maxiter=int(config.mu_maxiter),
         plateau_window=int(config.plateau_window),
-        block_sizes=config.block_sizes,
         project_fn=config.project_fn,
         fock_build_fn=custom_fock,
     ))

@@ -146,6 +146,12 @@ class HartreeFockKernel:
         ``ρ̄ = Σ_k w_k (P_k - refP_k)``.  A term other than its own h.c.
         partner ``(g, O_j†, O_i†)`` gets the partner added, so
         ``(U, n_up, n_down)`` is the Hubbard ``U n_up n_down``.
+    sectors : sequence of index sequences, optional
+        A partition of the basis that ``h``, the reference and the contact
+        terms do not couple: a conserved quantum number, such as a valley no
+        term mixes.  The solvers diagonalize each sector on its own and
+        transform only the exchange channels inside a sector, so the density
+        stays block diagonal.
     """
 
     def __init__(
@@ -162,6 +168,7 @@ class HartreeFockKernel:
         reference=None,
         embed_reference: bool = False,
         contact_terms=None,
+        sectors=None,
     ):
         if not isinstance(mesh, Mesh):
             raise TypeError(f"mesh must be a hartreefock.Mesh, got {type(mesh).__name__}")
@@ -210,6 +217,8 @@ class HartreeFockKernel:
         else:
             self._init_dense(V, hartree)
 
+        self.sectors = self._sectors(sectors)
+
         self.embed_reference = bool(embed_reference)
         self.embedded_energy_offset = 0.0
         if self.embed_reference:
@@ -218,6 +227,24 @@ class HartreeFockKernel:
             self._embed_reference()
 
     # ----- construction -------------------------------------------------------------
+
+    def _sectors(self, sectors):
+        if sectors is None:
+            return None
+        sectors = tuple(tuple(int(i) for i in idx) for idx in sectors)
+        D = self.h.shape[-1]
+        if sorted(i for idx in sectors for i in idx) != list(range(D)):
+            raise ValueError(f"sectors must partition the {D} basis states")
+        coupled = np.ones((D, D), dtype=bool)
+        for idx in sectors:
+            coupled[np.ix_(idx, idx)] = False
+        for name, A in (("h", self.h), ("reference", self.refP),
+                        ("contact O_i", self.contact_Oi), ("contact O_j", self.contact_Oj)):
+            leak = float(np.max(np.abs(A[..., coupled]), initial=0.0))
+            if leak > 1e-10 * max(float(np.max(np.abs(A), initial=0.0)), 1.0):
+                raise ValueError(f"{name} couples the sectors (|off-sector| = {leak:.2e})")
+        self._sector_mask = (~coupled).astype(self.h.real.dtype)
+        return sectors
 
     def _contact(self, terms, D) -> None:
         # Always at least one (possibly zero) term, so jitted shapes are static.
@@ -354,6 +381,10 @@ class HartreeFockKernel:
         H = np.asarray(self.h, dtype=np.complex128) + (0.0 if field is None else np.asarray(field))
         return fermi_density(H, self.w2d.astype(np.float64), float(n_electrons), self.T)[0]
 
+    def within_sectors(self, P):
+        """``P`` with the blocks between different :attr:`sectors` set to zero."""
+        return P if self.sectors is None else P * self._sector_mask
+
     def mean_density(self, P):
         """The k-summed density ``ρ̄ = Σ_k w_k P_k`` ``(D, D)``; its diagonal holds the orbital occupations."""
         return _namespace(P).einsum("ij,ijab->ab", self.w2d, P)
@@ -479,4 +510,5 @@ class HartreeFockKernel:
             contact_g=self.contact_g,
             contact_Oi=self.contact_Oi,
             contact_Oj=self.contact_Oj,
+            sectors=self.sectors,
         )

@@ -26,7 +26,7 @@ import jax.numpy as jnp
 
 from ..config import SolverConfig, SolveResult
 from .fock import fock_builder, free_energy, hf_energy
-from .linalg import adjoint, bmm, hermitian_eigh, hermitian_eigvalsh
+from .linalg import adjoint, bmm, eigh, hermitian_eigvalsh
 from .utils import (
     device_args,
     fermidirac,
@@ -50,9 +50,9 @@ def _weighted_matrix_norm(matrix, weights, weight_sum):
 _ODA_N_TOL = 1e-8
 
 
-def _density_from_fock(fock, *, weights, n_electrons, temperature, level_shift):
+def _density_from_fock(fock, *, weights, n_electrons, temperature, level_shift, sectors=None):
     """Diagonalize Fock, find mu, build P = V diag(f) V†."""
-    eigenvalues, orbitals = hermitian_eigh(_herm(fock))
+    eigenvalues, orbitals = eigh(_herm(fock), sectors)
     mu_raw = find_chemical_potential(eigenvalues, weights, n_electrons, temperature)
     occ_raw = fermidirac(eigenvalues - mu_raw, temperature)
     level_shift = jnp.asarray(level_shift, dtype=eigenvalues.dtype)
@@ -177,6 +177,7 @@ def roothaan(
             acceleration=config.method,
             project_fn=config.project_fn,
             fock_build_fn=fock_builder(kernel),
+            sectors=kernel.sectors,
             **extra_args,
         )
 
@@ -210,7 +211,7 @@ def roothaan(
     static_argnames=(
         "include_hartree", "include_exchange",
         "exchange_hermitian_channel_packing",
-        "max_iter", "acceleration", "project_fn", "fock_build_fn",
+        "max_iter", "acceleration", "project_fn", "fock_build_fn", "sectors",
     ),
 )
 def _run_scf(
@@ -223,7 +224,7 @@ def _run_scf(
     contact_g, contact_Oi, contact_Oj,
     mixing, level_shift, density_tol, comm_tol,
     trust_radius, max_iter, acceleration, project_fn,
-    fock_build_fn,
+    fock_build_fn, sectors,
 ):
     real_dtype = jnp.zeros((), dtype=h.dtype).real.dtype
     weights_2d = w2d
@@ -242,7 +243,7 @@ def _run_scf(
             density_h, h=h, VR=VR, refP=refP, HH=HH, w2d=w2d,
             include_exchange=include_exchange, include_hartree=include_hartree,
             exchange_hermitian_channel_packing=exchange_hermitian_channel_packing,
-            contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
+            contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj, sectors=sectors,
             project_fn=project_fn,
         )
 
@@ -256,7 +257,7 @@ def _run_scf(
         Omega = free_energy(E, density_eigs, weights_2d, T)
         P_new, mu = _density_from_fock(
             F, weights=weights_2d, n_electrons=n_electrons,
-            temperature=T, level_shift=level_shift,
+            temperature=T, level_shift=level_shift, sectors=sectors,
         )
         P_new = _herm(jnp.asarray(_project(P_new), dtype=h.dtype))
         return P_new, F, E, Omega, mu

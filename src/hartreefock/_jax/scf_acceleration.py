@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 
 from .fock import hf_energy, occupation_entropy
-from .linalg import adjoint, bmm, hermitian_eigh, hermitian_eigvalsh
+from .linalg import adjoint, bmm, eigh, hermitian_eigvalsh
 from .scf import _herm, _weighted_matrix_norm
 from .utils import fermidirac, find_chemical_potential
 
@@ -75,6 +75,7 @@ def _capped_occupations(eigenvalues, weights, count):
 @partial(jax.jit, static_argnames=(
     "include_hartree", "include_exchange", "exchange_hermitian_channel_packing",
     "max_iter", "acceleration", "diis_size", "project_fn", "fock_build_fn", "safeguard",
+    "sectors",
 ))
 def _run_accelerated_scf(
     density0, *, h, weights_b, weight_sum, VR, T, refP, HH, w2d,
@@ -82,7 +83,7 @@ def _run_accelerated_scf(
     exchange_hermitian_channel_packing, contact_g, contact_Oi, contact_Oj,
     mixing, level_shift, density_tol, comm_tol, diis_start, diis_damping,
     trust_radius, max_iter, acceleration, diis_size, project_fn, fock_build_fn,
-    safeguard,
+    safeguard, sectors,
 ):
     dtype = h.real.dtype
     eps = jnp.finfo(dtype).eps
@@ -95,7 +96,7 @@ def _run_accelerated_scf(
 
     def entropy_and_repair(P):
         P = project(P)
-        p, Q = hermitian_eigh(P)
+        p, Q = eigh(P, sectors)
         count = jnp.sum(w2d[..., None] * p) / ws
         bad = ((jnp.min(p) < -8.0 * eps) | (jnp.max(p) > 1.0 + 8.0 * eps)
                | (jnp.abs(count - normalized_count) > 8.0 * eps * max(1, h.shape[-1])))
@@ -109,7 +110,7 @@ def _run_accelerated_scf(
         return P, occupation_entropy(p, w2d)
 
     def fermi_density(F, shift=0.0):
-        bands, Q = hermitian_eigh(_herm(F))
+        bands, Q = eigh(_herm(F), sectors)
         mu = find_chemical_potential(bands, w2d, n_electrons, T)
         p = fermidirac(bands - mu, T)
 
@@ -133,7 +134,7 @@ def _run_accelerated_scf(
             P, h=h, VR=VR, refP=refP, HH=HH, w2d=w2d,
             include_exchange=include_exchange, include_hartree=include_hartree,
             exchange_hermitian_channel_packing=exchange_hermitian_channel_packing,
-            contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
+            contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj, sectors=sectors,
             project_fn=project_fn,
         )
         E = hf_energy(P, h=h, Sigma=Sigma, H=H, weights_b=weights_b, refP=refP)

@@ -49,10 +49,7 @@ def build_fock(
     contact_g: jax.Array | None = None,
     contact_Oi: jax.Array | None = None,
     contact_Oj: jax.Array | None = None,
-    exchange_block_specs: Any | None = None,
-    exchange_check_offdiag: bool | None = None,
-    exchange_offdiag_atol: float = 1e-12,
-    exchange_offdiag_rtol: float = 0.0,
+    sectors: tuple[tuple[int, ...], ...] | None = None,
     project_fn=None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Build Fock matrix and return (Sigma, H_hartree, F).
@@ -72,10 +69,7 @@ def build_fock(
         selfenergy_fft(
             VR,
             w2d[..., None, None] * (P - refP),
-            block_specs=exchange_block_specs,
-            check_offdiag=exchange_check_offdiag,
-            offdiag_atol=exchange_offdiag_atol,
-            offdiag_rtol=exchange_offdiag_rtol,
+            sectors=sectors,
             _apply_ifftshift=False,
             hermitian_channel_packing=exchange_hermitian_channel_packing,
         )

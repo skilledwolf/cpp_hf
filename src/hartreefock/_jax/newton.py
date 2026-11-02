@@ -9,7 +9,7 @@ from jax import lax
 
 from ..config import SolveResult
 from .fock import build_fock, free_energy, hf_energy
-from .linalg import adjoint, bmm, hermitian_eigh
+from .linalg import adjoint, bmm, eigh
 from .occupations import (
     _active_occupations,
     _logit_clip_eps,
@@ -23,7 +23,6 @@ from .riemannian import (
     _cayley_spectral_setup,
     _cayley_unitary_from_spectrum,
     _density_from_Qp,
-    _exchange_block_specs,
     _fock_in_orbital_basis,
     _herm,
     _ip_matrix,
@@ -144,7 +143,7 @@ def _solve_newton_impl(
     max_iter: int,
     tr_cg_max: int,
     mu_maxiter: int,
-    block_sizes: tuple | None,
+    sectors: tuple | None,
     project_fn,
     fock_build_fn=None,
 ) -> SolveResult:
@@ -163,7 +162,6 @@ def _solve_newton_impl(
 
     _project = project_fn if project_fn is not None else (lambda A: A)
     _fock_fn = fock_build_fn if fock_build_fn is not None else build_fock
-    block_specs = _exchange_block_specs(block_sizes)
 
     w2d = jnp.asarray(weights_b[..., 0, 0], dtype=real_dtype)
     weight_sum_r = jnp.asarray(weight_sum, dtype=real_dtype)
@@ -195,7 +193,7 @@ def _solve_newton_impl(
             include_exchange=include_exchange, include_hartree=include_hartree,
             exchange_hermitian_channel_packing=exchange_hermitian_channel_packing,
             contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
-            exchange_block_specs=block_specs, project_fn=None,
+            sectors=sectors, project_fn=None,
         )
 
     def _fock_response(P, dP):
@@ -210,7 +208,7 @@ def _solve_newton_impl(
             include_exchange=include_exchange, include_hartree=include_hartree,
             exchange_hermitian_channel_packing=exchange_hermitian_channel_packing,
             contact_g=contact_g, contact_Oi=contact_Oi, contact_Oj=contact_Oj,
-            exchange_block_specs=block_specs, project_fn=None,
+            sectors=sectors, project_fn=None,
         )
         return F_resp
 
@@ -260,7 +258,7 @@ def _solve_newton_impl(
         Ft = _fock_in_orbital_basis(Q, _herm(_project(F)))
         diff_p = p[..., None, :] - p[..., :, None]
         G = _skew_hermitian(diff_p * Ft) * offdiag
-        eps, V_fd = hermitian_eigh(Ft)
+        eps, V_fd = eigh(Ft, sectors)
         eps = eps.astype(real_dtype)
         mu_fd = _solve_mu(
             eps, w_norm, n_target_norm, jnp.asarray(0.0, dtype=real_dtype),
@@ -279,7 +277,7 @@ def _solve_newton_impl(
     P0_h = _herm(_project(jnp.asarray(P0, dtype=target_dtype)))
     _, _, F0 = _fock_full(P0_h)
     F0 = _herm(_project(F0))
-    eps0, Q0 = hermitian_eigh(F0)
+    eps0, Q0 = eigh(F0, sectors)
     eps0 = eps0.astype(real_dtype)
     Q0 = Q0.astype(target_dtype)
     mu0 = _solve_mu(eps0, w_norm, n_target_norm,
@@ -468,7 +466,7 @@ def _solve_newton_impl(
         # preserves the particle count (convex density mixing), is represented
         # by a consistent eigendecomposition (Q,p), and is accepted only on
         # true free-energy descent.
-        eps_fd, V_fd = hermitian_eigh(Ft)
+        eps_fd, V_fd = eigh(Ft, sectors)
         mu_fd = _solve_mu(
             eps_fd.astype(real_dtype), w_norm, n_target_norm, mu, T_r,
             maxiter=mu_maxiter,
@@ -485,7 +483,7 @@ def _solve_newton_impl(
         def fb_body(state):
             i, lam_fb, _accepted_fb, *_rest = state
             P_mix = _herm(_project(P_cur + lam_fb.astype(target_dtype) * (P_fd - P_cur)))
-            p_mix, Q_mix = hermitian_eigh(P_mix)
+            p_mix, Q_mix = eigh(P_mix, sectors)
             p_mix = _project_capped_occupations(
                 p_mix.astype(real_dtype), w2d, n_target,
             )
@@ -566,7 +564,7 @@ def _solve_newton_impl(
         P_fin, h=h, Sigma=Sigma_fin, H=H_fin, weights_b=weights_b, refP=refP,
     )
     F_fin = _herm(_project(F_fin))
-    eps_check, Q_check = hermitian_eigh(F_fin)
+    eps_check, Q_check = eigh(F_fin, sectors)
     mu_check = _solve_mu(
         eps_check.astype(real_dtype), w_norm, n_target_norm, mu_fin, T_r,
         maxiter=mu_maxiter,
@@ -610,7 +608,7 @@ _solve_newton_jitted = jax.jit(
         "max_iter",
         "tr_cg_max",
         "mu_maxiter",
-        "block_sizes",
+        "sectors",
         "project_fn",
         "fock_build_fn",
     ),

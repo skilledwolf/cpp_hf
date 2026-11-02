@@ -221,8 +221,11 @@ assert abs(d.best.energy - rows[3][3]) < 1e-6
 
 ## Symmetries
 
-`block_sizes` in either config tells the eigensolver that the Fock matrix is
-block diagonal. `project_fn` averages every density and Fock matrix over a
+`HartreeFockKernel(..., sectors=...)` partitions the orbitals into sectors
+that nothing couples, such as the spin or valley blocks: the kernel checks
+that `h`, the reference and the contact interaction respect them, and every
+solver then diagonalizes and builds the exchange one sector at a time.
+`project_fn` averages every density and Fock matrix over a
 symmetry group, which keeps a solve in a symmetry sector;
 {func}`hartreefock.symmetry.make_project_fn` builds one from unitary,
 spatial and time-reversal symmetries.

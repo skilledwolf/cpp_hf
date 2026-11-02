@@ -7,6 +7,16 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- `HartreeFockKernel(..., sectors=)` replaces `SolverConfig(block_sizes=)`.
+  Sectors are index sets that nothing couples (spin or valley blocks, in
+  any order); the kernel checks `h`, the reference and the contact terms
+  against them, and every solver diagonalizes the Fock matrix and builds
+  the exchange one sector at a time (about `len(sectors)²` times cheaper
+  per eigensolve). The silent fallback to a full exchange when a block
+  layout did not hold is gone.
+- `examples/` moved to the contimod-studies repository
+  (`14-hartreefock-legacy-examples`); the scripts used the removed
+  contimod API and are kept there unported.
 - Building a complex128 kernel with `jax_enable_x64` off raises, instead of
   solving silently in complex64.
 - `solve_continuation` and `ContinuationResult` are gone:

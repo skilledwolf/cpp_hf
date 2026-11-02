@@ -70,7 +70,6 @@ def test_exchange_weights_the_integrated_density():
         {"bt_shrink": 1.0},
         {"mu_maxiter": 0},
         {"method": "bfgs"},
-        {"block_sizes": (1.5, 0.5)},
         {"project_fn": 3},
     ],
 )
