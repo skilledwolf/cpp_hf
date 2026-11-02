@@ -207,6 +207,8 @@ class SolveResult(NamedTuple):
         Orbitals of the final density (direct minimization only).
     p : (nk1, nk2, nb) array or None
         Their occupations (direct minimization only).
+    coarse : SolveResult or None
+        The coarse-mesh solve that seeded this one (``hf.solve(coarse=)``).
     """
 
     density: Any
@@ -218,24 +220,7 @@ class SolveResult(NamedTuple):
     history: dict
     Q: Any = None
     p: Any = None
-
-
-class ContinuationResult(NamedTuple):
-    """Result of :func:`hartreefock.solve_continuation`.
-
-    Attributes
-    ----------
-    coarse : SolveResult
-        The coarse-mesh solve.
-    fine : SolveResult
-        The fine-mesh solve, the answer.
-    P0_fine : (nk1, nk2, nb, nb) array or None
-        The coarse density resampled to the fine mesh, the seed of ``fine``.
-    """
-
-    coarse: SolveResult
-    fine: SolveResult
-    P0_fine: Any
+    coarse: Any = None
 
 
 class DeflatedResult(NamedTuple):

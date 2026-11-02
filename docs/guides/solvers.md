@@ -35,7 +35,7 @@ solution tells them apart {cite}`Thouless1960`.
 **On this page:** {func}`~hartreefock.solve`, {class}`~hartreefock.SolverConfig`,
 {class}`~hartreefock.SolveResult`,
 {func}`~hartreefock.solve_minimum`, {func}`~hartreefock.stability_analysis`,
-{func}`~hartreefock.solve_continuation`, {func}`~hartreefock.solve_deflated`.
+{func}`~hartreefock.solve_deflated`.
 
 ## The test problem
 
@@ -170,17 +170,17 @@ as physical.
 
 ## Continuation
 
-{func}`~hartreefock.solve_continuation` solves a coarse kernel, resamples
-the result to the fine mesh, and solves there. Each stage runs SCF or
-direct minimization according to its config, so they can mix:
+With `coarse=`, {func}`~hartreefock.solve` solves the same problem on a
+coarser kernel first, resamples its density to the fine mesh and solves
+there, both with the same config. `P0` lives on the coarse mesh, and the
+coarse solve comes back in `result.coarse`:
 
 ```{code-cell} ipython3
 coarse, eps_coarse = gated_gas(24)
 P0_coarse = (eps_coarse < 2 * np.pi * n)[..., None, None] * np.diag([0.7, 0.3])
-c = hf.solve_continuation(coarse, kernel, P0_coarse, n, n,
-                          coarse_config=hf.SolverConfig(), fine_config=hf.SolverConfig())
+c = hf.solve(kernel, P0_coarse, n, coarse=coarse)
 print(f"coarse: {c.coarse.n_iter} iterations, E = {c.coarse.energy:.6f}")
-print(f"fine:   {c.fine.n_iter} iterations from the resampled seed, E = {c.fine.energy:.10f}")
+print(f"fine:   {c.n_iter} iterations from the resampled seed, E = {c.energy:.10f}")
 ```
 
 Both stages land on the same state as a direct solve. Here the mesh is
@@ -213,7 +213,7 @@ tell physically different solutions apart.
 
 ```{code-cell} ipython3
 :tags: [remove-cell]
-assert abs(c.fine.energy - rows[3][3]) < 1e-8
+assert abs(c.energy - rows[3][3]) < 1e-8
 ms = sorted(round(magnetization(s.density), 2) for s in d.solutions)
 assert ms[0] == 0.0 and ms[-1] == 1.0
 assert abs(d.best.energy - rows[3][3]) < 1e-6

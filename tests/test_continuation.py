@@ -21,9 +21,7 @@ def test_continuation_matches_manual_coarse_then_fine():
     P0 = np.zeros_like(kc.h)
     cfg = hf.SolverConfig(method="cg", max_iter=200, tol_E=1e-10)
 
-    combined = hf.solve_continuation(
-        kc, kf, P0, 1.0, 1.0, coarse_config=cfg, fine_config=cfg
-    )
+    combined = hf.solve(kf, P0, 1.0, config=cfg, coarse=kc)
 
     coarse = hf.solve(kc, P0, 1.0, config=cfg)
     seed = np.asarray(resample_kgrid(coarse.density, 4))
@@ -31,33 +29,18 @@ def test_continuation_matches_manual_coarse_then_fine():
     fine = hf.solve(kf, seed, 1.0, config=cfg)
     cold = hf.solve(kf, np.zeros_like(kf.h), 1.0, config=cfg)
 
-    assert isinstance(combined.fine, hf.SolveResult)
-    np.testing.assert_allclose(np.asarray(combined.P0_fine), seed, atol=1e-10)
-    np.testing.assert_allclose(np.asarray(combined.fine.density), fine.density, atol=1e-10)
-    assert bool(combined.fine.converged)
-    np.testing.assert_allclose(float(combined.fine.energy), float(cold.energy), atol=1e-6)
-
-
-def test_stages_can_mix_scf_and_minimization():
-    kc, kf = _kernel(2), _kernel(4)
-    res = hf.solve_continuation(
-        kc, kf, np.zeros_like(kc.h), 1.0, 1.0,
-        coarse_config=hf.SolverConfig(max_iter=40, mixing=0.5),
-        fine_config=hf.SolverConfig(method="cg", max_iter=50),
-        retain_P0_fine=False,
-    )
-    assert isinstance(res.coarse, hf.SolveResult)
-    assert isinstance(res.fine, hf.SolveResult)
-    assert res.P0_fine is None
+    assert isinstance(combined.coarse, hf.SolveResult) and combined.coarse.coarse is None
+    np.testing.assert_allclose(combined.coarse.density, coarse.density, atol=1e-12)
+    np.testing.assert_allclose(combined.density, fine.density, atol=1e-10)
+    assert combined.converged
+    np.testing.assert_allclose(combined.energy, cold.energy, atol=1e-6)
 
 
 def test_continuation_validates_inputs():
     kc = _kernel(2)
     mismatched = hf.HartreeFockKernel(mesh_for(np.ones((4, 4))), np.zeros((4, 4, 3, 3), complex), np.full((4, 4, 1, 1), 0.1), T=0.1)
     with pytest.raises(ValueError, match="orbital dimensions"):
-        hf.solve_continuation(kc, mismatched, np.zeros_like(kc.h), 1.0, 1.0)
+        hf.solve(mismatched, np.zeros_like(kc.h), 1.0, coarse=kc)
     hartree = hf.HartreeFockKernel(mesh_for(np.ones((4, 4))), np.zeros((4, 4, 2, 2), complex), np.full((4, 4, 1, 1), 0.1), hartree=np.eye(2), T=0.1, reference=np.zeros((4, 4, 2, 2), complex))
     with pytest.raises(ValueError, match="include_hartree"):
-        hf.solve_continuation(kc, hartree, np.zeros_like(kc.h), 1.0, 1.0)
-    with pytest.raises(ValueError, match="P0_coarse shape"):
-        hf.solve_continuation(kc, _kernel(4), np.zeros((3, 3, 2, 2), complex), 1.0, 1.0)
+        hf.solve(hartree, np.zeros_like(kc.h), 1.0, coarse=kc)

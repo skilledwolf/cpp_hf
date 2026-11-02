@@ -29,12 +29,11 @@ jax.config.update("jax_enable_x64", True)
 
 from . import _jax
 from .config import (
-    ContinuationResult,
     DeflatedResult,
     SolverConfig,
     SolveResult,
 )
-from .continuation import solve_continuation
+from .continuation import resample_to
 from .deflation import solve_deflated
 from .kernel import HartreeFockKernel
 from .mesh import Mesh
@@ -64,7 +63,7 @@ def fock_operators(kernel):
     return _jax.fock_operators(kernel)
 
 
-def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None):
+def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None, coarse=None):
     """Solve the Hartree-Fock problem at fixed particle number.
 
     ``config.method`` picks a Roothaan iteration (``"rdiis"``, the default,
@@ -85,19 +84,27 @@ def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None):
         Particle number, counted with the kernel weights, ``Σ_k w_k Tr P_k``.
     config : SolverConfig, optional
         Method and stopping rule; ``None`` is RDIIS with the defaults.
+    coarse : HartreeFockKernel, optional
+        The same problem on a coarser mesh.  It is solved first, from ``P0``
+        and with the same config and ``n_electrons``, and its density,
+        resampled to the mesh of ``kernel``, is the start of the solve.
 
     Returns
     -------
     SolveResult
         The density, Fock matrix, energy, chemical potential, iteration count,
         convergence flag and per-iteration history (and, from direct
-        minimization, the orbitals and occupations).
+        minimization, the orbitals and occupations); with ``coarse``, its
+        result in ``coarse``.
     """
-    return _jax.solve(kernel, P0, n_electrons, config=config)
+    if coarse is None:
+        return _jax.solve(kernel, P0, n_electrons, config=config)
+    first = _jax.solve(coarse, P0, n_electrons, config=config)
+    P0 = resample_to(coarse, kernel, first.density)
+    return _jax.solve(kernel, P0, n_electrons, config=config)._replace(coarse=first)
 
 
 __all__ = [
-    "ContinuationResult",
     "DeflatedResult",
     "HartreeFockKernel",
     "Mesh",
@@ -107,7 +114,6 @@ __all__ = [
     "StabilityResult",
     "fock_operators",
     "solve",
-    "solve_continuation",
     "solve_deflated",
     "solve_minimum",
     "stability_analysis",

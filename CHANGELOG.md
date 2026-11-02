@@ -7,6 +7,11 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- `solve_continuation` and `ContinuationResult` are gone:
+  `hf.solve(kernel, P0, n, config=, coarse=coarse_kernel)` solves the coarse
+  kernel from `P0` with the same config and particle number, resamples its
+  density and solves the fine kernel; the coarse result is
+  `result.coarse`.
 - A contact term `(g, O_i, O_j)` that is not its own Hermitian partner
   gets `(g, O_j†, O_i†)` added by the kernel: the Hubbard term is
   `contact_terms=[(U, up, down)]`. Callers that passed both partners must
