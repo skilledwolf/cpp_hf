@@ -44,6 +44,22 @@ def hermitian_eigh(array: jax.Array) -> tuple[jax.Array, jax.Array]:
 
 
 
+def hermitian_eigvalsh(array: jax.Array) -> jax.Array:
+    """Ascending eigenvalues of a batch of Hermitian matrices (last two axes).
+
+    The eigenvalue-only counterpart of :func:`hermitian_eigh`, on the native
+    kernel for complex128 stacks on CPU.  Not differentiable.
+    """
+    array = jnp.asarray(array)
+    if array.dtype != jnp.complex128 or array.ndim < 3 or not ffi.available(ffi.EIGVALSH):
+        return jnp.linalg.eigvalsh(array)
+    call = jax.ffi.ffi_call(
+        ffi.EIGVALSH, jax.ShapeDtypeStruct(array.shape[:-1], jnp.float64),
+        vmap_method="broadcast_all",
+    )
+    return lax.platform_dependent(array, cpu=call, default=jnp.linalg.eigvalsh)
+
+
 def _native_matmul(a, b):
     out = jax.ShapeDtypeStruct(a.shape[:-1] + b.shape[-1:], jnp.complex128)
     return jax.ffi.ffi_call(ffi.MATMUL, out, vmap_method="broadcast_all")(a, b)

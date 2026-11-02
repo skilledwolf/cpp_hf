@@ -267,7 +267,7 @@ def _solve_newton_impl(
             T_r, maxiter=mu_maxiter,
         )
         p_fd = jax.nn.sigmoid((mu_fd - eps) / T_r).astype(real_dtype)
-        Q_fd = Q @ V_fd.astype(target_dtype)
+        Q_fd = bmm(Q, V_fd.astype(target_dtype))
         P_fd = _herm(_project(_density_from_Qp(Q_fd, p_fd)))
         grad_norm = jnp.maximum(
             _norm_matrix(G, w_norm),
@@ -474,7 +474,7 @@ def _solve_newton_impl(
             maxiter=mu_maxiter,
         )
         p_fd = jax.nn.sigmoid((mu_fd - eps_fd) / T_r).astype(real_dtype)
-        Q_fd = Q @ V_fd.astype(target_dtype)
+        Q_fd = bmm(Q, V_fd.astype(target_dtype))
         P_cur = _herm(_project(_density_from_Qp(Q, p)))
         P_fd = _herm(_project(_density_from_Qp(Q_fd, p_fd)))
 
