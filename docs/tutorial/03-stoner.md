@@ -42,8 +42,10 @@ nearly 1 right above $U_c$.
 ## A contact interaction
 
 `contact_terms` adds q-independent couplings $\tfrac12 g\,O_i\otimes O_j$
-as `(g, O_i, O_j)` triples. The Hubbard term $U n_\uparrow n_\downarrow$ is two
-of them, with the spin projectors; with no `V` there is no long-range term.
+as `(g, O_i, O_j)` triples, and adds the Hermitian partner
+$\tfrac12 g\,O_j^\dagger\otimes O_i^\dagger$ of a term that needs one. The
+Hubbard term $U n_\uparrow n_\downarrow$ is one triple with the spin
+projectors; with no `V` there is no long-range term.
 
 ```{code-cell} ipython3
 import numpy as np
@@ -60,7 +62,7 @@ up, down = np.diag([1.0, 0.0]), np.diag([0.0, 1.0])
 
 
 def hubbard(U):
-    return hf.HartreeFockKernel(mesh, h, T=T, contact_terms=[(U, up, down), (U, down, up)])
+    return hf.HartreeFockKernel(mesh, h, T=T, contact_terms=[(U, up, down)])
 
 
 P_para = hubbard(0.0).noninteracting_density(n)

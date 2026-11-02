@@ -142,8 +142,9 @@ class HartreeFockKernel:
     contact_terms : sequence of (g, O_i, O_j), optional
         q-independent interactions ``H = ½ g O_i ⊗ O_j`` (dense basis).  Each
         contributes ``σ_H = g O_i tr(O_j ρ̄)`` and ``σ_F = -g O_i ρ̄ O_j`` with
-        ``ρ̄ = Σ_k w_k (P_k - refP_k)``.  Pass an asymmetric pair plus its h.c.
-        partner for a Hermitian term with ``O_i ≠ O_j``.
+        ``ρ̄ = Σ_k w_k (P_k - refP_k)``.  A term other than its own h.c.
+        partner ``(g, O_j†, O_i†)`` gets the partner added, so
+        ``(U, n_up, n_down)`` is the Hubbard ``U n_up n_down``.
     """
 
     def __init__(
@@ -227,9 +228,15 @@ class HartreeFockKernel:
                     raise ValueError(
                         f"contact_terms[{k}].{name} must have shape {(D, D)}, got {np.shape(arr)}"
                     )
-            gs.append(float(g_t))
-            Ois.append(np.asarray(Oi_t, dtype=self.h.dtype))
-            Ojs.append(np.asarray(Oj_t, dtype=self.h.dtype))
+            Oi_t, Oj_t = (np.asarray(O, dtype=self.h.dtype) for O in (Oi_t, Oj_t))
+            pairs = [(Oi_t, Oj_t)]
+            partner = (Oj_t.conj().T, Oi_t.conj().T)
+            if not (np.allclose(partner[0], Oi_t) and np.allclose(partner[1], Oj_t)):
+                pairs.append(partner)  # the h.c. partner makes the term Hermitian
+            for Oi_p, Oj_p in pairs:
+                gs.append(float(g_t))
+                Ois.append(Oi_p)
+                Ojs.append(Oj_p)
         self.contact_g = np.asarray(gs, dtype=self.h.real.dtype)
         self.contact_Oi = np.stack(Ois)
         self.contact_Oj = np.stack(Ojs)

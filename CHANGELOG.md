@@ -7,6 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- A contact term `(g, O_i, O_j)` that is not its own Hermitian partner
+  gets `(g, O_j†, O_i†)` added by the kernel: the Hubbard term is
+  `contact_terms=[(U, up, down)]`. Callers that passed both partners must
+  drop one, or the coupling doubles.
 - `hf.solve` results hold NumPy arrays and Python scalars (`float` energy
   and mu, `int` n_iter, `bool` converged), so callers no longer wrap them in
   `float()` or `np.asarray()`. Traced calls still return JAX values.

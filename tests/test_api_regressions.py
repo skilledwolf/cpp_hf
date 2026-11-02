@@ -214,3 +214,16 @@ def test_noninteracting_start():
     assert result.converged is True and type(result.energy) is float
     assert type(result.density) is np.ndarray
     np.testing.assert_allclose(result.energy, float(solve(kernel, P, n).energy), atol=1e-8)
+
+
+def test_contact_term_gets_its_hermitian_partner():
+    """(U, up, down) is U n_up n_down: the kernel adds (U, down, up)."""
+    up, down = np.diag([1.0, 0.0]), np.diag([0.0, 1.0])
+    h = np.zeros((2, 2, 2, 2), complex)
+    single = HartreeFockKernel(mesh_for(np.full((2, 2), 0.25)), h, T=0.1, contact_terms=[(2.0, up, down)])
+    assert len(single.contact_g) == 2
+    rho = np.broadcast_to(np.diag([0.7, 0.2]).astype(complex), h.shape)
+    np.testing.assert_allclose(single.hartree(rho), np.diag([2.0 * 0.2, 2.0 * 0.7]), atol=1e-12)
+    sz = np.diag([1.0, -1.0])
+    assert len(HartreeFockKernel(mesh_for(np.ones((1, 1))), h[:1, :1], T=0.1,
+                                 contact_terms=[(1.0, sz, sz)]).contact_g) == 1
