@@ -27,7 +27,7 @@ import jax.numpy as jnp
 
 from ...config import SCFConfig, SCFResult, drop_unrequested
 from .fock import fock_builder, free_energy, hf_energy
-from .linalg import adjoint, bmm, hermitian_eigh
+from .linalg import adjoint, bmm, hermitian_eigh, hermitian_eigvalsh
 from .utils import (
     device_args,
     fermidirac,
@@ -72,8 +72,14 @@ def _density_from_fock(fock, *, weights, n_electrons, temperature, level_shift):
     return _herm(density), mu
 
 
-def _diis_coefficients(R_hist, active, w2d):
-    """Pulay C-DIIS coefficients from the commutator-residual history.
+def _residual_overlaps(R_hist, R, w2d):
+    """``sum_k w_k Re tr(R_i_k† R_k)`` for every history slot ``i``: one Gram row."""
+    weighted = (R * w2d[:, :, None, None]).reshape(-1)
+    return jnp.real(jnp.conj(R_hist.reshape(R_hist.shape[0], -1)) @ weighted)
+
+
+def _diis_coefficients(B, active):
+    """Pulay C-DIIS coefficients from the residual Gram matrix ``B``.
 
     Solves the augmented system ``[[B, -1], [-1, 0]] [c; lam] = [0; -1]`` with
     ``B[i, j] = sum_k w_k Re tr(R_i_k† R_j_k)``, masked so inactive history
@@ -81,10 +87,9 @@ def _diis_coefficients(R_hist, active, w2d):
     Pulay solution is invariant to that scaling) for float32 conditioning.
     Returns ``(coeffs, ok)`` where ``ok`` is False if the solve is singular.
     """
-    N = R_hist.shape[0]
-    real_dtype = jnp.real(R_hist).dtype
-    B = jnp.real(jnp.einsum(
-        "iklab,jklab->ij", jnp.conj(R_hist), R_hist * w2d[None, :, :, None, None]))
+    N = B.shape[0]
+    real_dtype = B.dtype
+    B = B * active[:, None] * active[None, :]
     B = B / jnp.maximum(jnp.max(jnp.abs(B)), jnp.asarray(1e-30, real_dtype))
     active_f = active.astype(real_dtype)
     A = jnp.zeros((N + 1, N + 1), real_dtype)
@@ -294,7 +299,7 @@ def _run_scf(
         E = hf_energy(
             density_h, h=h, Sigma=Sigma, H=H, weights_b=weights_b, refP=refP,
         )
-        density_eigs = jnp.linalg.eigvalsh(density_h).astype(real_dtype)
+        density_eigs = hermitian_eigvalsh(density_h).astype(real_dtype)
         Omega = free_energy(E, density_eigs, weights_2d, T)
         P_new, mu = _density_from_fock(
             F, weights=weights_2d, n_electrons=n_electrons,
@@ -309,14 +314,16 @@ def _run_scf(
     use_diis = acceleration == "diis"
     n_hist = diis_size if use_diis else 0
     F_hist0 = jnp.zeros((n_hist,) + h.shape, dtype=h.dtype)
-    R_hist0 = jnp.zeros((n_hist,) + h.shape, dtype=h.dtype)
+    # Residual history and its Gram matrix: each iteration adds one row.
+    R_hist0 = (jnp.zeros((n_hist,) + h.shape, dtype=h.dtype),
+               jnp.zeros((n_hist, n_hist), dtype=real_dtype))
 
     def cond(carry):
         k, _, _, _, _, converged, _, _, _, _, _, _ = carry
         return jnp.logical_and(k < max_iter, jnp.logical_not(converged))
 
     def body(carry):
-        k, density, _fk, _en, _mu, _conv, F_hist, R_hist, hE, hO, hD, hC = carry
+        k, density, _fk, _en, _mu, _conv, F_hist, (R_hist, B_hist), hE, hO, hD, hC = carry
 
         P_new, F, E, Omega, mu = _build_and_occupy(density)
         delta = P_new - density
@@ -330,9 +337,11 @@ def _run_scf(
             idx = k % n_hist
             F_hist = F_hist.at[idx].set(F)
             R_hist = R_hist.at[idx].set(comm)
+            row = _residual_overlaps(R_hist, comm, weights_2d)
+            B_hist = B_hist.at[idx, :].set(row).at[:, idx].set(row)
             count = jnp.minimum(k + 1, n_hist)
             active = jnp.arange(n_hist) < count
-            coeffs, ok = _diis_coefficients(R_hist, active, weights_2d)
+            coeffs, ok = _diis_coefficients(B_hist, active)
             F_extrap = jnp.einsum("i,iklab->klab", coeffs.astype(h.dtype), F_hist)
             damp = jnp.clip(diis_damping, 0.0, 1.0).astype(h.dtype)
             F_extrap = damp * F_extrap + (1.0 - damp) * F
@@ -365,7 +374,7 @@ def _run_scf(
             # eigensolve for each scalar backtracking candidate.
             def omega_on_segment(lam):
                 P_lam = _herm(density + lam.astype(h.dtype) * delta)
-                eigs = jnp.linalg.eigvalsh(P_lam).astype(real_dtype)
+                eigs = hermitian_eigvalsh(P_lam).astype(real_dtype)
                 E_lam = E + lam * c1 + lam * lam * c2
                 return free_energy(E_lam, eigs, weights_2d, T)
 
@@ -410,7 +419,7 @@ def _run_scf(
         hD = hD.at[k].set(d_res)
         hC = hC.at[k].set(c_res)
         return (k + 1, density_out, F, E, mu, converged,
-                F_hist, R_hist, hE, hO, hD, hC)
+                F_hist, (R_hist, B_hist), hE, hO, hD, hC)
 
     carry0 = (
         jnp.int32(0),

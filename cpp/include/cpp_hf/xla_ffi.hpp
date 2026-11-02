@@ -151,5 +151,31 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(MatmulC128, MatmulC128Impl,
                                   .Arg<ffi::Buffer<ffi::C128>>()
                                   .Ret<ffi::Buffer<ffi::C128>>());
 
+// Batched Hermitian eigenvalues only (ascending) of a complex128 (..., n, n)
+// array: no eigenvectors, so a fraction of the cost of EighC128.
+inline ffi::Error EigvalshC128Impl(ffi::Buffer<ffi::C128> a, ffi::ResultBuffer<ffi::F64> w) {
+    const auto dims = a.dimensions();
+    if (dims.size() < 2 || dims[dims.size() - 1] != dims[dims.size() - 2]) {
+        return ffi::Error::InvalidArgument("eigvalsh needs square matrices on the last two axes");
+    }
+    const std::size_t n = static_cast<std::size_t>(dims.back());
+    std::size_t batch = 1;
+    for (std::size_t i = 0; i + 2 < dims.size(); ++i) batch *= static_cast<std::size_t>(dims[i]);
+    const c64* A = reinterpret_cast<const c64*>(a.typed_data());
+    double* W = w->typed_data();
+    parallel_for(batch, [&](std::size_t k) {
+        ConstMapMatXcf M(A + k * n * n, n, n);
+        MatXcf H = 0.5 * (M + M.adjoint());
+        Eigen::SelfAdjointEigenSolver<MatXcf> es(H, Eigen::EigenvaluesOnly);
+        for (std::size_t i = 0; i < n; ++i) W[k * n + i] = es.eigenvalues()[i];
+    });
+    return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(EigvalshC128, EigvalshC128Impl,
+                              ffi::Ffi::Bind()
+                                  .Arg<ffi::Buffer<ffi::C128>>()
+                                  .Ret<ffi::Buffer<ffi::F64>>());
+
 }  // namespace xla_ffi
 }  // namespace cpp_hf

@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 
 from .fock import hf_energy, occupation_entropy
-from .linalg import adjoint, bmm, hermitian_eigh
+from .linalg import adjoint, bmm, hermitian_eigh, hermitian_eigvalsh
 from .scf import _herm, _weighted_matrix_norm
 from .utils import fermidirac, find_chemical_potential
 
@@ -103,7 +103,7 @@ def _run_accelerated_scf(
         def repair(_):
             occupations = _capped_occupations(p, w2d, normalized_count)
             repaired = project(bmm(Q * occupations[..., None, :].astype(Q.dtype), adjoint(Q)))
-            return repaired, jnp.linalg.eigvalsh(repaired)
+            return repaired, hermitian_eigvalsh(repaired)
 
         P, p = jax.lax.cond(bad, repair, lambda _: (P, p), operand=None)
         return P, occupation_entropy(p, w2d)
@@ -168,7 +168,7 @@ def _run_accelerated_scf(
             i, alpha, _trial, _accepted = carry
             P = _herm(current.P + alpha * direction)
             F = _herm(current.F + alpha * delta_F)
-            S = occupation_entropy(jnp.linalg.eigvalsh(P), w2d)
+            S = occupation_entropy(hermitian_eigvalsh(P), w2d)
             E = current.E + alpha * slope + alpha * alpha * quadratic
             trial = state(P, F, E, S)
             return i + 1, 0.5 * alpha, trial, acceptable(current, trial)
