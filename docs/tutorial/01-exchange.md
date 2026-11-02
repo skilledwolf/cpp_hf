@@ -35,7 +35,7 @@ with $\mathrm K$ and $\mathrm E$ the complete elliptic integrals, and the
 exchange energy per electron is $-8\sqrt2/(3\pi r_s)$ Ry $= -1.2004/r_s$ Ry.
 
 **You will use:** {class}`~hartreefock.Mesh`, {class}`~hartreefock.HartreeFockKernel`,
-{func}`~hartreefock.solve_scf`, {class}`~hartreefock.SCFConfig`.
+{func}`~hartreefock.solve`, {class}`~hartreefock.SolverConfig`.
 :::
 
 ## The mesh, the Hamiltonian and the interaction
@@ -86,7 +86,7 @@ disc:
 ```{code-cell} ipython3
 kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
 P0 = (eps < 1)[..., None, None] * np.eye(2)
-result = hf.solve_scf(kernel, P0, n)
+result = hf.solve(kernel, P0, n)
 print(result.converged, result.n_iter, "iterations,  mu =", round(float(result.mu), 4))
 ```
 
@@ -129,7 +129,7 @@ def energies(nk, rs=1.0):
     mesh, h, V, eps = electron_gas(nk, kmax=2.1, rs=rs)
     kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
     P0 = (eps < 1)[..., None, None] * np.eye(2)
-    r = hf.solve_scf(kernel, P0, n)
+    r = hf.solve(kernel, P0, n)
     kinetic = np.einsum("ij,ijab,ijba->", mesh.weights, h, np.asarray(r.density)).real
     to_ry = 2 / rs**2 / n        # E_F k_F² per area -> Ry per electron
     return kinetic * to_ry, (float(r.energy) - kinetic) * to_ry

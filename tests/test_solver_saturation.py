@@ -28,8 +28,7 @@ from _meshes import mesh_for
 
 import hartreefock._jax.occupations as O
 import hartreefock._jax.riemannian as R
-from hartreefock import HartreeFockKernel, SCFConfig, SolverConfig
-from hartreefock._jax import solve, solve_scf
+from hartreefock import HartreeFockKernel, SolverConfig, solve
 from hartreefock._jax.fock import build_fock, free_energy, hf_energy
 
 
@@ -257,10 +256,10 @@ class TestFrozenFockOccupationStep:
         n_e = 1.5 * float(kernel.weight_sum)
         Q, p, _w_norm, _ntn = self._integer_occupations(kernel, n_e)
         P0 = R._herm(R._density_from_Qp(Q, p))
-        cg = solve(kernel, P0, n_e, config=SolverConfig(max_iter=300, tol_E=1e-10))
-        scf = solve_scf(
+        cg = solve(kernel, P0, n_e, config=SolverConfig(method="cg", max_iter=300, tol_E=1e-10))
+        scf = solve(
             kernel, P0, n_e,
-            config=SCFConfig(max_iter=500, acceleration="rdiis",
+            config=SolverConfig(max_iter=500, method="rdiis",
                              density_tol=1e-10, comm_tol=1e-9),
         )
         assert bool(cg.converged) and bool(scf.converged)
@@ -348,7 +347,7 @@ class TestLineSearchAcceptsWhenSaturated:
             jax.debug.callback(lambda: counter.__setitem__("n", counter["n"] + 1))
             return build_fock(*args, **kwargs)
 
-        cfg = SolverConfig(max_iter=200, tol_E=1e-9)
+        cfg = SolverConfig(method="cg", max_iter=200, tol_E=1e-9)
         from hartreefock._jax import solver as solver_module
 
         monkeypatch.setattr(solver_module, "fock_builder", lambda _: fock_fn)
@@ -363,9 +362,9 @@ class TestLineSearchAcceptsWhenSaturated:
         builds_per_iter = (counter["n"] - 3) / n      # init, finalize, polish
         assert builds_per_iter < exhausted - 1.0, builds_per_iter
 
-        scf = solve_scf(
+        scf = solve(
             kernel, P0, n_e,
-            config=SCFConfig(max_iter=500, acceleration="rdiis",
+            config=SolverConfig(max_iter=500, method="rdiis",
                              density_tol=1e-10, comm_tol=1e-9),
         )
         assert bool(scf.converged)
@@ -375,8 +374,8 @@ class TestLineSearchAcceptsWhenSaturated:
         kernel = _wide_band_kernel()
         n_e = 1.5 * float(kernel.weight_sum)
         P0 = jnp.zeros_like(kernel.h)
-        cg = solve(kernel, P0, n_e, config=SolverConfig(max_iter=300, tol_grad=1e-8))
-        nw = solve(kernel, P0, n_e, config=SolverConfig(max_iter=100, tol_grad=1e-8, optimizer="newton"))
+        cg = solve(kernel, P0, n_e, config=SolverConfig(method="cg", max_iter=300, tol_grad=1e-8))
+        nw = solve(kernel, P0, n_e, config=SolverConfig(max_iter=100, tol_grad=1e-8, method="newton"))
         assert bool(cg.converged) and bool(nw.converged)
         np.testing.assert_allclose(float(nw.energy), float(cg.energy), atol=1e-7)
 
@@ -423,7 +422,7 @@ class TestSolveMuEarlyStop:
 
             result = solve(
                 kernel, jnp.zeros_like(kernel.h), n_e,
-                config=SolverConfig(max_iter=200, tol_E=1e-10),
+                config=SolverConfig(method="cg", max_iter=200, tol_E=1e-10),
             )
             assert bool(result.converged)
             for label, count in (

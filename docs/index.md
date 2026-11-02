@@ -38,7 +38,7 @@ def V(q):  # bare Coulomb; at q = 0 its average over one mesh cell
 
 
 kernel = hf.HartreeFockKernel(mesh, h, V, T=0.002)
-result = hf.solve_scf(kernel, (eps < 1)[..., None, None] * np.eye(2), 1 / (2 * np.pi))
+result = hf.solve(kernel, (eps < 1)[..., None, None] * np.eye(2), 1 / (2 * np.pi))
 sigma = (np.asarray(result.fock) - h)[:, nk // 2, 0, 0].real
 
 kk = np.linspace(0, 2.1, 400)

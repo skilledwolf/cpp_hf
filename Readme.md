@@ -16,10 +16,10 @@ scalar or orbital-resolved.
 
 Solvers:
 
-* `solve`: direct minimization by Riemannian CG or trust-region Newton.
-* `solve_scf`: Roothaan SCF with the free-energy-safeguarded full-residual
-  `rdiis` (the default) and `anderson` schemes, optimal damping or linear
-  mixing.
+* `solve(kernel, P0, n, config=SolverConfig(method=...))`: Roothaan SCF with
+  the free-energy-safeguarded full-residual `"rdiis"` (the default) and
+  `"anderson"` schemes, optimal damping `"oda"` or `"linear"` mixing, or
+  direct minimization by Riemannian `"cg"` or trust-region `"newton"`.
 * `solve_minimum`: RDIIS plus a local stability check and bounded saddle
   recovery; `stability_analysis` is the standalone curvature test.
 * `solve_continuation` (coarse to fine) and `solve_deflated` (several distinct
@@ -58,9 +58,9 @@ mesh = hf.Mesh.square(kmax=1.0, nk=32)
 kernel = hf.HartreeFockKernel(mesh, h, lambda q: 2 * np.pi / (q + 0.1), T=0.1)
 P0 = np.zeros_like(h)
 
-dm = hf.solve(kernel, P0, n_electrons, config=hf.SolverConfig(tol_E=1e-8))
-scf = hf.solve_scf(kernel, P0, n_electrons)
-# dm.density, dm.fock, dm.energy, dm.mu, dm.n_iter, dm.converged, dm.history
+r = hf.solve(kernel, P0, n_electrons)  # RDIIS
+dm = hf.solve(kernel, P0, n_electrons, config=hf.SolverConfig(method="cg", tol_E=1e-8))
+# r.density, r.fock, r.energy, r.mu, r.n_iter, r.converged, r.history
 ```
 
 A converged residual alone does not make a solution a minimum. `solve_minimum`
@@ -79,14 +79,13 @@ Both are local checks in the supplied basis, not a global-minimum certificate;
 compare free energies across seeds for phase comparisons. SCF histories
 report `free_energy` and the total `fock_builds`.
 
-Coarse-to-fine continuation runs `solve_scf` for stages configured with an
-`SCFConfig` and `solve` otherwise:
+Coarse-to-fine continuation solves each stage with its own config:
 
 ```python
 result = hf.solve_continuation(
     coarse, fine, P0_coarse, n_electrons_coarse, n_electrons_fine,
-    coarse_config=hf.SCFConfig(max_iter=50, mixing=0.5),
-    fine_config=hf.SolverConfig(max_iter=200, tol_E=1e-8),
+    coarse_config=hf.SolverConfig(method="linear", max_iter=50, mixing=0.5),
+    fine_config=hf.SolverConfig(method="cg", max_iter=200, tol_E=1e-8),
 )
 ```
 

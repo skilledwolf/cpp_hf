@@ -17,7 +17,7 @@ from scipy.sparse.linalg import ArpackNoConvergence, LinearOperator, eigsh
 from scipy.special import expit, xlogy
 
 from . import _jax
-from .config import SCFConfig, SCFResult
+from .config import SolverConfig, SolveResult
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,7 @@ class MinimumResult:
 
     Attributes
     ----------
-    solution : SCFResult
+    solution : SolveResult
         The last local solve, with its density and Fock matrix.
     stability : StabilityResult or None
         The stability test of ``solution``, or ``None`` when none ran.
@@ -84,7 +84,7 @@ class MinimumResult:
         Why the search stopped.
     """
 
-    solution: SCFResult
+    solution: SolveResult
     stability: StabilityResult | None
     converged: bool
     escapes: int
@@ -404,7 +404,7 @@ def solve_minimum(
         Starting density.
     n_electrons : float
         Particle number, counted with the weights.
-    config : SCFConfig, optional
+    config : SolverConfig, optional
         Configuration of each local solve. The default is safeguarded RDIIS
         with 1e-8 residuals and 500 iterations.
     max_escapes : int
@@ -444,7 +444,7 @@ def solve_minimum(
             "build the kernel from float64 arrays"
         )
     if config is None:
-        config = SCFConfig(
+        config = SolverConfig(
             diis_size=8,
             max_iter=500,
             density_tol=1e-8,
@@ -463,7 +463,7 @@ def solve_minimum(
     stability = None
     message = "Local solve did not converge"
     for cycle in range(max_escapes + 1):
-        result = _jax.solve_scf(kernel, initial, n_electrons, config=cfg)
+        result = _jax.solve(kernel, initial, n_electrons, config=cfg)
         iterations += result.n_iter
         # The new RDIIS/Anderson paths count every build. For legacy methods
         # without counters, -1 propagates "unavailable" rather than fabricating

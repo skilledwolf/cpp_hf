@@ -15,7 +15,7 @@ everything public.
 
 | Name | What it does | Returns |
 | --- | --- | --- |
-| {func}`~hartreefock.solve_scf` | Roothaan iteration with RDIIS, Anderson, ODA or linear mixing, chosen by {class}`~hartreefock.SCFConfig` | {class}`~hartreefock.SCFResult` |
+| {func}`~hartreefock.solve` | Roothaan iteration (RDIIS, Anderson, ODA, linear mixing) or direct minimization (CG, Newton), chosen by `SolverConfig(method=)` | {class}`~hartreefock.SolveResult` |
 | {func}`~hartreefock.solve` | Direct minimization, CG or Newton, chosen by {class}`~hartreefock.SolverConfig` | {class}`~hartreefock.SolveResult` |
 | {func}`~hartreefock.solve_continuation` | A coarse mesh, then the fine one from its result | {class}`~hartreefock.ContinuationResult` |
 | {func}`~hartreefock.solve_deflated` | Several distinct solutions | {class}`~hartreefock.DeflatedResult` |

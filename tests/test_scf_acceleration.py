@@ -13,8 +13,7 @@ import numpy as np
 import pytest
 from _meshes import mesh_for
 
-from hartreefock import HartreeFockKernel, SCFConfig
-from hartreefock._jax import solve_scf
+from hartreefock import HartreeFockKernel, SolverConfig, solve
 
 
 def _comm_rms(F, P, w2d):
@@ -43,9 +42,9 @@ class TestAccelerationAgreement:
         P0 = jnp.zeros_like(K.h)
         energies = {}
         for acc in ("linear", "oda", "rdiis"):
-            r = solve_scf(K, P0, _NE, config=SCFConfig(
+            r = solve(K, P0, _NE, config=SolverConfig(
                 max_iter=800, density_tol=1e-6, comm_tol=1e-5,
-                mixing=0.5, acceleration=acc))
+                mixing=0.5, method=acc))
             energies[acc] = float(r.energy)
         spread = max(energies.values()) - min(energies.values())
         assert spread < 1e-3, f"schemes disagree on energy: {energies}"
@@ -56,8 +55,8 @@ class TestRDIIS:
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
         cfg = dict(max_iter=800, density_tol=1e-6, comm_tol=1e-5, mixing=0.5)
-        lin = solve_scf(K, P0, _NE, config=SCFConfig(acceleration="linear", **cfg))
-        diis = solve_scf(K, P0, _NE, config=SCFConfig(acceleration="rdiis", **cfg))
+        lin = solve(K, P0, _NE, config=SolverConfig(method="linear", **cfg))
+        diis = solve(K, P0, _NE, config=SolverConfig(method="rdiis", **cfg))
         assert bool(lin.converged) and bool(diis.converged)
         # RDIIS should need far fewer Roothaan steps than plain mixing.
         assert int(diis.n_iter) < int(lin.n_iter) // 3
@@ -67,10 +66,10 @@ class TestRDIIS:
     def test_trust_radius_converges(self):
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
-        free = solve_scf(K, P0, _NE, config=SCFConfig(
-            max_iter=800, density_tol=1e-6, comm_tol=1e-5, acceleration="rdiis"))
-        clipped = solve_scf(K, P0, _NE, config=SCFConfig(
-            max_iter=800, density_tol=1e-6, comm_tol=1e-5, acceleration="rdiis",
+        free = solve(K, P0, _NE, config=SolverConfig(
+            max_iter=800, density_tol=1e-6, comm_tol=1e-5, method="rdiis"))
+        clipped = solve(K, P0, _NE, config=SolverConfig(
+            max_iter=800, density_tol=1e-6, comm_tol=1e-5, method="rdiis",
             trust_radius=0.5))
         assert bool(clipped.converged)
         np.testing.assert_allclose(float(clipped.energy), float(free.energy), atol=1e-4, rtol=1e-5)
@@ -78,9 +77,9 @@ class TestRDIIS:
     def test_damping_still_converges(self):
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
-        r = solve_scf(K, P0, _NE, config=SCFConfig(
+        r = solve(K, P0, _NE, config=SolverConfig(
             max_iter=800, density_tol=1e-6, comm_tol=1e-5,
-            acceleration="rdiis", diis_damping=0.7))
+            method="rdiis", diis_damping=0.7))
         assert bool(r.converged)
 
 
@@ -89,8 +88,8 @@ class TestODA:
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
         cfg = dict(max_iter=800, density_tol=1e-6, comm_tol=1e-5, mixing=0.5)
-        lin = solve_scf(K, P0, _NE, config=SCFConfig(acceleration="linear", **cfg))
-        oda = solve_scf(K, P0, _NE, config=SCFConfig(acceleration="oda", **cfg))
+        lin = solve(K, P0, _NE, config=SolverConfig(method="linear", **cfg))
+        oda = solve(K, P0, _NE, config=SolverConfig(method="oda", **cfg))
         # ODA reaches the same energy (its guarantee is energy descent)...
         np.testing.assert_allclose(float(oda.energy), float(lin.energy), atol=1e-3, rtol=1e-5)
         # ...and the energy history is non-increasing (robust line search).
@@ -102,10 +101,10 @@ class TestODA:
         h = jnp.array([[[[-1.0, 0.0], [0.0, 1.0]]]], dtype=jnp.complex64)
         K = HartreeFockKernel(mesh_for(jnp.ones((1, 1), dtype=jnp.float32)), h, jnp.zeros((1, 1, 1, 1), dtype=jnp.complex64), T=1.0)
         P0 = jnp.array([[[[1.0, 0.0], [0.0, 0.0]]]], dtype=jnp.complex64)
-        result = solve_scf(
+        result = solve(
             K, P0, 1.0,
-            config=SCFConfig(
-                acceleration="oda", max_iter=20,
+            config=SolverConfig(
+                method="oda", max_iter=20,
                 density_tol=1e-6, comm_tol=1e-6,
             ),
         )
@@ -116,14 +115,14 @@ class TestODA:
         )
 
 
-class TestSCFConfigValidation:
+class TestSolverConfigValidation:
     def test_invalid_acceleration_raises(self):
-        with pytest.raises(ValueError, match="acceleration"):
-            SCFConfig(acceleration="bfgs")
+        with pytest.raises(ValueError, match="method"):
+            SolverConfig(method="bfgs")
 
     def test_nonpositive_diis_size_raises(self):
         with pytest.raises(ValueError, match="diis_size"):
-            SCFConfig(diis_size=0)
+            SolverConfig(diis_size=0)
 
     @pytest.mark.parametrize(
         "kwargs",
@@ -138,14 +137,14 @@ class TestSCFConfigValidation:
     )
     def test_invalid_domains_raise(self, kwargs):
         with pytest.raises(ValueError):
-            SCFConfig(**kwargs)
+            SolverConfig(**kwargs)
 
     def test_scf_validates_count_shape_and_temperature_before_jit(self):
         K = _dirac(nk=2)
         with pytest.raises(ValueError, match="physically reachable range"):
-            solve_scf(K, jnp.zeros_like(K.h), 100.0)
+            solve(K, jnp.zeros_like(K.h), 100.0)
         with pytest.raises(ValueError, match="P0 must have shape"):
-            solve_scf(K, jnp.zeros((2, 2, 3, 3)), 1.0)
+            solve(K, jnp.zeros((2, 2, 3, 3)), 1.0)
         with pytest.raises(ValueError, match="non-negative"):
             _dirac(nk=2, T=-0.1)
 
@@ -153,7 +152,7 @@ class TestSCFConfigValidation:
     def test_scf_exact_empty_and_full_fillings(self, n_electrons):
         h = jnp.array([[[[-1.0, 0.0], [0.0, 1.0]]]], dtype=jnp.complex64)
         K = HartreeFockKernel(mesh_for(jnp.ones((1, 1), dtype=jnp.float32)), h, jnp.zeros((1, 1, 1, 1), dtype=jnp.complex64), T=0.1)
-        result = solve_scf(K, jnp.zeros_like(h), n_electrons)
+        result = solve(K, jnp.zeros_like(h), n_electrons)
         assert result.converged
         expected = np.eye(2) * (n_electrons / 2.0)
         np.testing.assert_array_equal(
@@ -167,7 +166,7 @@ def test_density_from_fock_only_resolves_mu_for_nonzero_shift(
 ):
     import jax
 
-    import hartreefock._jax.scf as scf
+    from hartreefock._jax import scf
 
     calls = []
     original = scf.find_chemical_potential

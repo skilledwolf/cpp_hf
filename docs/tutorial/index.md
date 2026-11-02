@@ -8,7 +8,7 @@ failing check fails the build.
 
 | Step | Physics | You will use | Check |
 | --- | --- | --- | --- |
-| [1. Exchange in the electron gas](01-exchange.md) | the exchange self-energy and energy of the Coulomb gas | `HartreeFockKernel`, `solve_scf` | $-8\sqrt2/3\pi r_s$ Ry to $10^{-4}$ |
+| [1. Exchange in the electron gas](01-exchange.md) | the exchange self-energy and energy of the Coulomb gas | `HartreeFockKernel`, `solve` | $-8\sqrt2/3\pi r_s$ Ry to $10^{-4}$ |
 | [2. Bloch ferromagnetism](02-bloch.md) | paramagnet against ferromagnet, the first-order transition | two starts, mesh extrapolation | $r_s^\ast = 3\pi/(16 - 8\sqrt2)$ |
 | [3. The Stoner instability](03-stoner.md) | a contact repulsion, the free-energy curvature, leaving a saddle | `contact_terms`, `stability_analysis`, `solve_minimum` | $U_c = 1/\chi_0$; $m(U)$ of the continuum |
 

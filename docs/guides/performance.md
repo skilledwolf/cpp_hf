@@ -10,7 +10,7 @@ The solvers are jitted JAX, so they run on CPU or GPU and are
 differentiable. Importing hartreefock turns on `jax_enable_x64`, and a
 solve then runs in the dtype of the kernel's arrays: complex128 from NumPy
 defaults, complex64 from single-precision arrays. Single precision halves
-the memory and is faster on most GPUs; the Newton optimizer, deflation,
+the memory and is faster on most GPUs; `method="newton"`, deflation,
 {func}`~hartreefock.stability_analysis` and
 {func}`~hartreefock.solve_minimum` need double precision for their default
 tolerances.
@@ -35,10 +35,10 @@ P0 = (eps < 2 * np.pi * n)[..., None, None] * np.diag([0.7, 0.3])
 results = {}
 for dtype, tol in ((np.complex64, 1e-5), (np.complex128, 1e-9)):
     kernel = hf.HartreeFockKernel(mesh, h.astype(dtype), V, T=0.005)
-    config = hf.SCFConfig(density_tol=tol)
+    config = hf.SolverConfig(density_tol=tol)
     for attempt in ("first call", "second call"):
         t = time.perf_counter()
-        r = hf.solve_scf(kernel, P0.astype(dtype), n, config=config)
+        r = hf.solve(kernel, P0.astype(dtype), n, config=config)
         elapsed = time.perf_counter() - t
     results[dtype] = r
     print(f"{dtype.__name__}: {r.n_iter} iterations, E = {float(r.energy):.10f}, {elapsed * 1e3:.0f} ms (second call)")

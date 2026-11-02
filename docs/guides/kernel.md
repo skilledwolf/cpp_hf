@@ -119,12 +119,12 @@ Standard Hartree-Fock is also a reference density of zero. Solving both
 ways gives the same density, and the energies obey the relation:
 
 ```{code-cell} ipython3
-config = hf.SCFConfig(density_tol=1e-10, comm_tol=1e-10)
+config = hf.SolverConfig(density_tol=1e-10, comm_tol=1e-10)
 common = dict(T=T, hartree=capacitor)
 standard = hf.HartreeFockKernel(mesh, h, V, reference=np.zeros_like(h), **common)
 embedded = hf.HartreeFockKernel(mesh, h, V, reference=P_ref, embed_reference=True, **common)
-r_std = hf.solve_scf(standard, P0, n, config=config)
-r_emb = hf.solve_scf(embedded, P0, n, config=config)
+r_std = hf.solve(standard, P0, n, config=config)
+r_emb = hf.solve(embedded, P0, n, config=config)
 
 E_from_embedded = r_emb.energy - embedded.embedded_energy_offset + embedded.embedded_hartree_shift * n
 mu_from_embedded = r_emb.mu + embedded.embedded_hartree_shift

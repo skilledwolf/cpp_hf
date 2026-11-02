@@ -8,10 +8,8 @@ from _meshes import mesh_for
 
 from hartreefock import (
     HartreeFockKernel,
-    SCFConfig,
     SolverConfig,
     solve,
-    solve_scf,
 )
 from hartreefock._jax.utils import density_matrix_from_fock
 
@@ -59,7 +57,7 @@ def test_zero_orbital_gradient_does_not_hide_wrong_occupations(
         initial,
         1.0,
         config=SolverConfig(
-            optimizer=optimizer,
+            method=optimizer,
             max_iter=300,
             tol_grad=tol,
         ),
@@ -85,12 +83,12 @@ def test_finite_temperature_oda_descends_free_energy() -> None:
     initial = np.array(
         [[[[1.0, 0.0], [0.0, 0.0]]]], dtype=np.complex128
     )
-    result = solve_scf(
+    result = solve(
         kernel,
         initial,
         1.0,
-        config=SCFConfig(
-            acceleration="oda",
+        config=SolverConfig(
+            method="oda",
             max_iter=20,
             density_tol=1.0e-6,
             comm_tol=1.0e-6,
@@ -111,12 +109,12 @@ def test_finite_temperature_oda_descends_free_energy() -> None:
 def test_zero_diis_history_is_rejected_defensively() -> None:
     kernel = _repulsive_hartree()
     with pytest.raises(ValueError, match="diis_size"):
-        solve_scf(
+        solve(
             kernel,
             np.zeros_like(kernel.h),
             1.0,
-            config=SCFConfig(
-                acceleration="rdiis",
+            config=SolverConfig(
+                method="rdiis",
                 diis_size=0,
                 max_iter=2,
             ),
@@ -131,9 +129,9 @@ def test_scf_returns_the_density_whose_stationarity_was_certified(acceleration):
     kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), hartree=1000.0 * np.eye(2), T=0.5, exchange=False, reference=h)
     initial = np.diag([0.5 + 1e-10, 0.5 - 1e-10])[None, None]
     tolerance = 1e-7
-    result = solve_scf(
+    result = solve(
         kernel, initial, 1.0,
-        config=SCFConfig(acceleration=acceleration, max_iter=1,
+        config=SolverConfig(method=acceleration, max_iter=1,
                          density_tol=tolerance, comm_tol=tolerance),
     )
     assert result.converged
@@ -156,7 +154,7 @@ def test_free_energy_has_exact_zero_entropy_at_filling_endpoints(
         kernel,
         np.zeros_like(kernel.h),
         n_electrons,
-        config=SolverConfig(max_iter=2, tol_grad=1.0e-12),
+        config=SolverConfig(method="cg", max_iter=2, tol_grad=1.0e-12),
     )
     np.testing.assert_array_equal(
         np.asarray(result.history["free_energy"]),
@@ -189,10 +187,10 @@ def test_rdiis_engages_when_the_residual_history_is_nearly_rank_deficient() -> N
     kernel = _wide_band_kernel()
     n_e = 1.5 * float(kernel.weight_sum)
     common = dict(max_iter=200, density_tol=1e-9, comm_tol=1e-8, mixing=0.2)
-    linear = solve_scf(kernel, np.zeros_like(kernel.h), n_e,
-                       config=SCFConfig(acceleration="linear", **common))
-    diis = solve_scf(kernel, np.zeros_like(kernel.h), n_e,
-                     config=SCFConfig(acceleration="rdiis", **common))
+    linear = solve(kernel, np.zeros_like(kernel.h), n_e,
+                       config=SolverConfig(method="linear", **common))
+    diis = solve(kernel, np.zeros_like(kernel.h), n_e,
+                     config=SolverConfig(method="rdiis", **common))
     assert bool(linear.converged) and bool(diis.converged)
     assert int(linear.n_iter) > 60
     assert int(diis.n_iter) < 25, int(diis.n_iter)

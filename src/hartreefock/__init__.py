@@ -31,8 +31,6 @@ from . import _jax
 from .config import (
     ContinuationResult,
     DeflatedResult,
-    SCFConfig,
-    SCFResult,
     SolverConfig,
     SolveResult,
 )
@@ -67,51 +65,34 @@ def fock_operators(kernel):
 
 
 def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None):
-    """Minimize the free energy directly, with Riemannian CG or a Newton trust region.
+    """Solve the Hartree-Fock problem at fixed particle number.
+
+    ``config.method`` picks a Roothaan iteration (``"rdiis"``, the default,
+    ``"anderson"``, ``"oda"``, ``"linear"``: diagonalize the Fock matrix,
+    refill, repeat) or a direct minimization of the free energy (``"cg"``,
+    ``"newton"``).
 
     Parameters
     ----------
     kernel : HartreeFockKernel
         The problem.
     P0 : (nk1, nk2, nb, nb) array
-        Starting density. Its occupations seed the iteration; the particle
-        number is imposed through the chemical potential.
+        Starting density. Roothaan corrects its particle number before the
+        first step; direct minimization takes its occupations as the seed and
+        imposes the particle number through the chemical potential.
     n_electrons : float
         Particle number, counted with the kernel weights, ``Σ_k w_k Tr P_k``.
     config : SolverConfig, optional
-        Optimizer and stopping rule; ``None`` uses the defaults (CG).
+        Method and stopping rule; ``None`` is RDIIS with the defaults.
 
     Returns
     -------
     SolveResult
         The density, Fock matrix, energy, chemical potential, iteration count,
-        convergence flag and per-iteration history.
+        convergence flag and per-iteration history (and, from direct
+        minimization, the orbitals and occupations).
     """
     return _jax.solve(kernel, P0, n_electrons, config=config)
-
-
-def solve_scf(kernel, P0, n_electrons, *, config: SCFConfig | None = None):
-    """Solve by Roothaan iteration: diagonalize the Fock matrix, refill, repeat.
-
-    Parameters
-    ----------
-    kernel : HartreeFockKernel
-        The problem.
-    P0 : (nk1, nk2, nb, nb) array
-        Starting density; its particle number is corrected to
-        ``n_electrons`` before the first step.
-    n_electrons : float
-        Particle number, counted with the kernel weights, ``Σ_k w_k Tr P_k``.
-    config : SCFConfig, optional
-        Acceleration and tolerances; ``None`` uses ``SCFConfig()``, RDIIS.
-
-    Returns
-    -------
-    SCFResult
-        The density, Fock matrix, energy, chemical potential, iteration count,
-        convergence flag, a message and the per-iteration history.
-    """
-    return _jax.solve_scf(kernel, P0, n_electrons, config=config)
 
 
 __all__ = [
@@ -120,8 +101,6 @@ __all__ = [
     "HartreeFockKernel",
     "Mesh",
     "MinimumResult",
-    "SCFConfig",
-    "SCFResult",
     "SolveResult",
     "SolverConfig",
     "StabilityResult",
@@ -130,6 +109,5 @@ __all__ = [
     "solve_continuation",
     "solve_deflated",
     "solve_minimum",
-    "solve_scf",
     "stability_analysis",
 ]

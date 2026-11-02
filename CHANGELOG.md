@@ -7,6 +7,15 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- One entry point, one config, one result: `hf.solve(kernel, P0, n,
+  config=hf.SolverConfig(method=...))` with `method` one of `"rdiis"` (the
+  default), `"anderson"`, `"oda"`, `"linear"` (Roothaan iteration) or
+  `"cg"`, `"newton"` (direct minimization). `solve_scf`, `SCFConfig` and
+  `SCFResult` are gone; `SolverConfig(optimizer=)` and
+  `SCFConfig(acceleration=)` are `method=`. `SolveResult` carries `Q` and
+  `p` from direct minimization only; the Roothaan `message` string is gone
+  (the residuals are in `history`). `hf.solve` without a config now runs
+  RDIIS, not CG.
 - One kernel and a mesh type. `hf.Mesh(cell, nk, offset, periodic)` (with
   `Mesh.square` and `Mesh.bz`) holds the k-points, their weights, the
   transfer grid, the −k map and resampling, and `HartreeFockKernel(mesh, h,

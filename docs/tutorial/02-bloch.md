@@ -31,7 +31,7 @@ $$
 
 The transition is first order: the magnetization jumps from 0 to 1.
 
-**You will use:** {func}`~hartreefock.solve_scf`, `SCFResult.density`.
+**You will use:** {func}`~hartreefock.solve`, `SolveResult.density`.
 :::
 
 ## Two solutions
@@ -71,7 +71,7 @@ def solve_both(nk, rs):
     }
     out = {}
     for name, P0 in starts.items():
-        r = hf.solve_scf(kernel, P0, n)
+        r = hf.solve(kernel, P0, n)
         P = np.asarray(r.density)
         up, down = np.einsum("ij,ijaa->a", w, P).real
         kinetic = np.einsum("ij,ijab,ijba->", w, h, P).real

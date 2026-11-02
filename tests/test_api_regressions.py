@@ -11,11 +11,9 @@ from scipy.special import expit
 
 from hartreefock import (
     HartreeFockKernel,
-    SCFConfig,
     SolverConfig,
     fock_operators,
     solve,
-    solve_scf,
 )
 from hartreefock._jax.utils import find_chemical_potential as _find_mu
 
@@ -70,14 +68,14 @@ def test_exchange_weights_the_integrated_density():
         {"cg_restart": 0},
         {"bt_shrink": 1.0},
         {"mu_maxiter": 0},
-        {"optimizer": "bfgs"},
+        {"method": "bfgs"},
         {"block_sizes": (1.5, 0.5)},
         {"project_fn": 3},
     ],
 )
 def test_solver_config_rejects_invalid_domains(kwargs):
     with pytest.raises(ValueError):
-        SolverConfig(**kwargs)
+        SolverConfig(**{"method": "cg", **kwargs})
 
 
 @pytest.mark.parametrize(
@@ -87,18 +85,18 @@ def test_solver_config_rejects_invalid_domains(kwargs):
         {"density_tol": np.nan},
         {"comm_tol": np.inf},
         {"mixing": -0.1},
-        {"acceleration": "bfgs"},
+        {"method": "bfgs"},
         {"diis_size": 0},
         {"diis_start": True},
         {"diis_damping": 1.1},
         {"trust_radius": -0.1},
         {"project_fn": 3},
-        {"acceleration": "rdiis", "safeguard": 1},
+        {"method": "rdiis", "safeguard": 1},
     ],
 )
 def test_scf_config_rejects_invalid_domains(kwargs):
     with pytest.raises(ValueError):
-        SCFConfig(**kwargs)
+        SolverConfig(**kwargs)
 
 
 @pytest.fixture
@@ -107,16 +105,16 @@ def two_band_kernel():
     return HartreeFockKernel(mesh_for(np.full((2, 2), 0.25)), h, np.zeros((2, 2, 1, 1)), T=0.1)
 
 
-@pytest.mark.parametrize("solver", [solve, solve_scf])
-def test_solvers_reject_wrong_initial_density_shape(two_band_kernel, solver):
+@pytest.mark.parametrize("method", ["cg", "rdiis"])
+def test_solvers_reject_wrong_initial_density_shape(two_band_kernel, method):
     with pytest.raises(ValueError, match="P0 must have shape"):
-        solver(two_band_kernel, np.zeros((2, 2, 3, 3)), 1.0)
+        solve(two_band_kernel, np.zeros((2, 2, 3, 3)), 1.0, config=SolverConfig(method=method))
 
 
-@pytest.mark.parametrize("solver", [solve, solve_scf])
-def test_solvers_reject_unreachable_electron_count(two_band_kernel, solver):
+@pytest.mark.parametrize("method", ["cg", "rdiis"])
+def test_solvers_reject_unreachable_electron_count(two_band_kernel, method):
     with pytest.raises(ValueError, match="physically reachable range"):
-        solver(two_band_kernel, np.zeros_like(two_band_kernel.h), 100.0)
+        solve(two_band_kernel, np.zeros_like(two_band_kernel.h), 100.0, config=SolverConfig(method=method))
 
 
 def test_chemical_potential_exact_empty_and_full_endpoints():
@@ -156,10 +154,10 @@ def test_chemical_potential_bounds_cover_low_and_high_fillings(target, bandwidth
 def test_zero_temperature_scf_preserves_flat_band_particle_count(acceleration):
     h = np.zeros((1, 1, 2, 2), complex)
     kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), T=0.0)
-    config = SCFConfig(
-        acceleration=acceleration, max_iter=4, mixing=1.0, density_tol=1e-12, comm_tol=1e-12
+    config = SolverConfig(
+        method=acceleration, max_iter=4, mixing=1.0, density_tol=1e-12, comm_tol=1e-12
     )
-    result = solve_scf(kernel, np.eye(2)[None, None] * 0.05, 0.1, config=config)
+    result = solve(kernel, np.eye(2)[None, None] * 0.05, 0.1, config=config)
     assert result.converged
     np.testing.assert_allclose(np.trace(result.density[0, 0]), 0.1, atol=1e-14)
 

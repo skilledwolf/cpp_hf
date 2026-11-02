@@ -11,19 +11,9 @@ from __future__ import annotations
 import numpy as np
 
 from . import _jax
-from .config import ContinuationResult, SCFConfig, SolverConfig
+from .config import ContinuationResult, SolverConfig
 from .kernel import HartreeFockKernel
 from .superlattice import upsample_density
-
-
-def _run_stage(kernel, P0, n_electrons, config, stage):
-    if isinstance(config, SCFConfig):
-        return _jax.solve_scf(kernel, P0, float(n_electrons), config=config)
-    if config is None or isinstance(config, SolverConfig):
-        return _jax.solve(kernel, P0, float(n_electrons), config=config)
-    raise TypeError(
-        f"{stage}_config must be SolverConfig, SCFConfig, or None; got {type(config).__name__}."
-    )
 
 
 def _validate_kernels(coarse: HartreeFockKernel, fine: HartreeFockKernel) -> None:
@@ -44,15 +34,14 @@ def solve_continuation(
     n_electrons_coarse: float,
     n_electrons_fine: float,
     *,
-    coarse_config: SolverConfig | SCFConfig | None = None,
-    fine_config: SolverConfig | SCFConfig | None = None,
+    coarse_config: SolverConfig | None = None,
+    fine_config: SolverConfig | None = None,
     retain_P0_fine: bool = True,
 ) -> ContinuationResult:
     """Solve on a coarse mesh, resample the result to a fine mesh, and solve there.
 
-    Each stage runs :func:`~hartreefock.solve_scf` when its config is an
-    :class:`~hartreefock.SCFConfig` and :func:`~hartreefock.solve` otherwise,
-    so the stages can mix. The driver does not reinterpret the particle number
+    Each stage is a :func:`~hartreefock.solve` with its own config, so the
+    stages can use different methods. The driver does not reinterpret the particle number
     or the reference densities between meshes; build both kernels consistently.
 
     Parameters
@@ -63,9 +52,8 @@ def solve_continuation(
         Starting density on the coarse mesh.
     n_electrons_coarse, n_electrons_fine : float
         Particle numbers on each mesh, counted with its weights.
-    coarse_config, fine_config : SCFConfig or SolverConfig, optional
-        Solver and options of each stage; ``None`` is direct minimization with
-        the defaults.
+    coarse_config, fine_config : SolverConfig, optional
+        Method and options of each stage; ``None`` is RDIIS with the defaults.
     retain_P0_fine : bool
         Keep the resampled seed in the result.
 
@@ -82,7 +70,7 @@ def solve_continuation(
             f"coarse_kernel hamiltonian shape {tuple(coarse_kernel.h.shape)}."
         )
 
-    coarse = _run_stage(coarse_kernel, P0_coarse, n_electrons_coarse, coarse_config, "coarse")
+    coarse = _jax.solve(coarse_kernel, P0_coarse, float(n_electrons_coarse), config=coarse_config)
     density = coarse.density
     if density is None:
         raise ValueError("the coarse stage must return its density (return_density=True).")
@@ -91,5 +79,5 @@ def solve_continuation(
     else:
         P0_fine = np.asarray(_jax.resample_kgrid(density, int(fine_kernel.h.shape[0])))
         P0_fine = 0.5 * (P0_fine + P0_fine.conj().swapaxes(-1, -2))
-    fine = _run_stage(fine_kernel, P0_fine, n_electrons_fine, fine_config, "fine")
+    fine = _jax.solve(fine_kernel, P0_fine, float(n_electrons_fine), config=fine_config)
     return ContinuationResult(coarse=coarse, fine=fine, P0_fine=P0_fine if retain_P0_fine else None)

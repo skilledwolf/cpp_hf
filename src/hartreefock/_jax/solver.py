@@ -19,7 +19,7 @@ from .utils import (
 )
 
 
-def solve(
+def minimize(
     kernel,
     P0,
     n_electrons: float,
@@ -28,10 +28,10 @@ def solve(
 ) -> SolveResult:
     """Direct-minimization Hartree-Fock solver.
 
-    With ``config.optimizer="cg"`` (default): preconditioned Riemannian CG on
+    With ``config.method="cg"``: preconditioned Riemannian CG on
     Stiefel x capped simplex with true-free-energy backtracking (one
     current-state Fock build plus trial builds).  With
-    ``config.optimizer="newton"``: trust-region Newton (Steihaug truncated-CG
+    ``config.method="newton"``: trust-region Newton (Steihaug truncated-CG
     on the joint (Q, p) response Hessian), which converges on the gradient norm
     and typically needs fewer outer iterations on stiff problems.  See
     :class:`SolverConfig` for tuning knobs.
@@ -48,7 +48,7 @@ def solve(
     n_electrons
         Target electron count (sum of weights × occupations).
     config
-        Solver controls.  Defaults to :class:`SolverConfig()`.
+        Solver controls; ``method`` is ``"cg"`` or ``"newton"``.
 
     Returns
     -------
@@ -76,7 +76,7 @@ def solve(
     triggering a recompile.
     """
     if config is None:
-        config = SolverConfig()
+        config = SolverConfig(method="cg")
     P0_arr = jnp.asarray(P0)
     if P0_arr.shape != kernel.h.shape:
         raise ValueError(
@@ -97,14 +97,13 @@ def solve(
     builder = fock_builder(kernel)
     custom_fock = None if builder is build_fock else builder
 
-    optimizer = str(config.optimizer).lower()
+    optimizer = config.method
     deflation_on = (
         config.deflation_targets is not None and float(config.deflation_sigma) > 0.0
     )
     if deflation_on and optimizer != "newton":
         raise ValueError(
-            "deflation is only supported with optimizer='newton' "
-            f"(got optimizer={config.optimizer!r})."
+            f"deflation is only supported with method='newton' (got method={config.method!r})."
         )
 
     if optimizer == "newton":
@@ -115,9 +114,9 @@ def solve(
         # return converged=False.
         if jnp.finfo(jnp.asarray(kernel.h).real.dtype).bits < 64:
             warnings.warn(
-                "optimizer='newton' needs float64 precision to converge "
+                "method='newton' needs float64 precision to converge "
                 "reliably; the kernel is float32. Build it from float64 "
-                "arrays; the CG optimizer works in float32.",
+                "arrays; method='cg' works in float32.",
                 stacklevel=2,
             )
         # Trust-region Newton converges on the gradient norm; default tol_grad

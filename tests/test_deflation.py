@@ -24,8 +24,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from _meshes import mesh_for
 
-from hartreefock import HartreeFockKernel, SolverConfig, solve_deflated
-from hartreefock._jax import solve
+from hartreefock import HartreeFockKernel, SolverConfig, solve, solve_deflated
 
 
 def _comm_rms(F, P, w2d):
@@ -70,13 +69,13 @@ class TestProjectFnNewton:
             return P * eye[None, None, ...]
 
         r = solve(K, P0, ne, config=SolverConfig(
-            optimizer="newton", tol_grad=1e-7, max_iter=200, project_fn=proj_diag))
+            method="newton", tol_grad=1e-7, max_iter=200, project_fn=proj_diag))
         off = float(np.max(np.abs(np.asarray(r.density)[..., 0, 1])))
         assert off < 1e-8, f"projector not enforced in Newton path: off-diag {off}"
 
         # control: without the projector the coherence is clearly nonzero
         r0 = solve(K, P0, ne, config=SolverConfig(
-            optimizer="newton", tol_grad=1e-7, max_iter=200))
+            method="newton", tol_grad=1e-7, max_iter=200))
         assert float(np.max(np.abs(np.asarray(r0.density)[..., 0, 1]))) > 1e-3
 
 
@@ -86,7 +85,7 @@ class TestDeflationNoOp:
         K = _hybridized(nk=2, ex=0.3)
         P0 = jnp.zeros_like(K.h)
         ne = 4.0
-        base = dict(optimizer="newton", tol_grad=1e-7, max_iter=200)
+        base = dict(method="newton", tol_grad=1e-7, max_iter=200)
         r1 = solve(K, P0, ne, config=SolverConfig(**base))
         # no targets, sigma 0
         r2 = solve(K, P0, ne, config=SolverConfig(deflation_sigma=0.0, **base))
@@ -102,7 +101,7 @@ class TestDeflationNoOp:
         P0 = jnp.zeros_like(K.h)
         with pytest.raises(ValueError, match="deflation"):
             solve(K, P0, 4.0, config=SolverConfig(
-                optimizer="cg",
+                method="cg",
                 deflation_targets=np.asarray(P0)[None], deflation_sigma=1.0))
 
 
@@ -156,7 +155,7 @@ class TestDeflationFindsSolutions:
         K = _bistable(nk=1, T=0.02, ex=1.0, delta=0.1)
         P0 = jnp.zeros_like(K.h)
         ne = 1.0
-        base = SolverConfig(optimizer="newton", tol_grad=1e-6, max_iter=300)
+        base = SolverConfig(method="newton", tol_grad=1e-6, max_iter=300)
 
         res = solve_deflated(K, P0, ne, base_config=base, n_solutions=2, seed=0)
         assert res.n_found >= 2, f"only found {res.n_found} solution(s)"

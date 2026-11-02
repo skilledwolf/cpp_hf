@@ -22,13 +22,11 @@ import contimod.materials.graphene.symmetry as cg_symmetry
 import jax
 import jax.numpy as jnp
 import numpy as np
-from _meshes import mesh_for
 from contimod.meanfield import SelfEnergySeed
 from contimod.utils.spectrum_fermi import FermiParams
 
 import hartreefock
-from hartreefock import SCFConfig
-from hartreefock._jax import solve_scf
+from hartreefock import SolverConfig, solve
 from hartreefock.symmetry import make_project_fn
 
 # ---------------------------------------------------------------------------
@@ -57,7 +55,6 @@ def build_problem():
     )
 
     ne_cn = float(h_template.state.density_from_filling(0.5 - 1e-6))
-    weights = np.asarray(h_template.kmesh.weights)
 
     Vq = cm.coulomb.dualgate_coulomb(
         h_template.kmesh.transfer_distance_grid,
@@ -97,7 +94,7 @@ def build_problem():
 
     project_fns = {"PM": project_fn_pm, "SVP": project_fn_svp}
 
-    return h_template, ne_cn, weights, Vq, seeds, project_fns
+    return h_template, ne_cn, Vq, seeds, project_fns
 
 
 def init_density_from_seed(h_run, seed_op):
@@ -107,24 +104,23 @@ def init_density_from_seed(h_run, seed_op):
     return SelfEnergySeed(seed_op).to_density(h_run, h_run.state.density(), T=float(h_run.fermi.T))
 
 
-def solve_scf_point(h_template, weights, Vq, n_electrons, P0, project_fn):
+def solve_scf_point(h_template, Vq, n_electrons, P0, project_fn):
     """Solve one HF point with the reference SCF solver."""
-    kernel = hartreefock.HartreeFockKernel(mesh_for(weights), np.asarray(h_template.hs), Vq, T=TEMPERATURE, exchange=True)
-    config = SCFConfig(
+    kernel = hartreefock.HartreeFockKernel(h_template.kmesh, np.asarray(h_template.hs), Vq, T=TEMPERATURE, exchange=True)
+    config = SolverConfig(
         max_iter=500,
         mixing=0.2,
         density_tol=1e-7,
         comm_tol=1e-6,
         project_fn=project_fn,
     )
-    result = solve_scf(kernel, jnp.asarray(P0), n_electrons,
-                                  config=config)
+    result = solve(kernel, jnp.asarray(P0), n_electrons, config=config)
     jax.block_until_ready(result.energy)
     return result
 
 
 def main():
-    h_template, ne_cn, weights, Vq, seeds, project_fns = build_problem()
+    h_template, ne_cn, Vq, seeds, project_fns = build_problem()
 
     results = {}
 
@@ -139,7 +135,7 @@ def main():
 
             P0 = init_density_from_seed(h_run, seeds[branch])
             result = solve_scf_point(
-                h_template, weights, Vq, n_e, P0, project_fns[branch],
+                h_template, Vq, n_e, P0, project_fns[branch],
             )
 
             E = float(result.energy)

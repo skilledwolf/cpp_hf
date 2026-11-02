@@ -72,7 +72,7 @@ def solve_deflated(
     Parameters
     ----------
     base_config:
-        Template :class:`SolverConfig`; ``optimizer`` is forced to ``"newton"``
+        Template :class:`SolverConfig`; ``method`` is forced to ``"newton"``
         and the deflation knobs are managed internally.  ``None`` uses defaults.
     n_solutions:
         Stop once this many distinct solutions are found (or no new basin is
@@ -102,11 +102,11 @@ def solve_deflated(
     w2d = np.asarray(kernel.w2d)
     rng = np.random.default_rng(seed)
 
-    base = base_config if base_config is not None else SolverConfig()
-    # Deflation is a Newton-path feature; force the optimizer and clear any
+    base = base_config if base_config is not None else SolverConfig(method="newton")
+    # Deflation is a Newton-path feature; force the method and clear any
     # stray deflation settings on the base (unbiased) config.
     newton_cfg = replace(
-        base, optimizer="newton", return_density=True,
+        base, method="newton", return_density=True,
         deflation_targets=None, deflation_sigma=0.0,
     )
 

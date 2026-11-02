@@ -24,7 +24,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
-from ..config import SCFConfig, SCFResult, drop_unrequested
+from ..config import SolverConfig, SolveResult, drop_unrequested
 from .fock import fock_builder, free_energy, hf_energy
 from .linalg import adjoint, bmm, hermitian_eigh, hermitian_eigvalsh
 from .utils import (
@@ -71,18 +71,18 @@ def _density_from_fock(fock, *, weights, n_electrons, temperature, level_shift):
     return _herm(density), mu
 
 
-def solve_scf(
+def roothaan(
     kernel,
     P0,
     n_electrons: float,
     *,
-    config: SCFConfig | None = None,
-) -> SCFResult:
+    config: SolverConfig | None = None,
+) -> SolveResult:
     """Reference self-consistent field (SCF) solver.
 
     Standard Roothaan iteration: build Fock, diagonalise, re-occupy via
     Fermi-Dirac, update the density (linear mixing, Pulay DIIS, or optimal
-    damping per ``config.acceleration``), repeat until converged.  Useful as a
+    damping per ``config.method``), repeat until converged.  Useful as a
     baseline or fallback when the direct-minimization solver struggles.
 
     Parameters
@@ -95,10 +95,10 @@ def solve_scf(
     n_electrons
         Target electron count.
     config
-        :class:`SCFConfig`.  ``acceleration`` selects rdiis / anderson /
+        :class:`SolverConfig`.  ``method`` selects rdiis / anderson /
         oda / linear; ``diis_size``, ``diis_start``, ``diis_damping`` tune the
         RDIIS and Anderson extrapolation; ``trust_radius``
-        clips the per-iteration density step.  Defaults to ``SCFConfig()``.
+        clips the per-iteration density step.  Defaults to ``SolverConfig()``.
 
     Notes
     -----
@@ -116,11 +116,11 @@ def solve_scf(
 
     Returns
     -------
-    SCFResult
-        ``density, fock, energy, mu, n_iter, converged, message, history``.
+    SolveResult
+        ``density, fock, energy, mu, n_iter, converged, history``.
     """
     if config is None:
-        config = SCFConfig()
+        config = SolverConfig()
 
     args = device_args(kernel)
     h = args["h"]
@@ -139,7 +139,7 @@ def solve_scf(
 
     run_scf = _run_scf
     extra_args = {}
-    if config.acceleration in ("rdiis", "anderson"):
+    if config.method in ("rdiis", "anderson"):
         from .scf_acceleration import _run_accelerated_scf
         if not bool(jnp.all(jnp.isfinite(P0_arr))):
             raise ValueError("P0 must contain only finite values")
@@ -174,7 +174,7 @@ def solve_scf(
             comm_tol=float(config.comm_tol),
             trust_radius=float(config.trust_radius),
             max_iter=int(config.max_iter),
-            acceleration=str(config.acceleration),
+            acceleration=config.method,
             project_fn=config.project_fn,
             fock_build_fn=fock_builder(kernel),
             **extra_args,
@@ -188,22 +188,13 @@ def solve_scf(
                        "line_search_rejections": int(run_result[11])}
 
     n_iter = int(iterations)
-    is_converged = bool(converged)
-    if is_converged:
-        message = f"converged in {n_iter} iterations"
-    else:
-        dr = float(hist_density[n_iter - 1]) if n_iter > 0 else float("nan")
-        cr = float(hist_comm[n_iter - 1]) if n_iter > 0 else float("nan")
-        message = f"stopped after {n_iter} iterations (density_res={dr:.3e}, comm_res={cr:.3e})"
-
-    return drop_unrequested(SCFResult(
+    return drop_unrequested(SolveResult(
         density=density,
         fock=fock,
         energy=energy,
         mu=mu,
         n_iter=n_iter,
-        converged=is_converged,
-        message=message,
+        converged=bool(converged),
         history={
             "E": hist_E[:n_iter],
             "free_energy": hist_free[:n_iter],

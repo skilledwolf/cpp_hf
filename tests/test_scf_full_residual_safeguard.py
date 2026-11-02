@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 from _meshes import mesh_for
 
-from hartreefock import HartreeFockKernel, SCFConfig, fock_operators, solve_scf
+from hartreefock import HartreeFockKernel, SolverConfig, fock_operators, solve
 from hartreefock._jax.utils import density_matrix_from_fock
 
 
@@ -16,7 +16,7 @@ def charge_kernel(strength=30.):
 @pytest.mark.parametrize('method',['anderson','rdiis'])
 def test_strong_diagonal_hartree_converges_monotonically(method):
     K,P=charge_kernel()
-    r=solve_scf(K,P,1.5,config=SCFConfig(acceleration=method,
+    r=solve(K,P,1.5,config=SolverConfig(method=method,
         max_iter=100,density_tol=1e-8,comm_tol=1e-8,mixing=1.))
     assert r.converged
     D,_=density_matrix_from_fock(r.fock,K.w2d,1.5,K.T)
@@ -31,7 +31,7 @@ def test_strong_diagonal_hartree_converges_monotonically(method):
 def test_returned_state_is_feasible_even_after_one_iteration(method):
     K,P=charge_kernel()
     P[...,0,0]=1.8;P[...,2,2]=-.8
-    r=solve_scf(K,P,1.5,config=SCFConfig(acceleration=method,max_iter=1))
+    r=solve(K,P,1.5,config=SolverConfig(method=method,max_iter=1))
     p=np.linalg.eigvalsh(r.density)
     assert p.min()>=-1e-14 and p.max()<=1+1e-14
     np.testing.assert_allclose(np.sum(K.w2d[...,None]*p),1.5,atol=1e-12)

@@ -18,14 +18,13 @@ import pytest
 contimod = pytest.importorskip("contimod")
 cg_symmetry = pytest.importorskip("contimod.materials.graphene.symmetry")
 
-import contimod as cm  # noqa: E402
-from _meshes import mesh_for
-from contimod.kdiscrete import Mesh  # noqa: E402
-from contimod.meanfield import SelfEnergySeed  # noqa: E402
-from contimod.utils.spectrum_fermi import FermiParams  # noqa: E402
+import contimod as cm
+from contimod.meanfield import SelfEnergySeed
+from contimod.utils.spectrum_fermi import FermiParams
 
-import hartreefock as hf  # noqa: E402
-from hartreefock.symmetry import make_project_fn  # noqa: E402
+import hartreefock as hf
+from hartreefock import Mesh
+from hartreefock.symmetry import make_project_fn
 
 DATA_PATH = Path(__file__).parent / "data" / "bilayer_reference.npz"
 PER_CM = 0.246e-7
@@ -48,10 +47,12 @@ def bilayer_setup():
     model = cm.graphene.Bernal(2, valleyful=True, spinful=True, U=float(ref["U_meV"]))
     h = model.discretize(mesh, fermi=FermiParams(T=temperature, mu=0.0))
 
-    Vq = cm.coulomb.dualgate_coulomb(
-        h.kmesh.transfer_distance_grid, epsilon_r=float(ref["epsilon_r"]), d_gate=float(ref["d_gate"])
-    )
-    kernel = hf.HartreeFockKernel(mesh_for(np.asarray(h.kmesh.weights)), np.asarray(h.hs), np.asarray(Vq)[..., None, None], T=temperature)
+    def V(q):
+        return cm.coulomb.dualgate_coulomb(
+            q, epsilon_r=float(ref["epsilon_r"]), d_gate=float(ref["d_gate"])
+        )
+
+    kernel = hf.HartreeFockKernel(h.kmesh, np.asarray(h.hs), V, T=temperature)
 
     identity = np.asarray(model.identity)
     s1, s2, s3 = (np.asarray(model.spin_op(i)) for i in (1, 2, 3))
@@ -102,11 +103,11 @@ def test_scf_energy_matches_reference(bilayer_setup, branch, n_cm12):
     ref, _, kernel, *_ = bilayer_setup
     E_ref = _reference_energy(ref, branch, n_cm12)
     P0, n_e = _initial_state(bilayer_setup, branch, n_cm12)
-    config = hf.SCFConfig(
-        acceleration="rdiis", max_iter=500, density_tol=1e-7, comm_tol=1e-6,
+    config = hf.SolverConfig(
+        method="rdiis", max_iter=500, density_tol=1e-7, comm_tol=1e-6,
         project_fn=bilayer_setup[5][branch],
     )
-    result = hf.solve_scf(kernel, P0, n_e, config=config)
+    result = hf.solve(kernel, P0, n_e, config=config)
 
     np.testing.assert_allclose(float(result.energy), E_ref, atol=E_ATOL)
     if not result.converged:
@@ -123,7 +124,7 @@ def test_direct_solver_energy_matches_reference(bilayer_setup, branch, n_cm12):
     ref, _, kernel, *_ = bilayer_setup
     E_ref = _reference_energy(ref, branch, n_cm12)
     P0, n_e = _initial_state(bilayer_setup, branch, n_cm12)
-    config = hf.SolverConfig(max_iter=200, tol_E=1e-7, project_fn=bilayer_setup[5][branch])
+    config = hf.SolverConfig(method="cg", max_iter=200, tol_E=1e-7, project_fn=bilayer_setup[5][branch])
     result = hf.solve(kernel, P0, n_e, config=config)
 
     np.testing.assert_allclose(float(result.energy), E_ref, atol=E_ATOL)
