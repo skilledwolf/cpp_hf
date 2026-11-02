@@ -265,7 +265,7 @@ class TestFrozenFockOccupationStep:
         cg = solve(kernel, P0, n_e, config=SolverConfig(max_iter=300, tol_E=1e-10))
         scf = solve_scf(
             kernel, P0, n_e,
-            config=SCFConfig(max_iter=500, acceleration="diis",
+            config=SCFConfig(max_iter=500, acceleration="rdiis",
                              density_tol=1e-10, comm_tol=1e-9),
         )
         assert bool(cg.converged) and bool(scf.converged)
@@ -370,7 +370,7 @@ class TestLineSearchAcceptsWhenSaturated:
 
         scf = solve_scf(
             kernel, P0, n_e,
-            config=SCFConfig(max_iter=500, acceleration="diis",
+            config=SCFConfig(max_iter=500, acceleration="rdiis",
                              density_tol=1e-10, comm_tol=1e-9),
         )
         assert bool(scf.converged)

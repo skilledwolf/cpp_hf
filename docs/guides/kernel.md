@@ -117,7 +117,7 @@ Standard Hartree-Fock is also a reference density of zero. Solving both
 ways gives the same density, and the energies obey the relation:
 
 ```{code-cell} ipython3
-config = hf.SCFConfig(acceleration="rdiis", density_tol=1e-10, comm_tol=1e-10)
+config = hf.SCFConfig(density_tol=1e-10, comm_tol=1e-10)
 common = dict(T=T, include_hartree=True, hartree_matrix=capacitor)
 standard = hf.HartreeFockKernel(weights, h, V, reference_density=np.zeros_like(h), **common)
 embedded = hf.HartreeFockKernel(weights, h, V, reference_density=P_ref,

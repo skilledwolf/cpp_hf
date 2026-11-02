@@ -100,9 +100,7 @@ def solve_scf(kernel, P0, n_electrons, *, config: SCFConfig | None = None):
     n_electrons : float
         Particle number, counted with the kernel weights, ``Σ_k w_k Tr P_k``.
     config : SCFConfig, optional
-        Acceleration and tolerances; ``None`` uses plain linear mixing.
-        ``SCFConfig(acceleration="rdiis")`` is the recommended choice at finite
-        temperature.
+        Acceleration and tolerances; ``None`` uses ``SCFConfig()``, RDIIS.
 
     Returns
     -------

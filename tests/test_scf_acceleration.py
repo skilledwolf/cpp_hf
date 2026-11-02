@@ -45,7 +45,7 @@ class TestAccelerationAgreement:
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
         energies = {}
-        for acc in ("linear", "diis", "oda"):
+        for acc in ("linear", "oda", "rdiis"):
             r = solve_scf(K, P0, _NE, config=SCFConfig(
                 max_iter=800, density_tol=1e-6, comm_tol=1e-5,
                 mixing=0.5, acceleration=acc))
@@ -54,15 +54,15 @@ class TestAccelerationAgreement:
         assert spread < 1e-3, f"schemes disagree on energy: {energies}"
 
 
-class TestDIIS:
+class TestRDIIS:
     def test_converges_far_faster_than_linear(self):
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
         cfg = dict(max_iter=800, density_tol=1e-6, comm_tol=1e-5, mixing=0.5)
         lin = solve_scf(K, P0, _NE, config=SCFConfig(acceleration="linear", **cfg))
-        diis = solve_scf(K, P0, _NE, config=SCFConfig(acceleration="diis", **cfg))
+        diis = solve_scf(K, P0, _NE, config=SCFConfig(acceleration="rdiis", **cfg))
         assert bool(lin.converged) and bool(diis.converged)
-        # Pulay DIIS should need far fewer Roothaan steps than plain mixing.
+        # RDIIS should need far fewer Roothaan steps than plain mixing.
         assert int(diis.n_iter) < int(lin.n_iter) // 3
         np.testing.assert_allclose(float(diis.energy), float(lin.energy), atol=1e-4, rtol=1e-5)
         assert _comm_rms(diis.fock, diis.density, K.w2d) < 1e-4
@@ -71,9 +71,9 @@ class TestDIIS:
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
         free = solve_scf(K, P0, _NE, config=SCFConfig(
-            max_iter=800, density_tol=1e-6, comm_tol=1e-5, acceleration="diis"))
+            max_iter=800, density_tol=1e-6, comm_tol=1e-5, acceleration="rdiis"))
         clipped = solve_scf(K, P0, _NE, config=SCFConfig(
-            max_iter=800, density_tol=1e-6, comm_tol=1e-5, acceleration="diis",
+            max_iter=800, density_tol=1e-6, comm_tol=1e-5, acceleration="rdiis",
             trust_radius=0.5))
         assert bool(clipped.converged)
         np.testing.assert_allclose(float(clipped.energy), float(free.energy), atol=1e-4, rtol=1e-5)
@@ -83,7 +83,7 @@ class TestDIIS:
         P0 = jnp.zeros_like(K.h)
         r = solve_scf(K, P0, _NE, config=SCFConfig(
             max_iter=800, density_tol=1e-6, comm_tol=1e-5,
-            acceleration="diis", diis_damping=0.7))
+            acceleration="rdiis", diis_damping=0.7))
         assert bool(r.converged)
 
 

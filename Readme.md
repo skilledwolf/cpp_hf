@@ -18,9 +18,9 @@ Two kernel types cover the problems:
 Solvers:
 
 * `solve`: direct minimization by Riemannian CG or trust-region Newton.
-* `solve_scf`: Roothaan SCF with linear, DIIS or ODA mixing, or the
-  free-energy-safeguarded full-residual `rdiis` (recommended at finite T) and
-  `anderson` schemes.
+* `solve_scf`: Roothaan SCF with the free-energy-safeguarded full-residual
+  `rdiis` (the default) and `anderson` schemes, optimal damping or linear
+  mixing.
 * `solve_minimum`: RDIIS plus a local stability check and bounded saddle
   recovery; `stability_analysis` is the standalone curvature test.
 * `solve_continuation` (coarse to fine) and `solve_deflated` (several distinct
@@ -58,7 +58,7 @@ kernel = hf.HartreeFockKernel(weights, h, Vq, T=0.1)
 P0 = np.zeros_like(h)
 
 dm = hf.solve(kernel, P0, n_electrons, config=hf.SolverConfig(tol_E=1e-8))
-scf = hf.solve_scf(kernel, P0, n_electrons, config=hf.SCFConfig(acceleration="diis"))
+scf = hf.solve_scf(kernel, P0, n_electrons)
 # dm.density, dm.fock, dm.energy, dm.mu, dm.n_iter, dm.converged, dm.history
 ```
 

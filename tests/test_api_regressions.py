@@ -162,7 +162,7 @@ def test_chemical_potential_bounds_cover_low_and_high_fillings(target, bandwidth
     np.testing.assert_allclose(count, expected, rtol=2e-8, atol=0.0)
 
 
-@pytest.mark.parametrize("acceleration", ["linear", "diis", "oda"])
+@pytest.mark.parametrize("acceleration", ["linear", "oda", "rdiis"])
 def test_zero_temperature_scf_preserves_flat_band_particle_count(acceleration):
     h = np.zeros((1, 1, 2, 2), complex)
     kernel = HartreeFockKernel(np.ones((1, 1)), h, np.zeros((1, 1, 1, 1)), T=0.0)

@@ -151,7 +151,7 @@ def test_embedding_solves_standard_hf(x64):
         h, reference_density=ref, embed_reference_potential=True, center_embedded_hartree=False, **common,
     )
     n = 0.3 * D * W * NX * NY
-    config = hf.SCFConfig(max_iter=300, density_tol=1e-10, comm_tol=1e-10, mixing=0.3, acceleration="diis")
+    config = hf.SCFConfig(max_iter=300, density_tol=1e-10, comm_tol=1e-10, mixing=0.3, acceleration="rdiis")
     r_plain = hf.solve_scf(plain, ref, n, config=config)
     r_embedded = hf.solve_scf(embedded, ref, n, config=config)
     assert r_plain.converged and r_embedded.converged, (r_plain.message, r_embedded.message)

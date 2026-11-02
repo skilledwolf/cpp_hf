@@ -79,7 +79,7 @@ and the per-iteration `history`.
 
 ```{code-cell} ipython3
 rows, residuals = [], {}
-for acceleration in ("linear", "diis", "oda", "rdiis", "anderson"):
+for acceleration in ("rdiis", "anderson", "oda", "linear"):
     t = time.perf_counter()
     r = hf.solve_scf(kernel, P0, n, config=hf.SCFConfig(acceleration=acceleration))
     rows.append((acceleration, r.converged, r.n_iter, float(r.energy), time.perf_counter() - t))
@@ -99,13 +99,17 @@ ax.set(xlabel="iteration", ylabel="density change")
 ax.legend();
 ```
 
-- `"linear"`: plain mixing with `mixing`.
-- `"diis"`: Pulay DIIS on the Fock commutator.
+- `"rdiis"`, the default: Pulay extrapolation of the Fock matrix fitted to
+  the full residual $f(F[P]) - P$, with a free-energy safeguard.
+- `"anderson"`: the same extrapolation on the density.
 - `"oda"`: optimal damping, an exact line search at $T = 0$ and free-energy
   backtracking at $T > 0$.
-- `"rdiis"` (Fock) and `"anderson"` (density): full-residual schemes with a
-  free-energy safeguard. RDIIS is the recommended default at finite
-  temperature.
+- `"linear"`: plain mixing with `mixing`.
+
+The residual is the full one because the commutator $[F, P]$ vanishes
+whenever $F$ and $P$ share eigenvectors, as they do for any collinear
+state, whatever the occupations: a Pulay fit to the commutator has nothing
+to fit there.
 
 ## Direct minimization
 
@@ -129,11 +133,9 @@ for optimizer in ("cg", "newton"):
 Every method reaches the same polarized state. RDIIS, ODA, Anderson and
 Newton take five to eight iterations, plain CG hundreds to reach a gradient
 of $10^{-8}$.
-Linear mixing and DIIS lie on top of each other in the figure: both blend
-the new density with the old one by `mixing` (0.5 by default), and on this
-problem one Roothaan step is already almost exact, so the blend halves the
-error per iteration. With `mixing=1.0` DIIS converges in 6 iterations
-here; the default is safer when the Roothaan step overshoots.
+Linear mixing blends the new density with the old one by `mixing` (0.5 by
+default). On this problem one Roothaan step is already almost exact, so
+the blend only halves the error per iteration.
 
 ```{code-cell} ipython3
 :tags: [remove-cell]
@@ -178,8 +180,7 @@ direct minimization according to its config, so they can mix:
 coarse, eps_coarse = gated_gas(24)
 P0_coarse = (eps_coarse < 2 * np.pi * n)[..., None, None] * np.diag([0.7, 0.3])
 c = hf.solve_continuation(coarse, kernel, P0_coarse, n, n,
-                          coarse_config=hf.SCFConfig(acceleration="rdiis"),
-                          fine_config=hf.SCFConfig(acceleration="rdiis"))
+                          coarse_config=hf.SCFConfig(), fine_config=hf.SCFConfig())
 print(f"coarse: {c.coarse.n_iter} iterations, E = {c.coarse.energy:.6f}")
 print(f"fine:   {c.fine.n_iter} iterations from the resampled seed, E = {c.fine.energy:.10f}")
 ```

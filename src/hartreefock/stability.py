@@ -445,7 +445,6 @@ def solve_minimum(
         )
     if config is None:
         config = SCFConfig(
-            acceleration="rdiis",
             diis_size=8,
             max_iter=500,
             density_tol=1e-8,

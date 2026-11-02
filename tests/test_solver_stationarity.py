@@ -134,14 +134,14 @@ def test_zero_diis_history_is_rejected_defensively() -> None:
             np.zeros_like(kernel.h),
             1.0,
             config=SCFConfig(
-                acceleration="diis",
+                acceleration="rdiis",
                 diis_size=0,
                 max_iter=2,
             ),
         )
 
 
-@pytest.mark.parametrize("acceleration", ["linear", "diis", "oda"])
+@pytest.mark.parametrize("acceleration", ["linear", "oda", "rdiis"])
 def test_scf_returns_the_density_whose_stationarity_was_certified(acceleration):
     # The fixed-point map amplifies a density error by 500, so replacing the
     # certified state with its undamped Fermi density would invalidate the stop.
@@ -202,7 +202,7 @@ def _wide_band_kernel(nk: int = 6, nb: int = 4, T: float = 0.5, ex: float = 0.6)
     )
 
 
-def test_diis_engages_when_the_residual_history_is_nearly_rank_deficient() -> None:
+def test_rdiis_engages_when_the_residual_history_is_nearly_rank_deficient() -> None:
     """DIIS must accelerate an iteration dominated by a single slow mode.
 
     Successive commutators are then nearly parallel, so the Pulay matrix is
@@ -219,27 +219,9 @@ def test_diis_engages_when_the_residual_history_is_nearly_rank_deficient() -> No
     linear = solve_scf(kernel, np.zeros_like(kernel.h), n_e,
                        config=SCFConfig(acceleration="linear", **common))
     diis = solve_scf(kernel, np.zeros_like(kernel.h), n_e,
-                     config=SCFConfig(acceleration="diis", **common))
+                     config=SCFConfig(acceleration="rdiis", **common))
     assert bool(linear.converged) and bool(diis.converged)
     assert int(linear.n_iter) > 60
     assert int(diis.n_iter) < 25, int(diis.n_iter)
     np.testing.assert_allclose(float(diis.energy), float(linear.energy), atol=1e-7)
 
-
-def test_diis_does_not_fit_noise_when_the_commutator_is_already_converged() -> None:
-    """Diagonal F and P commute exactly while the occupations are still wrong.
-
-    The commutator residual is then at tolerance from the first iteration and
-    the Pulay matrix is pure rounding noise; DIIS must fall back to linear
-    mixing rather than extrapolate on it.
-    """
-    kernel = _repulsive_hartree()
-    initial = np.array([[[[1.0, 0.0], [0.0, 0.0]]]], dtype=np.complex128)
-    common = dict(max_iter=200, density_tol=1e-10, comm_tol=1e-9, mixing=0.2)
-    linear = solve_scf(kernel, initial, 1.0, config=SCFConfig(acceleration="linear", **common))
-    diis = solve_scf(kernel, initial, 1.0, config=SCFConfig(acceleration="diis", **common))
-    assert bool(linear.converged) and bool(diis.converged)
-    assert int(diis.n_iter) <= int(linear.n_iter)
-    np.testing.assert_allclose(
-        np.asarray(diis.density[0, 0]), 0.5 * np.eye(2), atol=1e-8
-    )

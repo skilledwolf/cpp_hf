@@ -7,6 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- `SCFConfig(acceleration="diis")`, Pulay DIIS on the commutator `[F, P]`,
+  is removed and `"rdiis"` is the default. The commutator vanishes for any
+  collinear state, so commutator DIIS never engaged there and ran as plain
+  linear mixing (22 iterations against RDIIS's 5 in the solvers guide).
 - `cpp_hf` and `jax_hf` are merged into one package, `hartreefock`, with one
   kernel (`HartreeFockKernel`, `SuperlatticeHartreeFockKernel`) and one set
   of configs and results. `import cpp_hf` and `import jax_hf` are gone.

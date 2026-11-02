@@ -90,7 +90,7 @@ disc:
 ```{code-cell} ipython3
 kernel = hf.HartreeFockKernel(weights, h, coulomb_q, T=0.002)
 P0 = (eps < 1)[..., None, None] * np.eye(2)
-result = hf.solve_scf(kernel, P0, n, config=hf.SCFConfig(acceleration="rdiis"))
+result = hf.solve_scf(kernel, P0, n)
 print(result.converged, result.n_iter, "iterations,  mu =", round(float(result.mu), 4))
 ```
 
@@ -134,7 +134,7 @@ def energies(nk, rs=1.0):
     w, h, V, _, eps = electron_gas(nk, kmax=2.1, rs=rs)
     kernel = hf.HartreeFockKernel(w, h, V, T=0.002)
     P0 = (eps < 1)[..., None, None] * np.eye(2)
-    r = hf.solve_scf(kernel, P0, n, config=hf.SCFConfig(acceleration="rdiis"))
+    r = hf.solve_scf(kernel, P0, n)
     kinetic = np.einsum("ij,ijab,ijba->", w, h, np.asarray(r.density)).real
     to_ry = 2 / rs**2 / n        # E_F k_F² per area -> Ry per electron
     return kinetic * to_ry, (float(r.energy) - kinetic) * to_ry

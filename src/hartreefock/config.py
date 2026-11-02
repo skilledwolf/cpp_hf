@@ -9,7 +9,7 @@ from numbers import Integral
 from typing import Any, NamedTuple
 
 _OPTIMIZERS = ("cg", "newton")
-_ACCELERATIONS = ("linear", "diis", "oda", "rdiis", "anderson")
+_ACCELERATIONS = ("rdiis", "anderson", "oda", "linear")
 
 
 def _check_finite(cfg, names):
@@ -138,13 +138,12 @@ class SCFConfig:
 
     Attributes
     ----------
-    acceleration : {"linear", "diis", "oda", "rdiis", "anderson"}
-        ``"linear"`` mixing; ``"diis"``, Pulay commutator DIIS on the Fock;
-        ``"oda"``, optimal damping (exact line search at T = 0, free-energy
-        backtracking at T > 0);
-        ``"rdiis"`` (Fock) and ``"anderson"`` (density), full-residual schemes
-        with a free-energy safeguard. ``"rdiis"`` is the recommended default at
-        finite temperature.
+    acceleration : {"rdiis", "anderson", "oda", "linear"}
+        ``"rdiis"`` (the default, Pulay extrapolation of the Fock) and
+        ``"anderson"`` (of the density) fit the full residual ``f(F[P]) - P``
+        and guard the free energy; ``"oda"``, optimal damping (exact line
+        search at T = 0, free-energy backtracking at T > 0); ``"linear"``
+        mixing.
     max_iter : int
         Iteration limit.
     density_tol, comm_tol : float
@@ -154,8 +153,8 @@ class SCFConfig:
     level_shift : float
         Shift of the virtual levels, which damps charge sloshing.
     diis_size, diis_start, diis_damping : int, int, float
-        DIIS history length, the iteration it starts at, and the blend of the
-        extrapolated and current Fock matrices.
+        RDIIS/Anderson history length, the iteration they start at, and the
+        blend of the extrapolated and current Fock matrices.
     trust_radius : float
         Largest density step in the weighted Frobenius norm; 0 turns it off.
     safeguard : bool
@@ -172,7 +171,7 @@ class SCFConfig:
     comm_tol: float = 1e-6
     mixing: float = 0.5
     level_shift: float = 0.0
-    acceleration: str = "linear"
+    acceleration: str = "rdiis"
     diis_size: int = 6
     diis_start: int = 2
     diis_damping: float = 1.0

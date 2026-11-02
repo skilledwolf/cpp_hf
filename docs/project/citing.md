@@ -20,7 +20,7 @@ commit you ran:
 | Method | Source |
 | --- | --- |
 | Finite-temperature Hartree-Fock, the free energy minimized | {cite:t}`Mermin1965` |
-| DIIS (`acceleration="diis"`, and the extrapolation in `"rdiis"`) | {cite:t}`Pulay1980` |
+| DIIS (the extrapolation in `"rdiis"` and `"anderson"`) | {cite:t}`Pulay1980` |
 | Optimal damping (`acceleration="oda"`) | {cite:t}`Cances2000` |
 | The stability test | {cite:t}`Thouless1960` |
 

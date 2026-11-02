@@ -276,7 +276,7 @@ def test_free_energy_describes_returned_state_not_stale_history(monkeypatch):
     monkeypatch.setattr(module, "_fermi_escape_density", lambda *a, **k: HALF.copy())
     monkeypatch.setattr(module, "_feasible_density", lambda *a, **k: HALF.copy())
     kernel = saddle_kernel()
-    r = solve_minimum(kernel, HALF, 1.0, config=SCFConfig(acceleration="diis"))
+    r = solve_minimum(kernel, HALF, 1.0, config=SCFConfig(acceleration="rdiis"))
     assert r.solution.converged and r.stability.stable is False
     assert not r.converged and r.escapes == 0
     assert "no finite feasible descent" in r.message

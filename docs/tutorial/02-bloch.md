@@ -60,7 +60,6 @@ def electron_gas(nk, kmax, rs):
 
 
 n = 1 / (2 * np.pi)
-config = hf.SCFConfig(acceleration="rdiis")
 
 
 def solve_both(nk, rs):
@@ -73,7 +72,7 @@ def solve_both(nk, rs):
     }
     out = {}
     for name, P0 in starts.items():
-        r = hf.solve_scf(kernel, P0, n, config=config)
+        r = hf.solve_scf(kernel, P0, n)
         P = np.asarray(r.density)
         up, down = np.einsum("ij,ijaa->a", w, P).real
         kinetic = np.einsum("ij,ijab,ijba->", w, h, P).real

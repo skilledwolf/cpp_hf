@@ -87,7 +87,7 @@ kernel = hf.SuperlatticeHartreeFockKernel(weights, h, coulomb, g_frac, B, T=0.00
 n = 1 / (4 * np.pi)                                      # one spin with k_F = 1
 P0 = np.zeros_like(h)
 P0[:, :, diag, diag] = eps < 1
-r = hf.solve_scf(kernel, P0, n, config=hf.SCFConfig(acceleration="rdiis"))
+r = hf.solve_scf(kernel, P0, n)
 print(f"{len(g_frac)} plane waves, D = {h.shape[-1]}: converged {r.converged} in {r.n_iter} iterations")
 ```
 

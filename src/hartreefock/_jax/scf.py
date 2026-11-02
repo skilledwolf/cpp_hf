@@ -6,7 +6,6 @@ Roothaan iteration with selectable acceleration:
   3. Find mu via Fermi-Dirac, construct P_new = V diag(f) V†
   4. Update the density via ``acceleration``:
        - "linear": P <- (1 - mixing) P + mixing P_new
-       - "diis":   Pulay commutator-DIIS extrapolation of the Fock
        - "rdiis":  safeguarded full-density-residual Fock extrapolation
        - "anderson": safeguarded full-density-residual density extrapolation
        - "oda":    optimal damping (energy line search at T=0, free-energy
@@ -72,36 +71,6 @@ def _density_from_fock(fock, *, weights, n_electrons, temperature, level_shift):
     return _herm(density), mu
 
 
-def _residual_overlaps(R_hist, R, w2d):
-    """``sum_k w_k Re tr(R_i_k† R_k)`` for every history slot ``i``: one Gram row."""
-    weighted = (R * w2d[:, :, None, None]).reshape(-1)
-    return jnp.real(jnp.conj(R_hist.reshape(R_hist.shape[0], -1)) @ weighted)
-
-
-def _diis_coefficients(B, active):
-    """Pulay C-DIIS coefficients from the residual Gram matrix ``B``.
-
-    Solves the augmented system ``[[B, -1], [-1, 0]] [c; lam] = [0; -1]`` with
-    ``B[i, j] = sum_k w_k Re tr(R_i_k† R_j_k)``, masked so inactive history
-    slots get ``c_i = 0``.  ``B`` is normalized by its largest entry first (the
-    Pulay solution is invariant to that scaling) for float32 conditioning.
-    Returns ``(coeffs, ok)`` where ``ok`` is False if the solve is singular.
-    """
-    N = B.shape[0]
-    real_dtype = B.dtype
-    B = B * active[:, None] * active[None, :]
-    B = B / jnp.maximum(jnp.max(jnp.abs(B)), jnp.asarray(1e-30, real_dtype))
-    active_f = active.astype(real_dtype)
-    A = jnp.zeros((N + 1, N + 1), real_dtype)
-    A = A.at[:N, :N].set(B)
-    A = A.at[:N, :N].add(jnp.diag(1.0 - active_f))   # inactive slots -> c_i = 0
-    A = A.at[:N, N].set(-active_f)
-    A = A.at[N, :N].set(-active_f)
-    rhs = jnp.zeros(N + 1, real_dtype).at[N].set(-1.0)
-    sol = jnp.linalg.solve(A, rhs)
-    return sol[:N], jnp.all(jnp.isfinite(sol))
-
-
 def solve_scf(
     kernel,
     P0,
@@ -126,9 +95,9 @@ def solve_scf(
     n_electrons
         Target electron count.
     config
-        :class:`SCFConfig`.  ``acceleration`` selects linear / diis / oda /
-        rdiis / anderson;
-        ``diis_size``, ``diis_start``, ``diis_damping`` tune DIIS; ``trust_radius``
+        :class:`SCFConfig`.  ``acceleration`` selects rdiis / anderson /
+        oda / linear; ``diis_size``, ``diis_start``, ``diis_damping`` tune the
+        RDIIS and Anderson extrapolation; ``trust_radius``
         clips the per-iteration density step.  Defaults to ``SCFConfig()``.
 
     Notes
@@ -175,7 +144,9 @@ def solve_scf(
         if not bool(jnp.all(jnp.isfinite(P0_arr))):
             raise ValueError("P0 must contain only finite values")
         run_scf = _run_accelerated_scf
-        extra_args["safeguard"] = config.safeguard
+        extra_args = dict(safeguard=config.safeguard, diis_size=int(config.diis_size),
+                          diis_start=int(config.diis_start),
+                          diis_damping=float(config.diis_damping))
 
     # At either exact filling endpoint the physical density is known.  Seed
     # it directly so mixing cannot leave a one-ULP particle deficit in a
@@ -201,12 +172,9 @@ def solve_scf(
             level_shift=float(config.level_shift),
             density_tol=float(config.density_tol),
             comm_tol=float(config.comm_tol),
-            diis_start=int(config.diis_start),
-            diis_damping=float(config.diis_damping),
             trust_radius=float(config.trust_radius),
             max_iter=int(config.max_iter),
             acceleration=str(config.acceleration),
-            diis_size=int(config.diis_size),
             project_fn=config.project_fn,
             fock_build_fn=fock_builder(kernel),
             **extra_args,
@@ -251,7 +219,7 @@ def solve_scf(
     static_argnames=(
         "include_hartree", "include_exchange",
         "exchange_hermitian_channel_packing",
-        "max_iter", "acceleration", "diis_size", "project_fn", "fock_build_fn",
+        "max_iter", "acceleration", "project_fn", "fock_build_fn",
     ),
 )
 def _run_scf(
@@ -263,9 +231,7 @@ def _run_scf(
     exchange_hermitian_channel_packing,
     contact_g, contact_Oi, contact_Oj,
     mixing, level_shift, density_tol, comm_tol,
-    diis_start, diis_damping, trust_radius, max_iter,
-    acceleration, diis_size,
-    project_fn,
+    trust_radius, max_iter, acceleration, project_fn,
     fock_build_fn,
 ):
     real_dtype = jnp.zeros((), dtype=h.dtype).real.dtype
@@ -307,19 +273,12 @@ def _run_scf(
     def _linear(density, delta):
         return _herm(jnp.asarray(_project(density + mixing * delta), dtype=h.dtype))
 
-    use_diis = acceleration == "diis"
-    n_hist = diis_size if use_diis else 0
-    F_hist0 = jnp.zeros((n_hist,) + h.shape, dtype=h.dtype)
-    # Residual history and its Gram matrix: each iteration adds one row.
-    R_hist0 = (jnp.zeros((n_hist,) + h.shape, dtype=h.dtype),
-               jnp.zeros((n_hist, n_hist), dtype=real_dtype))
-
     def cond(carry):
-        k, _, _, _, _, converged, _, _, _, _, _, _ = carry
+        k, _, _, _, _, converged, _, _, _, _ = carry
         return jnp.logical_and(k < max_iter, jnp.logical_not(converged))
 
     def body(carry):
-        k, density, _fk, _en, _mu, _conv, F_hist, (R_hist, B_hist), hE, hO, hD, hC = carry
+        k, density, _fk, _en, _mu, _conv, hE, hO, hD, hC = carry
 
         P_new, F, E, Omega, mu = _build_and_occupy(density)
         delta = P_new - density
@@ -329,26 +288,7 @@ def _run_scf(
         converged = jnp.logical_and(d_res <= density_tol, c_res <= comm_tol)
 
         # --- density update per acceleration scheme (branch at trace time) ---
-        if acceleration == "diis":
-            idx = k % n_hist
-            F_hist = F_hist.at[idx].set(F)
-            R_hist = R_hist.at[idx].set(comm)
-            row = _residual_overlaps(R_hist, comm, weights_2d)
-            B_hist = B_hist.at[idx, :].set(row).at[:, idx].set(row)
-            count = jnp.minimum(k + 1, n_hist)
-            active = jnp.arange(n_hist) < count
-            coeffs, ok = _diis_coefficients(B_hist, active)
-            F_extrap = jnp.einsum("i,iklab->klab", coeffs.astype(h.dtype), F_hist)
-            damp = jnp.clip(diis_damping, 0.0, 1.0).astype(h.dtype)
-            F_extrap = damp * F_extrap + (1.0 - damp) * F
-            P_diis, _ = _density_from_fock(
-                _herm(F_extrap), weights=weights_2d, n_electrons=n_electrons,
-                temperature=T, level_shift=level_shift,
-            )
-            P_diis = _herm(jnp.asarray(_project(P_diis), dtype=h.dtype))
-            engaged = jnp.logical_and(count >= jnp.maximum(2, diis_start), ok)
-            updated = jnp.where(engaged, P_diis, _linear(density, delta))
-        elif acceleration == "oda":
+        if acceleration == "oda":
             # One extra Fock build at P_new gives the energy endpoint E(lam=1).
             Sigma_n, H_n, _ = _fock(P_new)
             E_new = hf_energy(
@@ -415,7 +355,7 @@ def _run_scf(
         hD = hD.at[k].set(d_res)
         hC = hC.at[k].set(c_res)
         return (k + 1, density_out, F, E, mu, converged,
-                F_hist, (R_hist, B_hist), hE, hO, hD, hC)
+                hE, hO, hD, hC)
 
     carry0 = (
         jnp.int32(0),
@@ -424,11 +364,10 @@ def _run_scf(
         jnp.asarray(0.0, dtype=real_dtype),
         jnp.asarray(0.0, dtype=real_dtype),
         jnp.bool_(False),
-        F_hist0, R_hist0,
         hist_E, hist_free, hist_density, hist_comm,
     )
 
-    k, density, fock, energy, mu, converged, _Fh, _Rh, hE, hO, hD, hC = \
+    k, density, fock, energy, mu, converged, hE, hO, hD, hC = \
         jax.lax.while_loop(cond, body, carry0)
 
     # Final evaluation at the converged density (self-consistent density returned).

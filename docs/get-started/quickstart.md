@@ -57,7 +57,7 @@ starts = {
 }
 results = {}
 for name, P0 in starts.items():
-    r = hf.solve_scf(kernel, P0, n_electrons, config=hf.SCFConfig(acceleration="rdiis"))
+    r = hf.solve_scf(kernel, P0, n_electrons)
     s = hf.stability_analysis(kernel, r.density, n_electrons)
     up, down = np.einsum("ij,ijaa->a", weights, r.density).real
     results[name] = (r, s)

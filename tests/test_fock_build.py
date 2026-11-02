@@ -74,7 +74,7 @@ def test_oda_moves_a_start_with_the_wrong_particle_count_onto_it(x64):
     P0 = U[..., :, :1] @ np.conj(U[..., :, :1]).swapaxes(-1, -2)
     common = dict(max_iter=400, density_tol=1e-8, comm_tol=1e-7, mixing=0.5)
     oda = hf.solve_scf(kernel, P0, n_e, config=hf.SCFConfig(acceleration="oda", **common))
-    diis = hf.solve_scf(kernel, P0, n_e, config=hf.SCFConfig(acceleration="diis", **common))
+    diis = hf.solve_scf(kernel, P0, n_e, config=hf.SCFConfig(acceleration="rdiis", **common))
     w = np.full((nk, nk), 1.0 / nk**2)
     count = np.sum(w * np.real(np.trace(np.asarray(oda.density), axis1=-2, axis2=-1)))
     np.testing.assert_allclose(count, n_e, atol=1e-8)

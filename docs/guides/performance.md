@@ -36,7 +36,7 @@ P0 = (eps < 2 * np.pi * n)[..., None, None] * np.diag([0.7, 0.3])
 results = {}
 for dtype, tol in ((np.complex64, 1e-5), (np.complex128, 1e-9)):
     kernel = hf.HartreeFockKernel(weights, h.astype(dtype), V[..., None, None], T=0.005)
-    config = hf.SCFConfig(acceleration="rdiis", density_tol=tol)
+    config = hf.SCFConfig(density_tol=tol)
     for attempt in ("first call", "second call"):
         t = time.perf_counter()
         r = hf.solve_scf(kernel, P0.astype(dtype), n, config=config)

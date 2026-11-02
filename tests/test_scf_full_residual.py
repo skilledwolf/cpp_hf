@@ -136,7 +136,7 @@ def test_symmetry_projection_uses_entropy_of_returned_density():
 
 
 def test_safeguard_validation_and_nonfinite_input():
-    old = SCFConfig(acceleration="diis", diis_size=7)
+    old = SCFConfig(acceleration="rdiis", diis_size=7)
     assert old.safeguard
     with pytest.raises(ValueError, match="safeguard"):
         SCFConfig(safeguard="yes")
@@ -171,7 +171,7 @@ def test_complex_coupled_problem_damping_trust_and_precision(method, dtype):
     assert np.max(np.abs(np.asarray(result.density).imag)) > .01
 
 
-@pytest.mark.parametrize("method", ["linear", "diis", "oda"])
+@pytest.mark.parametrize("method", ["linear", "oda", "rdiis"])
 def test_legacy_scf_returns_the_density_whose_residual_was_certified(method):
     # This Fermi map amplifies density errors by 500.  A final undamped step
     # would move a certified state outside the requested tolerance.

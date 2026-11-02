@@ -38,8 +38,7 @@ q = np.hypot(*np.meshgrid(q1, q1, indexing="ij"))
 V = 2 * np.pi * np.sqrt(2) * rs * np.where(q > 0, 1 / np.where(q > 0, q, 1), 4 * np.log(1 + np.sqrt(2)) / dk)
 
 kernel = hf.HartreeFockKernel(weights, h, V[..., None, None], T=0.002)
-result = hf.solve_scf(kernel, (eps < 1)[..., None, None] * np.eye(2), 1 / (2 * np.pi),
-                      config=hf.SCFConfig(acceleration="rdiis"))
+result = hf.solve_scf(kernel, (eps < 1)[..., None, None] * np.eye(2), 1 / (2 * np.pi))
 sigma = (np.asarray(result.fock) - h)[:, nk // 2, 0, 0].real
 
 kk = np.linspace(0, 2.1, 400)

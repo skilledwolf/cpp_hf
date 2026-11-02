@@ -67,7 +67,6 @@ def hubbard(U):
 
 
 P_para = (eps < 1)[..., None, None] * np.eye(2)
-config = hf.SCFConfig(acceleration="rdiis")
 ```
 
 ## The curvature
@@ -81,7 +80,7 @@ paramagnet at a range of $U$ and test each solution:
 Us = np.array([8.0, 10.0, 11.0, 12.0, 12.5, 13.0, 14.0, 16.0])
 curvature, magnetization = [], []
 for U in Us:
-    r = hf.solve_scf(hubbard(U), P_para, n, config=config)
+    r = hf.solve_scf(hubbard(U), P_para, n)
     P = np.asarray(r.density)
     check = hf.stability_analysis(hubbard(U), P, n)
     curvature.append(check.lowest_eigenvalue)
