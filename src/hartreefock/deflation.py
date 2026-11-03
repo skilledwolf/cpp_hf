@@ -4,7 +4,7 @@ HF is non-convex: SCF / CG / Newton all converge to whichever self-consistent
 solution sits in the basin of the initial guess.  This module layers *deflation*
 on the trust-region Newton solver (``optimizer="newton"``): once a solution P* is
 found, a repulsive Gaussian bias around P* is added to the free energy (via
-:attr:`SolverConfig.deflation_targets`), pushing a re-solve out of that basin so
+:attr:`Newton.deflation_targets`), pushing a re-solve out of that basin so
 it converges to a *different* solution.  Each biased solve is re-polished
 unbiased, so every returned density is a true (unbiased) HF stationary point.
 Results are sorted by physical energy — the lowest is the best ground-state
@@ -27,7 +27,7 @@ from dataclasses import replace
 import numpy as np
 
 from . import _jax
-from .config import DeflatedResult, SolverConfig
+from .config import DeflatedResult, Newton
 
 
 def _wnorm2(M: np.ndarray, w2d: np.ndarray) -> float:
@@ -51,7 +51,7 @@ def solve_deflated(
     P0,
     n_electrons: float,
     *,
-    base_config: SolverConfig | None = None,
+    base_config: Newton | None = None,
     n_solutions: int = 4,
     sigma: float | None = None,
     length: float | None = None,
@@ -72,8 +72,8 @@ def solve_deflated(
     Parameters
     ----------
     base_config:
-        Template :class:`SolverConfig`; ``method`` is forced to ``"newton"``
-        and the deflation knobs are managed internally.  ``None`` uses defaults.
+        Template :class:`Newton` config; the deflation knobs are managed
+        internally.  ``None`` uses defaults.
     n_solutions:
         Stop once this many distinct solutions are found (or no new basin is
         reachable within ``max_retries``).
@@ -102,11 +102,12 @@ def solve_deflated(
     w2d = np.asarray(kernel.w2d)
     rng = np.random.default_rng(seed)
 
-    base = base_config if base_config is not None else SolverConfig(method="newton")
-    # Deflation is a Newton-path feature; force the method and clear any
-    # stray deflation settings on the base (unbiased) config.
+    base = base_config if base_config is not None else Newton()
+    if not isinstance(base, Newton):
+        raise TypeError(f"base_config must be a hartreefock.Newton, got {type(base).__name__}.")
+    # Clear any stray deflation settings on the base (unbiased) config.
     newton_cfg = replace(
-        base, method="newton", return_density=True,
+        base, return_density=True,
         deflation_targets=None, deflation_sigma=0.0,
     )
 

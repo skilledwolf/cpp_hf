@@ -8,8 +8,8 @@ kernelspec:
 
 {func}`~hartreefock.solve` takes a kernel, a starting density `P0` of shape
 `(nk1, nk2, nb, nb)`, the particle number `n_electrons` (counted with the
-weights) and a {class}`~hartreefock.SolverConfig` whose `method` picks the
-algorithm. The chemical potential is solved for at
+weights) and a config whose class picks the algorithm and takes only that
+algorithm's options. The chemical potential is solved for at
 every step. This page runs each of them on one problem and compares.
 
 ## Theory
@@ -20,18 +20,19 @@ $0 \le P \le 1$ and fixed $n$ {cite}`Mermin1965`. A stationary point
 satisfies $P = f\big((F[P] - \mu)/T\big)$, with $F = \delta E_{HF}/\delta P$
 the Fock matrix. Two families find it:
 
-- **Roothaan iteration** (`method="rdiis"`, the default, or `"linear"`):
+- **Roothaan iteration** ({class}`~hartreefock.RDIIS`, the default, or {class}`~hartreefock.Linear`):
   diagonalize $F[P]$, refill at fixed $n$, repeat. Plain iteration can
   oscillate; extrapolation over past iterates (DIIS {cite}`Pulay1980`)
   makes it converge.
-- **Direct minimization** (`method="cg"`, `"newton"`): descend $\Omega$ on the manifold of
+- **Direct minimization** ({class}`~hartreefock.CG`, {class}`~hartreefock.Newton`): descend $\Omega$ on the manifold of
   densities, with conjugate gradients or a Newton trust region on the exact
   Hessian.
 
 Both stop at any stationary point, minimum or saddle. The Hessian at the
 solution tells them apart {cite}`Thouless1960`.
 
-**On this page:** {func}`~hartreefock.solve`, {class}`~hartreefock.SolverConfig`,
+**On this page:** {func}`~hartreefock.solve`, {class}`~hartreefock.RDIIS`,
+{class}`~hartreefock.Linear`, {class}`~hartreefock.CG`, {class}`~hartreefock.Newton`,
 {class}`~hartreefock.SolveResult`,
 {func}`~hartreefock.solve_minimum`, {func}`~hartreefock.stability_analysis`,
 {func}`~hartreefock.solve_deflated`.
@@ -79,7 +80,7 @@ convergence flag and the per-iteration `history`.
 rows, residuals = [], {}
 for acceleration in ("rdiis", "linear"):
     t = time.perf_counter()
-    r = hf.solve(kernel, P0, n, config=hf.SolverConfig(method=acceleration))
+    r = hf.solve(kernel, P0, n, config=hf.METHODS[acceleration]())
     rows.append((acceleration, r.converged, r.n_iter, r.energy, time.perf_counter() - t))
     residuals[acceleration] = np.asarray(r.history["density_residual"])
     print(f"{acceleration:>9}: converged {str(r.converged):5}  {r.n_iter:3d} iterations  "
@@ -108,7 +109,7 @@ to fit there.
 
 ## Direct minimization
 
-`method="cg"` is Riemannian
+`hf.CG` is Riemannian
 conjugate gradients, `"newton"` a truncated-CG trust region on the exact
 Hessian, quadratic near a solution and in need of double precision. With
 `tol_grad > 0` the stationarity norm is the stopping test; otherwise CG
@@ -119,7 +120,7 @@ the end, rather than the tail of `history["E"]`.
 ```{code-cell} ipython3
 for optimizer in ("cg", "newton"):
     t = time.perf_counter()
-    r = hf.solve(kernel, P0, n, config=hf.SolverConfig(method=optimizer, tol_grad=1e-8, max_iter=500))
+    r = hf.solve(kernel, P0, n, config=hf.METHODS[optimizer](tol_grad=1e-8, max_iter=500))
     rows.append((optimizer, r.converged, r.n_iter, r.energy, time.perf_counter() - t))
     print(f"{optimizer:>9}: converged {str(r.converged):5}  {r.n_iter:3d} iterations  "
           f"E = {r.energy:.10f}  m = {magnetization(r.density):.4f}  {rows[-1][-1] * 1e3:5.0f} ms")

@@ -150,7 +150,7 @@ def test_embedding_solves_standard_hf(x64):
     plain = make_kernel(h, reference=np.zeros_like(ref), **common)
     embedded = make_kernel(h, reference=ref, embed_reference=True, **common)
     n = 0.3 * D * W * NX * NY
-    config = hf.SolverConfig(max_iter=300, density_tol=1e-10, comm_tol=1e-10, mixing=0.3, method="rdiis")
+    config = hf.RDIIS(max_iter=300, density_tol=1e-10, comm_tol=1e-10)
     r_plain = hf.solve(plain, ref, n, config=config)
     r_embedded = hf.solve(embedded, ref, n, config=config)
     assert r_plain.converged and r_embedded.converged

@@ -7,8 +7,11 @@ import pytest
 from _meshes import mesh_for
 
 from hartreefock import (
+    CG,
+    METHODS,
+    RDIIS,
     HartreeFockKernel,
-    SolverConfig,
+    Linear,
     solve,
 )
 from hartreefock._jax.utils import density_matrix_from_fock
@@ -56,8 +59,7 @@ def test_zero_orbital_gradient_does_not_hide_wrong_occupations(
         kernel,
         initial,
         1.0,
-        config=SolverConfig(
-            method=optimizer,
+        config=METHODS[optimizer](
             max_iter=300,
             tol_grad=tol,
         ),
@@ -84,8 +86,7 @@ def test_zero_diis_history_is_rejected_defensively() -> None:
             kernel,
             np.zeros_like(kernel.h),
             1.0,
-            config=SolverConfig(
-                method="rdiis",
+            config=RDIIS(
                 diis_size=0,
                 max_iter=2,
             ),
@@ -102,7 +103,7 @@ def test_scf_returns_the_density_whose_stationarity_was_certified(acceleration):
     tolerance = 1e-7
     result = solve(
         kernel, initial, 1.0,
-        config=SolverConfig(method=acceleration, max_iter=1,
+        config=METHODS[acceleration](max_iter=1,
                          density_tol=tolerance, comm_tol=tolerance),
     )
     assert result.converged
@@ -125,7 +126,7 @@ def test_free_energy_has_exact_zero_entropy_at_filling_endpoints(
         kernel,
         np.zeros_like(kernel.h),
         n_electrons,
-        config=SolverConfig(method="cg", max_iter=2, tol_grad=1.0e-12),
+        config=CG(max_iter=2, tol_grad=1.0e-12),
     )
     np.testing.assert_array_equal(
         np.asarray(result.history["free_energy"]),
@@ -157,11 +158,11 @@ def test_rdiis_engages_when_the_residual_history_is_nearly_rank_deficient() -> N
     """
     kernel = _wide_band_kernel()
     n_e = 1.5 * float(kernel.weight_sum)
-    common = dict(max_iter=200, density_tol=1e-9, comm_tol=1e-8, mixing=0.2)
+    common = dict(max_iter=200, density_tol=1e-9, comm_tol=1e-8)
     linear = solve(kernel, np.zeros_like(kernel.h), n_e,
-                       config=SolverConfig(method="linear", **common))
+                       config=Linear(mixing=0.2, **common))
     diis = solve(kernel, np.zeros_like(kernel.h), n_e,
-                     config=SolverConfig(method="rdiis", **common))
+                     config=RDIIS(**common))
     assert bool(linear.converged) and bool(diis.converged)
     assert int(linear.n_iter) > 60
     assert int(diis.n_iter) < 25, int(diis.n_iter)

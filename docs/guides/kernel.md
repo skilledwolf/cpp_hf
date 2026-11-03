@@ -108,7 +108,7 @@ Standard Hartree-Fock is also a reference density of zero. Solving both
 ways gives the same state:
 
 ```{code-cell} ipython3
-config = hf.SolverConfig(density_tol=1e-10, comm_tol=1e-10)
+config = hf.RDIIS(density_tol=1e-10, comm_tol=1e-10)
 common = dict(T=T, hartree=capacitor)
 standard = hf.HartreeFockKernel(mesh, h, V, reference=np.zeros_like(h), **common)
 embedded = hf.HartreeFockKernel(mesh, h, V, reference=P_ref, embed_reference=True, **common)

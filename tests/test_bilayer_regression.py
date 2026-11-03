@@ -19,7 +19,7 @@ contimod = pytest.importorskip("contimod")
 cg_symmetry = pytest.importorskip("contimod.materials.graphene.symmetry")
 
 import contimod as cm
-from contimod.meanfield import SelfEnergySeed
+from contimod.meanfield.problem import seed_density
 from contimod.utils import pauli
 
 import hartreefock as hf
@@ -85,7 +85,7 @@ def _initial_state(setup, branch, n_cm12):
     if branch == "PM":  # the zero seed is the empty density
         P0 = np.zeros_like(h_run.matrices)
     else:
-        P0 = SelfEnergySeed(seeds[branch]).to_density(h_run, h_run.state.density(), T=temperature)
+        P0 = seed_density(h_run, h_run.state.density(), seed=seeds[branch])
     return np.asarray(P0), n_e
 
 
@@ -102,8 +102,7 @@ def test_scf_energy_matches_reference(bilayer_setup, branch, n_cm12):
     ref, _, kernel, *_ = bilayer_setup
     E_ref = _reference_energy(ref, branch, n_cm12)
     P0, n_e = _initial_state(bilayer_setup, branch, n_cm12)
-    config = hf.SolverConfig(
-        method="rdiis", max_iter=500, density_tol=1e-7, comm_tol=1e-6,
+    config = hf.RDIIS(max_iter=500, density_tol=1e-7, comm_tol=1e-6,
         project_fn=bilayer_setup[5][branch],
     )
     result = hf.solve(kernel, P0, n_e, config=config)
@@ -123,7 +122,7 @@ def test_direct_solver_energy_matches_reference(bilayer_setup, branch, n_cm12):
     ref, _, kernel, *_ = bilayer_setup
     E_ref = _reference_energy(ref, branch, n_cm12)
     P0, n_e = _initial_state(bilayer_setup, branch, n_cm12)
-    config = hf.SolverConfig(method="cg", max_iter=200, tol_E=1e-7, project_fn=bilayer_setup[5][branch])
+    config = hf.CG(max_iter=200, tol_E=1e-7, project_fn=bilayer_setup[5][branch])
     result = hf.solve(kernel, P0, n_e, config=config)
 
     np.testing.assert_allclose(result.energy, E_ref, atol=E_ATOL)

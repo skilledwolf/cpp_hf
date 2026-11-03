@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from _meshes import mesh_for
 from scipy.linalg import expm
 
-from hartreefock import HartreeFockKernel, SolverConfig, solve
+from hartreefock import METHODS, HartreeFockKernel, Newton, solve
 from hartreefock._jax.newton import (
     _deflation_bias,
     _deflation_response,
@@ -123,7 +123,7 @@ def test_stiff_coupled_occupation_problem_converges():
     w = jnp.full((2, 2), 0.35)
     h = jnp.broadcast_to(jnp.array([[-0.6, 0.12], [0.12, 0.4]], dtype=jnp.complex128), (2, 2, 2, 2))
     K = HartreeFockKernel(mesh_for(w), h, jnp.zeros((2, 2, 1, 1)), hartree=jnp.array([[30., 3.], [3., 20.]]), T=0.2, exchange=False, reference=jnp.zeros_like(h))
-    result = solve(K, jnp.zeros_like(h), 1.2, config=SolverConfig(method="newton", max_iter=120, tol_grad=1e-8))
+    result = solve(K, jnp.zeros_like(h), 1.2, config=Newton(max_iter=120, tol_grad=1e-8))
     assert result.converged
     np.testing.assert_allclose(jnp.sum(w[..., None] * result.p), 1.2, atol=1e-11)
     assert result.n_iter < 30
@@ -135,8 +135,7 @@ def test_projected_solver_keeps_density_spectrum_and_stationarity_consistent(opt
     K = HartreeFockKernel(mesh_for(jnp.ones((1, 1))), h, jnp.full((1, 1, 1, 1), 0.3), T=0.4)
     project = lambda A: A * jnp.eye(2)
     tolerance = 1e-8 if optimizer == "cg" else 1e-9
-    result = solve(K, jnp.zeros_like(h), 1.0, config=SolverConfig(
-        method=optimizer, max_iter=100, tol_grad=tolerance, project_fn=project))
+    result = solve(K, jnp.zeros_like(h), 1.0, config=METHODS[optimizer](max_iter=100, tol_grad=tolerance, project_fn=project))
     assert result.converged
     np.testing.assert_allclose(result.density, _density_from_Qp(result.Q, result.p), atol=1e-13)
     np.testing.assert_allclose(result.fock, project(result.fock), atol=1e-13)
@@ -157,8 +156,7 @@ def test_projected_degenerate_trials_use_the_physical_entropy(optimizer):
     kernel = HartreeFockKernel(mesh_for(jnp.ones((1, 1))), h, jnp.zeros((1, 1, 1, 1)), hartree=jnp.diag(jnp.array([2.0, 0.0])), T=0.1, reference=jnp.zeros_like(h), exchange=False)
 
     def run(max_iter):
-        return solve(kernel, jnp.zeros_like(h), 1.0, config=SolverConfig(
-            method=optimizer, max_iter=max_iter, tol_grad=1e-7,
+        return solve(kernel, jnp.zeros_like(h), 1.0, config=METHODS[optimizer](max_iter=max_iter, tol_grad=1e-7,
             project_fn=project,
         ))
 

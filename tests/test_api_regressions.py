@@ -10,9 +10,13 @@ from _meshes import mesh_for
 from scipy.special import expit
 
 from hartreefock import (
+    CG,
+    METHODS,
+    RDIIS,
     HartreeFockKernel,
+    Linear,
     Mesh,
-    SolverConfig,
+    Newton,
     solve,
 )
 from hartreefock import chemical_potential as _chemical_potential
@@ -65,42 +69,39 @@ def test_exchange_weights_the_integrated_density():
 
 
 @pytest.mark.parametrize(
-    "kwargs",
+    "cls, kwargs",
     [
-        {"max_iter": 1.5},
-        {"tol_E": np.nan},
-        {"tol_grad": np.inf},
-        {"cg_restart": 0},
-        {"bt_shrink": 1.0},
-        {"mu_maxiter": 0},
-        {"method": "bfgs"},
-        {"project_fn": 3},
+        (CG, {"max_iter": 1.5}),
+        (CG, {"tol_E": np.nan}),
+        (CG, {"tol_grad": np.inf}),
+        (CG, {"cg_restart": 0}),
+        (CG, {"bt_shrink": 1.0}),
+        (Newton, {"mu_maxiter": 0}),
+        (CG, {"project_fn": 3}),
+        (RDIIS, {"max_iter": 1.5}),
+        (RDIIS, {"density_tol": np.nan}),
+        (RDIIS, {"comm_tol": np.inf}),
+        (Linear, {"mixing": -0.1}),
+        (RDIIS, {"diis_size": 0}),
+        (RDIIS, {"diis_start": True}),
+        (RDIIS, {"diis_damping": 1.1}),
+        (Linear, {"trust_radius": -0.1}),
+        (RDIIS, {"project_fn": 3}),
+        (RDIIS, {"safeguard": 1}),
     ],
 )
-def test_solver_config_rejects_invalid_domains(kwargs):
+def test_solver_configs_reject_invalid_domains(cls, kwargs):
     with pytest.raises(ValueError):
-        SolverConfig(**{"method": "cg", **kwargs})
+        cls(**kwargs)
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"max_iter": 1.5},
-        {"density_tol": np.nan},
-        {"comm_tol": np.inf},
-        {"mixing": -0.1},
-        {"method": "bfgs"},
-        {"diis_size": 0},
-        {"diis_start": True},
-        {"diis_damping": 1.1},
-        {"trust_radius": -0.1},
-        {"project_fn": 3},
-        {"method": "rdiis", "safeguard": 1},
-    ],
-)
-def test_scf_config_rejects_invalid_domains(kwargs):
-    with pytest.raises(ValueError):
-        SolverConfig(**kwargs)
+def test_configs_take_only_their_own_options():
+    with pytest.raises(TypeError):
+        CG(comm_tol=1e-6)
+    with pytest.raises(TypeError):
+        RDIIS(mixing=0.5)
+    with pytest.raises(KeyError):
+        METHODS["bfgs"]
 
 
 @pytest.fixture
@@ -112,13 +113,13 @@ def two_band_kernel():
 @pytest.mark.parametrize("method", ["cg", "rdiis"])
 def test_solvers_reject_wrong_initial_density_shape(two_band_kernel, method):
     with pytest.raises(ValueError, match="P0 must have shape"):
-        solve(two_band_kernel, np.zeros((2, 2, 3, 3)), 1.0, config=SolverConfig(method=method))
+        solve(two_band_kernel, np.zeros((2, 2, 3, 3)), 1.0, config=METHODS[method]())
 
 
 @pytest.mark.parametrize("method", ["cg", "rdiis"])
 def test_solvers_reject_unreachable_electron_count(two_band_kernel, method):
     with pytest.raises(ValueError, match="physically reachable range"):
-        solve(two_band_kernel, np.zeros_like(two_band_kernel.h), 100.0, config=SolverConfig(method=method))
+        solve(two_band_kernel, np.zeros_like(two_band_kernel.h), 100.0, config=METHODS[method]())
 
 
 def test_chemical_potential_exact_empty_and_full_endpoints():
@@ -158,9 +159,8 @@ def test_chemical_potential_bounds_cover_low_and_high_fillings(target, bandwidth
 def test_zero_temperature_scf_preserves_flat_band_particle_count(acceleration):
     h = np.zeros((1, 1, 2, 2), complex)
     kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), T=0.0)
-    config = SolverConfig(
-        method=acceleration, max_iter=4, mixing=1.0, density_tol=1e-12, comm_tol=1e-12
-    )
+    mixing = {"mixing": 1.0} if acceleration == "linear" else {}
+    config = METHODS[acceleration](max_iter=4, density_tol=1e-12, comm_tol=1e-12, **mixing)
     result = solve(kernel, np.eye(2)[None, None] * 0.05, 0.1, config=config)
     assert result.converged
     np.testing.assert_allclose(np.trace(result.density[0, 0]), 0.1, atol=1e-14)

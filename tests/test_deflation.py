@@ -24,7 +24,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from _meshes import mesh_for
 
-from hartreefock import HartreeFockKernel, SolverConfig, solve, solve_deflated
+from hartreefock import CG, HartreeFockKernel, Newton, solve, solve_deflated
 
 
 def _comm_rms(F, P, w2d):
@@ -68,14 +68,12 @@ class TestProjectFnNewton:
         def proj_diag(P):  # JAX-traceable: keep only the orbital-diagonal
             return P * eye[None, None, ...]
 
-        r = solve(K, P0, ne, config=SolverConfig(
-            method="newton", tol_grad=1e-7, max_iter=200, project_fn=proj_diag))
+        r = solve(K, P0, ne, config=Newton(tol_grad=1e-7, max_iter=200, project_fn=proj_diag))
         off = float(np.max(np.abs(r.density[..., 0, 1])))
         assert off < 1e-8, f"projector not enforced in Newton path: off-diag {off}"
 
         # control: without the projector the coherence is clearly nonzero
-        r0 = solve(K, P0, ne, config=SolverConfig(
-            method="newton", tol_grad=1e-7, max_iter=200))
+        r0 = solve(K, P0, ne, config=Newton(tol_grad=1e-7, max_iter=200))
         assert float(np.max(np.abs(r0.density[..., 0, 1]))) > 1e-3
 
 
@@ -85,24 +83,20 @@ class TestDeflationNoOp:
         K = _hybridized(nk=2, ex=0.3)
         P0 = jnp.zeros_like(K.h)
         ne = 4.0
-        base = dict(method="newton", tol_grad=1e-7, max_iter=200)
-        r1 = solve(K, P0, ne, config=SolverConfig(**base))
+        base = dict(tol_grad=1e-7, max_iter=200)
+        r1 = solve(K, P0, ne, config=Newton(**base))
         # no targets, sigma 0
-        r2 = solve(K, P0, ne, config=SolverConfig(deflation_sigma=0.0, **base))
+        r2 = solve(K, P0, ne, config=Newton(deflation_sigma=0.0, **base))
         np.testing.assert_allclose(np.asarray(r2.density), np.asarray(r1.density), atol=1e-12)
         np.testing.assert_allclose(float(r2.energy), float(r1.energy), atol=1e-12)
         # a target present but sigma 0 -> still a strict no-op
-        r3 = solve(K, P0, ne, config=SolverConfig(
+        r3 = solve(K, P0, ne, config=Newton(
             deflation_targets=np.asarray(r1.density)[None], deflation_sigma=0.0, **base))
         np.testing.assert_allclose(np.asarray(r3.density), np.asarray(r1.density), atol=1e-12)
 
-    def test_cg_rejects_deflation(self):
-        K = _hybridized(nk=2)
-        P0 = jnp.zeros_like(K.h)
-        with pytest.raises(ValueError, match="deflation"):
-            solve(K, P0, 4.0, config=SolverConfig(
-                method="cg",
-                deflation_targets=np.asarray(P0)[None], deflation_sigma=1.0))
+    def test_cg_has_no_deflation(self):
+        with pytest.raises(TypeError, match="deflation"):
+            CG(deflation_targets=np.zeros((1, 2, 2, 2, 2)), deflation_sigma=1.0)
 
 
 # --- 3. deflation-bias math (finite differences) ----------------------------
@@ -155,7 +149,7 @@ class TestDeflationFindsSolutions:
         K = _bistable(nk=1, T=0.02, ex=1.0, delta=0.1)
         P0 = jnp.zeros_like(K.h)
         ne = 1.0
-        base = SolverConfig(method="newton", tol_grad=1e-6, max_iter=300)
+        base = Newton(tol_grad=1e-6, max_iter=300)
 
         res = solve_deflated(K, P0, ne, base_config=base, n_solutions=2, seed=0)
         assert res.n_found >= 2, f"only found {res.n_found} solution(s)"

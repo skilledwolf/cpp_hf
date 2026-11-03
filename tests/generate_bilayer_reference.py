@@ -22,11 +22,11 @@ import contimod.materials.graphene.symmetry as cg_symmetry
 import jax
 import jax.numpy as jnp
 import numpy as np
-from contimod.meanfield import SelfEnergySeed
+from contimod.meanfield.problem import seed_density
 from contimod.utils import pauli
 
 import hartreefock
-from hartreefock import SolverConfig, solve
+from hartreefock import Linear, solve
 from hartreefock.symmetry import make_project_fn
 
 # ---------------------------------------------------------------------------
@@ -100,13 +100,13 @@ def init_density_from_seed(h_run, seed_op):
     seed_op = np.asarray(seed_op)
     if not np.any(seed_op):  # the zero (PM) seed is the empty density
         return np.zeros_like(h_run.matrices)
-    return SelfEnergySeed(seed_op).to_density(h_run, h_run.state.density(), T=float(h_run.T))
+    return seed_density(h_run, h_run.state.density(), seed=seed_op)
 
 
 def solve_scf_point(h_template, Vq, n_electrons, P0, project_fn):
     """Solve one HF point with the reference SCF solver."""
     kernel = hartreefock.HartreeFockKernel(h_template.kmesh, h_template.matrices, Vq, T=TEMPERATURE, exchange=True)
-    config = SolverConfig(
+    config = Linear(
         max_iter=500,
         mixing=0.2,
         density_tol=1e-7,

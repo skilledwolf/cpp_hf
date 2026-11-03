@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from _meshes import mesh_for
 
-from hartreefock import HartreeFockKernel, SolverConfig, solve
+from hartreefock import METHODS, RDIIS, HartreeFockKernel, solve
 from hartreefock._jax.fock import build_fock, free_energy, hf_energy
 from hartreefock._jax.scf import _density_from_fock
 from hartreefock._jax.scf_acceleration import _residual_coefficients
@@ -44,8 +44,7 @@ def test_strong_hartree_occupation_residual_and_monotone_free_energy():
     kernel, P = charge_kernel()
     # These diagonal states have identically zero commutator, including the
     # initial state; convergence must resolve occupations, not just orbitals.
-    result = solve(kernel, P, 1.5, config=SolverConfig(
-        method="rdiis", diis_size=8, mixing=1.0, max_iter=120,
+    result = solve(kernel, P, 1.5, config=RDIIS(diis_size=8, max_iter=120,
         density_tol=1e-8, comm_tol=1e-8))
     assert result.converged, result.message
     F, E, dr, cr = independent_state(kernel, result.density, 1.5)
@@ -64,7 +63,7 @@ def test_budget_one_returns_repaired_exact_consistent_state():
     kernel, P = charge_kernel()
     P[..., 0, 0] = 1.8
     P[..., 2, 2] = -.8
-    result = solve(kernel, P, 1.5, config=SolverConfig(method="rdiis", max_iter=1))
+    result = solve(kernel, P, 1.5, config=RDIIS(max_iter=1))
     p = np.linalg.eigvalsh(result.density)
     assert p.min() >= -2e-14 and p.max() <= 1.0 + 2e-14
     np.testing.assert_allclose(np.sum(np.asarray(kernel.w2d)[..., None] * p), 1.5, atol=2e-13)
@@ -91,8 +90,7 @@ def test_entropy_descent_can_increase_internal_energy_and_shift_does_not_bias_so
     h = np.diag([-1., 1.]).astype(complex)[None, None]
     kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), T=1.0)
     P = np.diag([1., 0.]).astype(complex)[None, None]
-    result = solve(kernel, P, 1.0, config=SolverConfig(
-        method="rdiis", mixing=1.0, level_shift=.8,
+    result = solve(kernel, P, 1.0, config=RDIIS(level_shift=.8,
         density_tol=1e-9, comm_tol=1e-9, max_iter=20))
     assert result.converged, result.message
     expected = np.diag([1.0 / (1.0 + np.exp(-1.0)), 1.0 / (1.0 + np.exp(1.0))])
@@ -104,7 +102,7 @@ def test_entropy_descent_can_increase_internal_energy_and_shift_does_not_bias_so
 @pytest.mark.parametrize("n_electrons", [0.0, 3.0])
 def test_exact_empty_full_fillings(n_electrons):
     kernel, P = charge_kernel()
-    result = solve(kernel, P, n_electrons, config=SolverConfig(method="rdiis"))
+    result = solve(kernel, P, n_electrons, config=RDIIS())
     assert result.converged
     np.testing.assert_allclose(result.density, np.broadcast_to(
         np.eye(3) * (n_electrons / 3.0), P.shape), atol=2e-14)
@@ -119,8 +117,7 @@ def test_symmetry_projection_uses_entropy_of_returned_density():
     def project(A):
         return .5 * (A + swap @ A @ swap)
 
-    result = solve(kernel, P, 1.5, config=SolverConfig(
-        method="rdiis", project_fn=project, max_iter=100,
+    result = solve(kernel, P, 1.5, config=RDIIS(project_fn=project, max_iter=100,
         density_tol=1e-8, comm_tol=1e-8))
     assert result.converged, result.message
     np.testing.assert_allclose(result.density, project(result.density), atol=1e-13)
@@ -129,10 +126,10 @@ def test_symmetry_projection_uses_entropy_of_returned_density():
 
 
 def test_safeguard_validation_and_nonfinite_input():
-    old = SolverConfig(method="rdiis", diis_size=7)
+    old = RDIIS(diis_size=7)
     assert old.safeguard
     with pytest.raises(ValueError, match="safeguard"):
-        SolverConfig(safeguard="yes")
+        RDIIS(safeguard="yes")
     kernel, P = charge_kernel()
     P[0, 0, 0, 0] = np.nan
     with pytest.raises(ValueError, match="finite"):
@@ -146,8 +143,7 @@ def test_complex_coupled_problem_damping_trust_and_precision(dtype):
     h = (.5 * (A + A.conj().swapaxes(-1, -2))).astype(dtype)
     kernel = HartreeFockKernel(mesh_for(np.full((2, 2), .25)), h, np.full((2, 2, 1, 1), .4), hartree=2.0 * np.eye(4), T=.4, exchange=True, reference=np.zeros_like(h))
     tol = 3e-6 if dtype == np.complex64 else 1e-8
-    result = solve(kernel, np.zeros_like(h), 1.6, config=SolverConfig(
-        method="rdiis", diis_size=8, mixing=.7, diis_damping=.8,
+    result = solve(kernel, np.zeros_like(h), 1.6, config=RDIIS(diis_size=8, diis_damping=.8,
         trust_radius=.2, max_iter=150, density_tol=tol, comm_tol=tol))
     assert result.converged, result.message
     F, E, dr, cr = independent_state(kernel, result.density, 1.6)
@@ -168,8 +164,7 @@ def test_legacy_scf_returns_the_density_whose_residual_was_certified(method):
     kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), hartree=1000.0 * np.eye(2), T=.5, exchange=False, reference=h)
     initial = np.diag([.5 + 1e-10, .5 - 1e-10]).astype(complex)[None, None]
     tolerance = 1e-7
-    result = solve(kernel, initial, 1.0, config=SolverConfig(
-        method=method, max_iter=1,
+    result = solve(kernel, initial, 1.0, config=METHODS[method](max_iter=1,
         density_tol=tolerance, comm_tol=tolerance,
     ))
     assert result.converged

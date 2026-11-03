@@ -2,7 +2,10 @@
 # Parameters, Returns or Attributes section; conf.py checks it at build time.
 hartreefock.Mesh
 hartreefock.HartreeFockKernel
-hartreefock.SolverConfig
+hartreefock.RDIIS
+hartreefock.Linear
+hartreefock.CG
+hartreefock.Newton
 hartreefock.SolveResult
 hartreefock.StabilityResult
 hartreefock.MinimumResult

@@ -7,6 +7,15 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- One config class per method: `hf.RDIIS`, `hf.Linear`, `hf.CG` and
+  `hf.Newton` replace the 28-field `SolverConfig(method=...)`. Each takes
+  only the options its method reads, so `RDIIS(mixing=0.3)` or
+  `CG(comm_tol=...)`, which were silently ignored before, raise `TypeError`;
+  `hf.METHODS[name]` is the class of a method name. `solve_deflated` takes a
+  `Newton` base config and `solve_minimum` a Roothaan one. The NumPy
+  `exchange_self_energy`/`contact_self_energy` copies and the public
+  `hf.fock_operators` are gone: `kernel.exchange`, `hartree` and `potential`
+  run the JAX Fock builder.
 - One chemical-potential solver: `hartreefock.chemical_potential(bands,
   weights, n, T, *, mu0=None, maxiter=100)`, a jitted safeguarded Newton
   iteration on a bracket that runs on NumPy and JAX input. It replaces

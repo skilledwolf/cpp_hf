@@ -31,8 +31,12 @@ jax.config.update("jax_enable_x64", True)
 from . import _jax
 from ._jax.utils import chemical_potential
 from .config import (
+    CG,
+    METHODS,
+    RDIIS,
     DeflatedResult,
-    SolverConfig,
+    Linear,
+    Newton,
     SolveResult,
 )
 from .continuation import resample_to
@@ -47,12 +51,13 @@ except metadata.PackageNotFoundError:  # pragma: no cover
     __version__ = "0.0.0"
 
 
-def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None, coarse=None):
+def solve(kernel, P0, n_electrons, *, config=None, coarse=None):
     """Solve the Hartree-Fock problem at fixed particle number.
 
-    ``config.method`` picks a Roothaan iteration (``"rdiis"``, the default,
-    or ``"linear"``: diagonalize the Fock matrix, refill, repeat) or a direct minimization of the free energy (``"cg"``,
-    ``"newton"``).
+    The type of ``config`` picks the method: a Roothaan iteration
+    (:class:`RDIIS`, the default, or :class:`Linear`: diagonalize the Fock
+    matrix, refill, repeat) or a direct minimization of the free energy
+    (:class:`CG`, :class:`Newton`).  Each class takes only its own options.
 
     Parameters
     ----------
@@ -65,8 +70,9 @@ def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None, coarse
         particle number through the chemical potential.
     n_electrons : float
         Particle number, counted with the kernel weights, ``Σ_k w_k Tr P_k``.
-    config : SolverConfig, optional
-        Method and stopping rule; ``None`` is RDIIS with the defaults.
+    config : RDIIS, Linear, CG or Newton, optional
+        Method and stopping rule; ``None`` is ``RDIIS()``.
+        ``METHODS[name]`` is the class of a method name.
     coarse : HartreeFockKernel, optional
         The same problem on a coarser mesh.  It is solved first, from ``P0``
         and with the same config and ``n_electrons``, and its density,
@@ -88,12 +94,16 @@ def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None, coarse
 
 
 __all__ = [
+    "CG",
     "DeflatedResult",
     "HartreeFockKernel",
     "Mesh",
     "MinimumResult",
+    "Linear",
+    "METHODS",
+    "Newton",
+    "RDIIS",
     "SolveResult",
-    "SolverConfig",
     "StabilityResult",
     "chemical_potential",
     "solve",

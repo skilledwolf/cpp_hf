@@ -16,14 +16,14 @@ scalar or orbital-resolved.
 
 Solvers:
 
-* `solve(kernel, P0, n, config=SolverConfig(method=...))`: Roothaan SCF with
-  the free-energy-safeguarded full-residual `"rdiis"` (the default) or
-  `"linear"` mixing, or
-  direct minimization by Riemannian `"cg"` or trust-region `"newton"`.
+* `solve(kernel, P0, n, config=...)`: Roothaan SCF with the
+  free-energy-safeguarded full-residual `hf.RDIIS()` (the default) or
+  `hf.Linear()` mixing, or direct minimization by Riemannian `hf.CG()` or
+  trust-region `hf.Newton()`; each config takes only its method's options.
 * `solve_minimum`: RDIIS plus a local stability check and bounded saddle
   recovery; `stability_analysis` is the standalone curvature test.
-* `solve_continuation` (coarse to fine) and `solve_deflated` (several distinct
-  minima).
+* `solve(..., coarse=kernel)` (coarse to fine) and `solve_deflated`
+  (several distinct minima).
 
 ## Documentation
 
@@ -59,7 +59,7 @@ kernel = hf.HartreeFockKernel(mesh, h, lambda q: 2 * np.pi / (q + 0.1), T=0.1)
 P0 = np.zeros_like(h)
 
 r = hf.solve(kernel, P0, n_electrons)  # RDIIS
-dm = hf.solve(kernel, P0, n_electrons, config=hf.SolverConfig(method="cg", tol_E=1e-8))
+dm = hf.solve(kernel, P0, n_electrons, config=hf.CG(tol_E=1e-8))
 # r.density, r.fock, r.energy, r.mu, r.n_iter, r.converged, r.history
 ```
 
@@ -79,20 +79,16 @@ Both are local checks in the supplied basis, not a global-minimum certificate;
 compare free energies across seeds for phase comparisons. SCF histories
 report `free_energy` and the total `fock_builds`.
 
-Coarse-to-fine continuation solves each stage with its own config:
+Coarse-to-fine continuation solves the coarse kernel first and starts the
+fine solve from its resampled density:
 
 ```python
-result = hf.solve_continuation(
-    coarse, fine, P0_coarse, n_electrons_coarse, n_electrons_fine,
-    coarse_config=hf.SolverConfig(method="linear", max_iter=50, mixing=0.5),
-    fine_config=hf.SolverConfig(method="cg", max_iter=200, tol_E=1e-8),
-)
+result = hf.solve(fine, P0, n_electrons, config=hf.CG(tol_E=1e-8), coarse=coarse)
 ```
 
 Both kernels expose the interaction as NumPy linear maps, `kernel.exchange(rho)`,
 `kernel.hartree(rho)` and `kernel.potential(rho)`; the solvers' Fock matrix is
-`h + kernel.potential(P - refP)`, and `hf.fock_operators(kernel)` evaluates
-it with the energy and its response. `hartreefock._jax` is private.
+`h + kernel.potential(P - refP)`. `hartreefock._jax` is private.
 
 Energies are the variational functional
 `E_var = Tr(h P) + 1/2 Tr(V_HF[P - P_ref] (P - P_ref))`. For an embedded

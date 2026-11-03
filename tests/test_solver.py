@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from _meshes import mesh_for
 
-from hartreefock import HartreeFockKernel, SolverConfig, SolveResult, solve
+from hartreefock import CG, RDIIS, HartreeFockKernel, SolveResult, solve
 
 
 def _comm_rms(F, P, weights_2d):
@@ -30,7 +30,7 @@ def _make_two_band_kernel(nk=1, T=0.2, exchange_strength=0.25):
 def _solve_problem(kernel, n_electrons=1.0, config=None):
     """Helper: solve, return result."""
     if config is None:
-        config = SolverConfig(method="cg", max_iter=100, tol_E=1e-8)
+        config = CG(max_iter=100, tol_E=1e-8)
     P0 = jnp.zeros_like(kernel.h)
     return solve(kernel, P0, n_electrons, config=config)
 
@@ -89,7 +89,7 @@ class TestNonInteracting:
 
     def test_converges_to_exact_occupations(self):
         kernel = _make_two_band_kernel(exchange_strength=0.0, T=0.01)
-        result = _solve_problem(kernel, config=SolverConfig(method="cg", max_iter=50, tol_E=1e-10))
+        result = _solve_problem(kernel, config=CG(max_iter=50, tol_E=1e-10))
 
         # With eps = [-0.5, 0.5] and T=0.01, occupation should be ~[1, 0]
         p = np.array(result.p[0, 0])
@@ -101,7 +101,7 @@ class TestMultiKPoint:
         kernel = _make_two_band_kernel(nk=2, T=0.1)
         result = _solve_problem(
             kernel, n_electrons=4.0,
-            config=SolverConfig(method="cg", max_iter=100, tol_E=1e-7),
+            config=CG(max_iter=100, tol_E=1e-7),
         )
 
         assert result.converged
@@ -113,7 +113,7 @@ class TestMultiKPoint:
         result = _solve_problem(
             kernel,
             n_electrons=16.0,
-            config=SolverConfig(method="cg", max_iter=200, tol_E=1e-7),
+            config=CG(max_iter=200, tol_E=1e-7),
         )
 
         assert result.converged
@@ -127,18 +127,16 @@ class TestPlateauWindow:
         P0 = jnp.zeros_like(kernel.h)
         # plateau_window=0 is the per-iteration |dE| test; the default 5 is the
         # windowed test.  Both must reach the same converged solution.
-        r_single = solve(kernel, P0, 4.0, config=SolverConfig(
-            method="cg",
+        r_single = solve(kernel, P0, 4.0, config=CG(
             max_iter=200, tol_E=1e-8, plateau_window=0))
-        r_window = solve(kernel, P0, 4.0, config=SolverConfig(
-            method="cg",
+        r_window = solve(kernel, P0, 4.0, config=CG(
             max_iter=200, tol_E=1e-8, plateau_window=5))
         assert r_single.converged and r_window.converged
         np.testing.assert_allclose(
             r_window.energy, r_single.energy, atol=1e-6)
 
     def test_default_is_windowed(self):
-        assert SolverConfig(method="cg").plateau_window == 5
+        assert CG().plateau_window == 5
 
 
 class TestGradientStop:
@@ -180,7 +178,7 @@ class TestGradientStop:
 
     def test_cg_stops_at_first_crossing_and_flags_converged(self):
         tol = 1e-4
-        result = self._solve(SolverConfig(method="cg", max_iter=300, tol_grad=tol))
+        result = self._solve(CG(max_iter=300, tol_grad=tol))
         assert result.converged
         n = result.n_iter
         assert 1 < n < 300
@@ -191,14 +189,14 @@ class TestGradientStop:
         assert np.all(hG[:-1] > tol)
 
     def test_cg_gradient_stop_matches_energy_stop_solution(self):
-        by_grad = self._solve(SolverConfig(method="cg", max_iter=300, tol_grad=1e-7))
-        by_energy = self._solve(SolverConfig(method="cg", max_iter=300, tol_E=1e-10))
+        by_grad = self._solve(CG(max_iter=300, tol_grad=1e-7))
+        by_energy = self._solve(CG(max_iter=300, tol_E=1e-10))
         assert bool(by_grad.converged) and bool(by_energy.converged)
         np.testing.assert_allclose(
             float(by_grad.energy), float(by_energy.energy), atol=1e-6)
 
     def test_cg_unreachable_tolerance_flags_unconverged(self):
-        result = self._solve(SolverConfig(method="cg", max_iter=3, tol_grad=1e-14))
+        result = self._solve(CG(max_iter=3, tol_grad=1e-14))
         assert not result.converged
         assert result.n_iter == 3
 
@@ -261,12 +259,11 @@ class TestContactTerms:
 
         dm = solve(
             kernel, P0, n_electrons=4.0,
-            config=SolverConfig(method="cg", max_iter=200, tol_E=1e-9),
+            config=CG(max_iter=200, tol_E=1e-9),
         )
         scf = solve(
             kernel, P0, n_electrons=4.0,
-            config=SolverConfig(max_iter=400, mixing=0.3,
-                             density_tol=1e-7, comm_tol=1e-6),
+            config=RDIIS(max_iter=400, density_tol=1e-7, comm_tol=1e-6),
         )
 
         assert bool(dm.converged)
@@ -291,7 +288,7 @@ class TestContactTerms:
         P0 = jnp.zeros_like(kernel.h)
         result = solve(
             kernel, P0, n_electrons=4.0,
-            config=SolverConfig(method="cg", max_iter=200, tol_E=1e-9),
+            config=CG(max_iter=200, tol_E=1e-9),
         )
 
         assert result.converged
@@ -307,7 +304,7 @@ class TestContactTerms:
         P0 = jnp.zeros_like(kernel.h)
         result = solve(
             kernel, P0, n_electrons=4.0,
-            config=SolverConfig(method="cg", max_iter=200, tol_E=1e-9),
+            config=CG(max_iter=200, tol_E=1e-9),
         )
 
         assert result.converged
@@ -324,7 +321,7 @@ class TestContactTerms:
         kernel_off = self._kernel_with_contact(g=0.0, nk=2)
         kernel_on = self._kernel_with_contact(g=0.3, nk=2)
         P0 = jnp.zeros_like(kernel_off.h)
-        cfg = SolverConfig(method="cg", max_iter=200, tol_E=1e-9)
+        cfg = CG(max_iter=200, tol_E=1e-9)
 
         E_off = float(solve(kernel_off, P0, 4.0, config=cfg).energy)
         E_on = float(solve(kernel_on, P0, 4.0, config=cfg).energy)
@@ -338,12 +335,12 @@ class TestEdgeCases:
         P0 = jnp.zeros_like(kernel.h)
 
         with pytest.raises(ValueError, match="physically reachable range"):
-            solve(kernel, P0, n_electrons=3.0, config=SolverConfig(method="cg"))
+            solve(kernel, P0, n_electrons=3.0, config=CG())
 
     def test_zero_exchange_strength(self):
         """Should converge quickly with no interaction."""
         kernel = _make_two_band_kernel(exchange_strength=0.0)
-        result = _solve_problem(kernel, config=SolverConfig(method="cg", max_iter=50, tol_E=1e-8))
+        result = _solve_problem(kernel, config=CG(max_iter=50, tol_E=1e-8))
 
         assert result.n_iter <= 50
         assert np.isfinite(result.energy)
@@ -450,7 +447,7 @@ class TestAdversarialStationarity:
         P0 = jnp.array([[[[1.0, 0.0], [0.0, 0.0]]]], dtype=jnp.complex64)
         result = solve(
             kernel, P0, 1.0,
-            config=SolverConfig(method="cg", max_iter=300, tol_grad=2e-4),
+            config=CG(max_iter=300, tol_grad=2e-4),
         )
         assert result.converged
         np.testing.assert_allclose(
@@ -467,7 +464,7 @@ class TestAdversarialStationarity:
         kernel = self._repulsive_hartree()
         result = solve(
             kernel, jnp.zeros_like(kernel.h), n_electrons,
-            config=SolverConfig(method="cg", max_iter=20, tol_grad=1e-4),
+            config=CG(max_iter=20, tol_grad=1e-4),
         )
         assert result.converged
         expected = np.eye(2) * (n_electrons / 2.0)
@@ -487,12 +484,12 @@ class TestSolverInputValidation:
     )
     def test_invalid_config_domains_raise(self, kwargs):
         with pytest.raises(ValueError):
-            SolverConfig(method="cg", **kwargs)
+            CG(**kwargs)
 
     def test_wrong_P0_shape_raises_before_jit(self):
         kernel = _make_two_band_kernel(nk=2)
         with pytest.raises(ValueError, match="P0 must have shape"):
-            solve(kernel, jnp.zeros((2, 2, 3, 3)), 1.0, config=SolverConfig(method="cg"))
+            solve(kernel, jnp.zeros((2, 2, 3, 3)), 1.0, config=CG())
 
     def test_negative_kernel_temperature_raises(self):
         with pytest.raises(ValueError, match="non-negative"):

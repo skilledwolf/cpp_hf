@@ -19,9 +19,9 @@ def solve(kernel, P0, n_electrons, *, config=None):
     with the standard HF energy also for an embedded reference, and ``None``
     for the arrays the config did not ask for.
     """
-    from ..config import SolverConfig
+    from ..config import RDIIS
 
-    config = SolverConfig() if config is None else config
+    config = RDIIS() if config is None else config
     P0 = kernel.noninteracting_density(n_electrons) if P0 is None else P0
     if kernel.sectors is not None:
         P0 = kernel.within_sectors(P0)

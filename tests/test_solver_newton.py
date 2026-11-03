@@ -27,7 +27,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from _meshes import mesh_for
 
-from hartreefock import HartreeFockKernel, SolverConfig, solve
+from hartreefock import CG, METHODS, RDIIS, HartreeFockKernel, Newton, solve
 from hartreefock._jax.fock import build_fock
 from hartreefock._jax.utils import density_matrix_from_fock
 
@@ -193,10 +193,9 @@ class TestNewtonConvergence:
         # Contact kernel has a unique HF minimum: Newton must match CG and SCF.
         K = _contact(g=0.3, nk=2)
         P0 = jnp.zeros_like(K.h)
-        cg = solve(K, P0, 4.0, config=SolverConfig(method="cg", max_iter=400, tol_E=1e-11, tol_grad=1e-9))
-        nw = solve(K, P0, 4.0, config=SolverConfig(max_iter=200, tol_grad=1e-7, method="newton"))
-        scf = solve(K, P0, 4.0, config=SolverConfig(max_iter=600, mixing=0.3,
-                                                     density_tol=1e-10, comm_tol=1e-9))
+        cg = solve(K, P0, 4.0, config=CG(max_iter=400, tol_E=1e-11, tol_grad=1e-9))
+        nw = solve(K, P0, 4.0, config=Newton(max_iter=200, tol_grad=1e-7))
+        scf = solve(K, P0, 4.0, config=RDIIS(max_iter=600, density_tol=1e-10, comm_tol=1e-9))
         assert bool(nw.converged)
         np.testing.assert_allclose(float(nw.energy), float(cg.energy), atol=1e-6, rtol=1e-7)
         np.testing.assert_allclose(float(nw.energy), float(scf.energy), atol=1e-6, rtol=1e-7)
@@ -210,7 +209,7 @@ class TestNewtonConvergence:
         K = _multiband(nk, nb, T, ex, seed)
         P0 = jnp.zeros_like(K.h)
         ne = float(nk * nk * nb * 0.5)
-        r = solve(K, P0, ne, config=SolverConfig(max_iter=200, tol_grad=1e-6, method="newton"))
+        r = solve(K, P0, ne, config=Newton(max_iter=200, tol_grad=1e-6))
         assert r.converged
         assert _comm_rms(r.fock, r.density, K.w2d) < 1e-4
         P_fd, _ = density_matrix_from_fock(r.fock, K.w2d, ne, T)
@@ -227,8 +226,8 @@ class TestNewtonConvergence:
         K = _dirac(nk=4)
         P0 = jnp.zeros_like(K.h)
         cfg = dict(max_iter=2000, tol_grad=1e-7)
-        cg = solve(K, P0, 16.0, config=SolverConfig(method="cg", **cfg))
-        nw = solve(K, P0, 16.0, config=SolverConfig(method="newton", **cfg))
+        cg = solve(K, P0, 16.0, config=CG(**cfg))
+        nw = solve(K, P0, 16.0, config=Newton(**cfg))
         assert bool(nw.converged)
         # Newton reaches the same energy as CG...
         np.testing.assert_allclose(float(nw.energy), float(cg.energy), atol=1e-6, rtol=1e-7)
@@ -244,8 +243,8 @@ class TestNewtonConvergence:
         # than stopping at the non-interacting occupations).
         K = _two_band_decoupled(nk=2)
         P0 = jnp.zeros_like(K.h)
-        cg = solve(K, P0, 4.0, config=SolverConfig(method="cg", max_iter=400, tol_E=1e-12, tol_grad=1e-9))
-        nw = solve(K, P0, 4.0, config=SolverConfig(max_iter=200, tol_grad=1e-8, method="newton"))
+        cg = solve(K, P0, 4.0, config=CG(max_iter=400, tol_E=1e-12, tol_grad=1e-9))
+        nw = solve(K, P0, 4.0, config=Newton(max_iter=200, tol_grad=1e-8))
         np.testing.assert_allclose(float(nw.energy), float(cg.energy), atol=1e-8, rtol=1e-9)
 
     def test_zero_orbital_gradient_still_relaxes_occupations(self):
@@ -254,8 +253,7 @@ class TestNewtonConvergence:
         P0 = jnp.array([[[[1.0, 0.0], [0.0, 0.0]]]], dtype=jnp.complex128)
         r = solve(
             K, P0, 1.0,
-            config=SolverConfig(
-                method="newton", max_iter=100, tol_grad=1e-8,
+            config=Newton(max_iter=100, tol_grad=1e-8,
             ),
         )
         assert r.converged
@@ -266,7 +264,7 @@ class TestNewtonConvergence:
     def test_density_hermitian_and_particles(self):
         K = _dirac(nk=4)
         P0 = jnp.zeros_like(K.h)
-        r = solve(K, P0, 16.0, config=SolverConfig(max_iter=200, tol_grad=1e-7, method="newton"))
+        r = solve(K, P0, 16.0, config=Newton(max_iter=200, tol_grad=1e-7))
         np.testing.assert_allclose(
             np.array(r.density),
             np.array(jnp.conj(jnp.swapaxes(r.density, -1, -2))),
@@ -281,14 +279,12 @@ class TestNewtonDispatch:
     def test_optimizer_recognised(self):
         K = _contact(nk=2)
         P0 = jnp.zeros_like(K.h)
-        r = solve(K, P0, 4.0, config=SolverConfig(max_iter=100, tol_grad=1e-6, method="newton"))
+        r = solve(K, P0, 4.0, config=Newton(max_iter=100, tol_grad=1e-6))
         assert np.isfinite(r.energy)
 
     def test_unknown_optimizer_raises(self):
-        K = _contact(nk=2)
-        P0 = jnp.zeros_like(K.h)
-        with pytest.raises(ValueError, match="method"):
-            solve(K, P0, 4.0, config=SolverConfig(method="bfgs"))
+        with pytest.raises(KeyError):
+            METHODS["bfgs"]
 
     def test_float32_warns(self):
         # A float32 kernel should warn (Newton needs float64 to converge).
@@ -298,4 +294,4 @@ class TestNewtonDispatch:
         K = HartreeFockKernel(mesh_for(jnp.ones((2, 2), dtype=jnp.float32)), jnp.asarray(h), jnp.full((2, 2, 1, 1), 0.25, dtype=jnp.complex64), T=0.1)
         P0 = jnp.zeros_like(K.h)
         with pytest.warns(UserWarning, match="float64"):
-            solve(K, P0, 2.0, config=SolverConfig(max_iter=2, method="newton"))
+            solve(K, P0, 2.0, config=Newton(max_iter=2))

@@ -19,7 +19,7 @@ def _kernel(nk, *, exchange=0.6, nb=2):
 def test_continuation_matches_manual_coarse_then_fine():
     kc, kf = _kernel(2), _kernel(4)
     P0 = np.zeros_like(kc.h)
-    cfg = hf.SolverConfig(method="cg", max_iter=200, tol_E=1e-10)
+    cfg = hf.CG(max_iter=200, tol_E=1e-10)
 
     combined = hf.solve(kf, P0, 1.0, config=cfg, coarse=kc)
 

@@ -7,7 +7,7 @@ import warnings
 
 import jax.numpy as jnp
 
-from ..config import SolverConfig, SolveResult
+from ..config import CG, Newton, SolveResult
 from .fock import build_fock, fock_builder
 from .newton import _solve_newton_jitted
 from .riemannian import _solve_jitted
@@ -24,17 +24,17 @@ def minimize(
     P0,
     n_electrons: float,
     *,
-    config: SolverConfig | None = None,
+    config=None,
 ) -> SolveResult:
     """Direct-minimization Hartree-Fock solver.
 
-    With ``config.method="cg"``: preconditioned Riemannian CG on
+    With :class:`~hartreefock.CG` (the default): preconditioned Riemannian CG on
     Stiefel x capped simplex with true-free-energy backtracking (one
     current-state Fock build plus trial builds).  With
-    ``config.method="newton"``: trust-region Newton (Steihaug truncated-CG
+    :class:`~hartreefock.Newton`: trust-region Newton (Steihaug truncated-CG
     on the joint (Q, p) response Hessian), which converges on the gradient norm
     and typically needs fewer outer iterations on stiff problems.  See
-    :class:`SolverConfig` for tuning knobs.
+    the config classes for tuning knobs.
 
     Parameters
     ----------
@@ -48,7 +48,7 @@ def minimize(
     n_electrons
         Target electron count (sum of weights × occupations).
     config
-        Solver controls; ``method`` is ``"cg"`` or ``"newton"``.
+        A :class:`~hartreefock.CG` or :class:`~hartreefock.Newton`.
 
     Returns
     -------
@@ -76,7 +76,7 @@ def minimize(
     triggering a recompile.
     """
     if config is None:
-        config = SolverConfig(method="cg")
+        config = CG()
     P0_arr = jnp.asarray(P0)
     if P0_arr.shape != kernel.h.shape:
         raise ValueError(
@@ -93,16 +93,7 @@ def minimize(
     builder = fock_builder(kernel)
     custom_fock = None if builder is build_fock else builder
 
-    optimizer = config.method
-    deflation_on = (
-        config.deflation_targets is not None and float(config.deflation_sigma) > 0.0
-    )
-    if deflation_on and optimizer != "newton":
-        raise ValueError(
-            f"deflation is only supported with method='newton' (got method={config.method!r})."
-        )
-
-    if optimizer == "newton":
+    if isinstance(config, Newton):
         # Trust-region Newton is a second-order method: its Steihaug Hessian-
         # vector products go through the FFT Fock build, whose float32 round-off
         # (~1e-6) swamps the small Hessian eigenvalues on near-degenerate
@@ -122,6 +113,7 @@ def minimize(
         # Deflation targets -> (n_solutions, nk1, nk2, nb, nb), matching the
         # kernel dtype.  An empty (0, ...) stack with has_deflation=False is the
         # no-deflation path (the bias machinery is then compiled out entirely).
+        deflation_on = config.deflation_targets is not None and float(config.deflation_sigma) > 0.0
         h_dtype = jnp.asarray(kernel.h).dtype
         nk1, nk2, nb = kernel.h.shape[0], kernel.h.shape[1], kernel.h.shape[-1]
         if deflation_on:

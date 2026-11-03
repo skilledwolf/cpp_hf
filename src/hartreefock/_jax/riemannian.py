@@ -704,7 +704,7 @@ _solve_jitted = jax.jit(
         "include_hartree",
         "include_exchange",
         "exchange_hermitian_channel_packing",
-        # SolverConfig fields that are structurally static (integers used as
+        # Config fields that are structurally static (integers used as
         # loop bounds, callables, or tuples affecting graph shape)
         "max_iter",
         "bt_max",

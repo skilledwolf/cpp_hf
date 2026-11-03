@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from _meshes import mesh_for
 
-from hartreefock import HartreeFockKernel, SolverConfig, solve
+from hartreefock import METHODS, RDIIS, HartreeFockKernel, Linear, solve
 
 
 def _comm_rms(F, P, w2d):
@@ -38,9 +38,8 @@ class TestAccelerationAgreement:
         P0 = jnp.zeros_like(K.h)
         energies = {}
         for acc in ("linear", "rdiis"):
-            r = solve(K, P0, _NE, config=SolverConfig(
-                max_iter=800, density_tol=1e-6, comm_tol=1e-5,
-                mixing=0.5, method=acc))
+            r = solve(K, P0, _NE, config=METHODS[acc](
+                max_iter=800, density_tol=1e-6, comm_tol=1e-5))
             energies[acc] = r.energy
         spread = max(energies.values()) - min(energies.values())
         assert spread < 1e-3, f"schemes disagree on energy: {energies}"
@@ -50,9 +49,9 @@ class TestRDIIS:
     def test_converges_far_faster_than_linear(self):
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
-        cfg = dict(max_iter=800, density_tol=1e-6, comm_tol=1e-5, mixing=0.5)
-        lin = solve(K, P0, _NE, config=SolverConfig(method="linear", **cfg))
-        diis = solve(K, P0, _NE, config=SolverConfig(method="rdiis", **cfg))
+        cfg = dict(max_iter=800, density_tol=1e-6, comm_tol=1e-5)
+        lin = solve(K, P0, _NE, config=Linear(mixing=0.5, **cfg))
+        diis = solve(K, P0, _NE, config=RDIIS(**cfg))
         assert bool(lin.converged) and bool(diis.converged)
         # RDIIS should need far fewer Roothaan steps than plain mixing.
         assert int(diis.n_iter) < int(lin.n_iter) // 3
@@ -62,10 +61,10 @@ class TestRDIIS:
     def test_trust_radius_converges(self):
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
-        free = solve(K, P0, _NE, config=SolverConfig(
-            max_iter=800, density_tol=1e-6, comm_tol=1e-5, method="rdiis"))
-        clipped = solve(K, P0, _NE, config=SolverConfig(
-            max_iter=800, density_tol=1e-6, comm_tol=1e-5, method="rdiis",
+        free = solve(K, P0, _NE, config=RDIIS(
+            max_iter=800, density_tol=1e-6, comm_tol=1e-5))
+        clipped = solve(K, P0, _NE, config=RDIIS(
+            max_iter=800, density_tol=1e-6, comm_tol=1e-5,
             trust_radius=0.5))
         assert bool(clipped.converged)
         np.testing.assert_allclose(float(clipped.energy), float(free.energy), atol=1e-4, rtol=1e-5)
@@ -73,20 +72,19 @@ class TestRDIIS:
     def test_damping_still_converges(self):
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
-        r = solve(K, P0, _NE, config=SolverConfig(
-            max_iter=800, density_tol=1e-6, comm_tol=1e-5,
-            method="rdiis", diis_damping=0.7))
+        r = solve(K, P0, _NE, config=RDIIS(
+            max_iter=800, density_tol=1e-6, comm_tol=1e-5, diis_damping=0.7))
         assert r.converged
 
 
 class TestSolverConfigValidation:
     def test_invalid_acceleration_raises(self):
-        with pytest.raises(ValueError, match="method"):
-            SolverConfig(method="bfgs")
+        with pytest.raises(KeyError):
+            METHODS["bfgs"]
 
     def test_nonpositive_diis_size_raises(self):
         with pytest.raises(ValueError, match="diis_size"):
-            SolverConfig(diis_size=0)
+            RDIIS(diis_size=0)
 
     @pytest.mark.parametrize(
         "kwargs",
@@ -100,8 +98,9 @@ class TestSolverConfigValidation:
         ],
     )
     def test_invalid_domains_raise(self, kwargs):
+        cls = RDIIS if "diis_start" in kwargs else Linear
         with pytest.raises(ValueError):
-            SolverConfig(**kwargs)
+            cls(**kwargs)
 
     def test_scf_validates_count_shape_and_temperature_before_jit(self):
         K = _dirac(nk=2)

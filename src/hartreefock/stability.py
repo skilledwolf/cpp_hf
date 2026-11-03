@@ -17,7 +17,7 @@ from scipy.sparse.linalg import ArpackNoConvergence, LinearOperator, eigsh
 from scipy.special import xlogy
 
 from . import _jax
-from .config import SolverConfig, SolveResult
+from .config import RDIIS, SolveResult
 from .kernel import fermi_density
 
 
@@ -382,9 +382,9 @@ def solve_minimum(
         Starting density.
     n_electrons : float
         Particle number, counted with the weights.
-    config : SolverConfig, optional
-        Configuration of each local solve. The default is safeguarded RDIIS
-        with 1e-8 residuals and 500 iterations.
+    config : RDIIS or Linear, optional
+        Configuration of each local solve, a Roothaan method. The default is
+        safeguarded RDIIS with 1e-8 residuals and 500 iterations.
     max_escapes : int
         Most descent steps; at most ``max_escapes + 1`` local solves run.
     eigen_tol : float
@@ -422,12 +422,14 @@ def solve_minimum(
             "build the kernel from float64 arrays"
         )
     if config is None:
-        config = SolverConfig(
+        config = RDIIS(
             diis_size=8,
             max_iter=500,
             density_tol=1e-8,
             comm_tol=1e-8,
         )
+    if not config.roothaan:
+        raise ValueError("solve_minimum needs a Roothaan config (RDIIS or Linear).")
     if config.project_fn is not None:
         raise ValueError(
             "solve_minimum requires an unconstrained kernel; remove project_fn"

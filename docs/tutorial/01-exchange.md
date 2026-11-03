@@ -35,7 +35,7 @@ with $\mathrm K$ and $\mathrm E$ the complete elliptic integrals, and the
 exchange energy per electron is $-8\sqrt2/(3\pi r_s)$ Ry $= -1.2004/r_s$ Ry.
 
 **You will use:** {class}`~hartreefock.Mesh`, {class}`~hartreefock.HartreeFockKernel`,
-{func}`~hartreefock.solve`, {class}`~hartreefock.SolverConfig`.
+{func}`~hartreefock.solve`, {class}`~hartreefock.RDIIS`.
 :::
 
 ## The mesh, the Hamiltonian and the interaction

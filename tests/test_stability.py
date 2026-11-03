@@ -10,8 +10,8 @@ from scipy.special import xlogy
 
 import hartreefock.stability as module
 from hartreefock import (
+    RDIIS,
     HartreeFockKernel,
-    SolverConfig,
     solve,
     solve_minimum,
     stability_analysis,
@@ -57,7 +57,7 @@ def test_contact_response_matches_its_explicit_tangent():
 def test_repulsive_hartree_minimum_has_positive_curvature():
     h = np.diag([-0.2, 0.3]).astype(complex)[None, None]
     kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), hartree=3 * np.eye(2), T=0.5, exchange=False, reference=np.zeros_like(h))
-    config = SolverConfig(method="rdiis", density_tol=1e-9, comm_tol=1e-9)
+    config = RDIIS(density_tol=1e-9, comm_tol=1e-9)
     r = solve(kernel, HALF, 1.0, config=config)
     s = stability_analysis(kernel, r.density, 1.0)
     assert s.stationary and s.eigen_converged and s.stable is True
@@ -68,7 +68,7 @@ def test_curvature_matches_free_energy_second_difference():
     w = np.full((2, 2), 0.25)
     h = np.broadcast_to(np.array([[-0.2, 0.1j], [-0.1j, 0.3]]), (2, 2, 2, 2)).copy()
     kernel = HartreeFockKernel(mesh_for(w), h, np.full((2, 2, 1, 1), 0.2), T=0.4)
-    config = SolverConfig(method="rdiis", density_tol=1e-11, comm_tol=1e-11)
+    config = RDIIS(density_tol=1e-11, comm_tol=1e-11)
     r = solve(kernel, np.zeros_like(h), 0.8, config=config)
     P = r.density
     s = stability_analysis(kernel, P, 0.8)
@@ -189,13 +189,13 @@ def test_zero_escape_budget_reports_saddle_without_false_success():
 
 def test_recovery_rejects_conflicting_symmetry_constraint():
     with pytest.raises(ValueError, match="unconstrained"):
-        solve_minimum(saddle_kernel(), HALF, 1.0, config=SolverConfig(project_fn=lambda P: P))
+        solve_minimum(saddle_kernel(), HALF, 1.0, config=RDIIS(project_fn=lambda P: P))
 
 
 def test_nonstationary_iterate_is_not_reported_as_a_minimum():
     h = np.diag([-1.0, 1.0]).astype(complex)[None, None]
     kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.full((1, 1, 1, 1), 0.1), T=0.1)
-    config = SolverConfig(method="rdiis", max_iter=1, density_tol=1e-8, comm_tol=1e-8)
+    config = RDIIS(max_iter=1, density_tol=1e-8, comm_tol=1e-8)
     r = solve_minimum(kernel, HALF, 1.0, config=config)
     assert not r.converged and r.stability is None
     assert r.escapes == 0 and r.total_iterations == 1
@@ -261,7 +261,7 @@ def test_free_energy_describes_returned_state_not_stale_history(monkeypatch):
     monkeypatch.setattr(module, "_fermi_escape_density", lambda *a, **k: HALF.copy())
     monkeypatch.setattr(module, "_feasible_density", lambda *a, **k: HALF.copy())
     kernel = saddle_kernel()
-    r = solve_minimum(kernel, HALF, 1.0, config=SolverConfig(method="rdiis"))
+    r = solve_minimum(kernel, HALF, 1.0, config=RDIIS())
     assert r.solution.converged and r.stability.stable is False
     assert not r.converged and r.escapes == 0
     assert "no finite feasible descent" in r.message
@@ -289,7 +289,7 @@ def test_escape_requires_descent_above_kernel_precision(monkeypatch):
     monkeypatch.setattr(engine, "solve", lambda *a, **k: local)
     monkeypatch.setattr(engine, "fock_operators", lambda kernel: ops)
     monkeypatch.setattr(module, "stability_analysis", lambda *a, **k: saddle)
-    config = SolverConfig(method="rdiis", density_tol=1e-4, comm_tol=1e-4)
+    config = RDIIS(density_tol=1e-4, comm_tol=1e-4)
     r = solve_minimum(kernel, density, 1.0, eigen_tol=1e-4, config=config)
     assert not r.converged and r.escapes == 0
     assert "no finite feasible descent" in r.message

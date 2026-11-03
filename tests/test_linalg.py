@@ -64,7 +64,7 @@ def _valley_kernel(sectors=None):
 
 @pytest.mark.parametrize("method", ["cg", "rdiis"])
 def test_sector_solve_matches_full_solve(method):
-    config = hf.SolverConfig(method=method, max_iter=300)
+    config = hf.METHODS[method](max_iter=300)
     n = 2.0 * float(_valley_kernel().weight_sum)
     full = hf.solve(_valley_kernel(), None, n, config=config)
     split = hf.solve(_valley_kernel(((0, 1), (2, 3))), None, n, config=config)

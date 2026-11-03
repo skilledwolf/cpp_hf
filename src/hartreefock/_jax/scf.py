@@ -21,7 +21,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
-from ..config import SolverConfig, SolveResult
+from ..config import RDIIS, SolveResult
 from .fock import fock_builder, free_energy, hf_energy
 from .linalg import adjoint, bmm, eigh, hermitian_eigvalsh
 from .utils import hermitize as _herm
@@ -66,7 +66,7 @@ def roothaan(
     P0,
     n_electrons: float,
     *,
-    config: SolverConfig | None = None,
+    config=None,
 ) -> SolveResult:
     """Reference self-consistent field (SCF) solver.
 
@@ -85,10 +85,8 @@ def roothaan(
     n_electrons
         Target electron count.
     config
-        :class:`SolverConfig`.  ``method`` selects rdiis or linear;
-        ``diis_size``, ``diis_start``, ``diis_damping`` tune the RDIIS
-        extrapolation, ``mixing`` the linear step; ``trust_radius``
-        clips the per-iteration density step.  Defaults to ``SolverConfig()``.
+        :class:`~hartreefock.RDIIS` (the default) or
+        :class:`~hartreefock.Linear`.
 
     Notes
     -----
@@ -108,7 +106,7 @@ def roothaan(
         ``density, fock, energy, mu, n_iter, converged, history``.
     """
     if config is None:
-        config = SolverConfig()
+        config = RDIIS()
 
     args = device_args(kernel)
     h = args["h"]
@@ -126,8 +124,7 @@ def roothaan(
     validate_temperature(kernel.T, context="kernel.T")
 
     run_scf = _run_scf
-    extra_args = {"mixing": float(config.mixing)}
-    if config.method == "rdiis":
+    if isinstance(config, RDIIS):
         from .scf_acceleration import _run_accelerated_scf
         if not bool(jnp.all(jnp.isfinite(P0_arr))):
             raise ValueError("P0 must contain only finite values")
@@ -135,6 +132,8 @@ def roothaan(
         extra_args = dict(safeguard=config.safeguard, diis_size=int(config.diis_size),
                           diis_start=int(config.diis_start),
                           diis_damping=float(config.diis_damping))
+    else:
+        extra_args = {"mixing": float(config.mixing)}
 
     # At either exact filling endpoint the physical density is known.  Seed
     # it directly so mixing cannot leave a one-ULP particle deficit in a

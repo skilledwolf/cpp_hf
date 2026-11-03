@@ -118,7 +118,7 @@ def public_name(app, env, node, contnode):
     """Resolve a type named by its defining module to its documented home.
 
     Annotations name classes where they are defined, such as
-    ``hartreefock.config.SolverConfig``; the reference may
+    ``hartreefock.config.RDIIS``; the reference may
     document them where the package exports them. Among documented objects
     with the same final name, take the one sharing the longest module prefix
     with the referring page.

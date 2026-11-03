@@ -28,7 +28,7 @@ The solvers compute in the dtype of the kernel's arrays, so a kernel built
 from float32 or complex64 arrays solves in single precision.
 {func}`~hartreefock.stability_analysis` and
 {func}`~hartreefock.solve_minimum` refuse their default tolerances on
-such a kernel, and `method="newton"` needs double precision
+such a kernel, and `hf.Newton` needs double precision
 ([Precision and speed](../guides/performance.md)).
 
 ## A converged solve can be a saddle
