@@ -12,11 +12,11 @@ import hartreefock.stability as module
 from hartreefock import (
     HartreeFockKernel,
     SolverConfig,
-    fock_operators,
     solve,
     solve_minimum,
     stability_analysis,
 )
+from hartreefock._jax import fock_operators
 from hartreefock.kernel import fermi_density
 
 

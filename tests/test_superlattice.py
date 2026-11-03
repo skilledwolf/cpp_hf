@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import hartreefock as hf
+from hartreefock._jax import fock_operators
 from hartreefock.superlattice import upsample_density
 
 G = np.array([[0, 0], [1, 0], [0, -1], [-1, 1]])
@@ -122,7 +123,7 @@ def test_fock_matches_the_kernel_linear_maps(x64, case):
         hermitian(rng, (NX, NY, D, D)), hartree=True, reference=ref, degeneracy=2.0, **case,
     )
     P = hermitian(rng, (NX, NY, D, D))
-    F, _ = hf.fock_operators(kernel).evaluate(P)
+    F, _ = fock_operators(kernel).evaluate(P)
     np.testing.assert_allclose(F, kernel.h + kernel.potential(P - kernel.refP), atol=1e-13)
 
     args = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in kernel._as_args().items()}

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax import lax
 
 from . import ffi

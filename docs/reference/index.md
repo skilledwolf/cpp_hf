@@ -30,7 +30,6 @@ everything public.
 | Name | What it does |
 | --- | --- |
 | {func}`~hartreefock.symmetry.make_project_fn` | A projection onto a symmetry sector, for `project_fn` |
-| {func}`~hartreefock.fock_operators` | The Fock matrix and energy of a density, and the Fock response |
 
 ```{toctree}
 :hidden:

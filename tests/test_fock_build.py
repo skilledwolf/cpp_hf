@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from _meshes import mesh_for
 
-import hartreefock as hf
+from hartreefock._jax import fock_operators
 from hartreefock.kernel import HartreeFockKernel
 
 
@@ -31,7 +31,7 @@ def test_fock_matches_the_kernel_linear_maps(orbital_V, embed, x64):
     kernel = _kernel(rng, orbital_V=orbital_V, embed=embed)
     P = _herm(rng, kernel.h.shape)
 
-    F, _ = hf.fock_operators(kernel).evaluate(P)
+    F, _ = fock_operators(kernel).evaluate(P)
     np.testing.assert_allclose(F, kernel.h + kernel.potential(P - kernel.refP), atol=1e-12)
 
 
@@ -41,7 +41,7 @@ def test_fock_is_energy_gradient(x64):
     P = _herm(rng, kernel.h.shape)
     dP = _herm(rng, kernel.h.shape)
 
-    ops = hf.fock_operators(kernel)
+    ops = fock_operators(kernel)
     eps = 1e-6
     E_plus = ops.evaluate(P + eps * dP)[1]
     E_minus = ops.evaluate(P - eps * dP)[1]

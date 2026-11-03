@@ -24,6 +24,7 @@ import jax.numpy as jnp
 from ..config import SolverConfig, SolveResult
 from .fock import fock_builder, free_energy, hf_energy
 from .linalg import adjoint, bmm, eigh, hermitian_eigvalsh
+from .utils import hermitize as _herm
 from .utils import (
     chemical_potential,
     device_args,
@@ -32,9 +33,6 @@ from .utils import (
     validate_temperature,
 )
 
-
-def _herm(X):
-    return 0.5 * (X + jnp.conj(jnp.swapaxes(X, -1, -2)))
 
 
 def _weighted_matrix_norm(matrix, weights, weight_sum):

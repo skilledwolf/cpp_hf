@@ -27,13 +27,11 @@ from .occupations import (
     _project_capped_occupations,
 )
 from .utils import chemical_potential
+from .utils import hermitize as _herm
 
 # ---------------------------------------------------------------------------
 # Small linear algebra helpers
 # ---------------------------------------------------------------------------
-
-def _herm(X: jax.Array) -> jax.Array:
-    return 0.5 * (X + jnp.conj(jnp.swapaxes(X, -1, -2)))
 
 
 def _skew_hermitian(A: jax.Array) -> jax.Array:

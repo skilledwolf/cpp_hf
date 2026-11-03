@@ -1,9 +1,9 @@
 """Full-residual acceleration: monotone descent, feasibility, and Fock reuse."""
 import numpy as np
-import pytest
 from _meshes import mesh_for
 
-from hartreefock import HartreeFockKernel, SolverConfig, fock_operators, solve
+from hartreefock import HartreeFockKernel, SolverConfig, solve
+from hartreefock._jax import fock_operators
 from hartreefock._jax.utils import density_matrix_from_fock
 
 

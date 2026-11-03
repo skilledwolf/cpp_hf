@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 
 from hartreefock._jax.utils import (
+    chemical_potential,
     density_matrix_from_fock,
     fermidirac,
-    chemical_potential,
     selfenergy_fft,
 )
 

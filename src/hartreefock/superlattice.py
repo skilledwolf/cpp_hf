@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ._jax.utils import hermitize as _herm
 from .mesh import Mesh
 from .symmetry import array_namespace
 
@@ -169,9 +170,6 @@ def superlattice_hartree(rho_bar, pair_to_delta: np.ndarray, HH: np.ndarray, *, 
         sigma = xp.einsum("ABa,ab->AaBb", sigma_orb, eye)
     return sigma.reshape(D, D)
 
-
-def _herm(A):
-    return 0.5 * (A + np.conj(np.swapaxes(A, -1, -2)))
 
 
 def exchange_at(kernel, rho, k):

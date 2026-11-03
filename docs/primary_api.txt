@@ -11,5 +11,4 @@ hartreefock.solve
 hartreefock.solve_minimum
 hartreefock.stability_analysis
 hartreefock.solve_deflated
-hartreefock.fock_operators
 hartreefock.symmetry.make_project_fn

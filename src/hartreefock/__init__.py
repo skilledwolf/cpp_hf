@@ -47,24 +47,6 @@ except metadata.PackageNotFoundError:  # pragma: no cover
     __version__ = "0.0.0"
 
 
-def fock_operators(kernel):
-    """The Fock map of ``kernel`` and its derivative, on host arrays.
-
-    Parameters
-    ----------
-    kernel : HartreeFockKernel
-        The problem.
-
-    Returns
-    -------
-    types.SimpleNamespace
-        ``evaluate(P) -> (F, E)``: the Fock matrix and HF energy of density
-        ``P``; ``response(P, dP) -> dF``: the Fock response to ``dP``; and
-        ``dtype``, the complex dtype both work in.
-    """
-    return _jax.fock_operators(kernel)
-
-
 def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None, coarse=None):
     """Solve the Hartree-Fock problem at fixed particle number.
 
@@ -114,7 +96,6 @@ __all__ = [
     "SolverConfig",
     "StabilityResult",
     "chemical_potential",
-    "fock_operators",
     "solve",
     "solve_deflated",
     "solve_minimum",

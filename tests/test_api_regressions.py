@@ -13,11 +13,15 @@ from hartreefock import (
     HartreeFockKernel,
     Mesh,
     SolverConfig,
-    fock_operators,
     solve,
 )
 from hartreefock import chemical_potential as _chemical_potential
 
+
+def _fock(kernel, P):
+    """The Fock matrix and standard HF energy of ``P``, from the kernel's own maps."""
+    F = kernel.h + kernel.potential(P - kernel.refP)
+    return F, sum(kernel.energies(P).values())
 
 def find_chemical_potential(bands, weights, n_electrons, T):
     return float(_chemical_potential(bands, weights, n_electrons, T))
@@ -51,7 +55,7 @@ def _exchange_problem():
 
 def test_exchange_weights_the_integrated_density():
     kernel, P, expected = _exchange_problem()
-    F, _ = fock_operators(kernel).evaluate(P)
+    F, _ = _fock(kernel, P)
     np.testing.assert_allclose(
         F[..., 0, 0].real,
         expected,
@@ -185,15 +189,15 @@ def test_embedded_kernel_reports_standard_hf(kind, density_scale):
     standard = HartreeFockKernel(**common, reference=np.zeros_like(refP))
     P = density_scale * refP
 
-    F_standard, E_standard = fock_operators(standard).evaluate(P)
-    F_embedded, E_embedded = fock_operators(embedded).evaluate(P)
+    F_standard, E_standard = _fock(standard, P)
+    F_embedded, E_embedded = _fock(embedded, P)
     np.testing.assert_allclose(E_embedded, E_standard, atol=1e-12)
     np.testing.assert_allclose(F_embedded, F_standard, atol=1e-12)
 
     # The energy parts sum to the reported energy, with and without a reference.
     referenced = HartreeFockKernel(**common, reference=refP)
     for kernel in (embedded, standard, referenced):
-        E = fock_operators(kernel).evaluate(P)[1]
+        E = _fock(kernel, P)[1]
         np.testing.assert_allclose(sum(kernel.energies(P).values()), E, atol=1e-12)
     np.testing.assert_allclose(embedded.energies(P)["kinetic"],
                                standard.energies(P)["kinetic"], atol=1e-12)

@@ -64,9 +64,9 @@ def validate_temperature(T: Any, *, context: str = "T") -> Any:
     return temperature
 
 
-def hermitize(X: jax.Array) -> jax.Array:
-    """Hermitize the last two axes: 0.5*(X + X†)."""
-    return 0.5 * (X + jnp.conj(jnp.swapaxes(X, -1, -2)))
+def hermitize(X):
+    """Hermitize the last two axes, ``(X + X†) / 2``; NumPy stays NumPy, JAX stays JAX."""
+    return 0.5 * (X + X.conj().swapaxes(-1, -2))
 
 
 def fermidirac(x: jax.Array, T: float) -> jax.Array:
