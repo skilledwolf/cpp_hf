@@ -37,9 +37,7 @@ This project adheres to [Semantic Versioning](https://semver.org).
   the exchange one sector at a time (about `len(sectors)²` times cheaper
   per eigensolve). The silent fallback to a full exchange when a block
   layout did not hold is gone.
-- `examples/` moved to the contimod-studies repository
-  (`14-hartreefock-legacy-examples`); the scripts used the removed
-  contimod API and are kept there unported.
+- `examples/` is removed; the scripts used the removed contimod API.
 - Building a complex128 kernel with `jax_enable_x64` off raises, instead of
   solving silently in complex64.
 - `solve_continuation` and `ContinuationResult` are gone:
