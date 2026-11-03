@@ -1,23 +1,16 @@
-"""Installed-wheel smoke test used by cibuildwheel.
-
-``import hartreefock`` succeeds without the compiled extension, so check that
-the C++ kernels registered with JAX and run one solve through them.
-"""
+"""Installed-wheel smoke test used by cibuildwheel: the extension loads and exports its kernels."""
 
 from __future__ import annotations
 
-import numpy as np
+from hartreefock_ffi import _native
 
-import hartreefock as hf
-from hartreefock._jax import ffi
-
-assert all(ffi.available(name) for name in (ffi.EIGH, ffi.EIGVALSH, ffi.MATMUL, ffi.SUPERLATTICE_FOCK))
-
-weights = np.ones((1, 1), dtype=np.float64)
-h = np.array([[[[-1.0, 0.0], [0.0, 1.0]]]], dtype=np.complex128)
-kernel = hf.HartreeFockKernel(weights, h, np.ones((1, 1, 1, 1)), T=0.2)
-result = hf.solve_scf(kernel, np.zeros_like(h), 1.0, config=hf.SCFConfig(max_iter=4, mixing=1.0))
-
-assert result.density.shape == h.shape
-assert np.isfinite(float(result.energy))
+targets = dict(_native.xla_ffi_targets())
+expected = {
+    "hartreefock_eigh_c128",
+    "hartreefock_eigvalsh_c128",
+    "hartreefock_matmul_c128",
+    "hartreefock_superlattice_fock",
+}
+assert expected <= set(targets), sorted(targets)
+assert _native.xla_ffi_jaxlib_version()
 print("wheel smoke test passed")

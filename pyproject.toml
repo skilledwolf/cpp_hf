@@ -10,9 +10,9 @@ requires = [
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "hartreefock"
+name = "hartreefock-ffi"
 dynamic = ["version"]
-description = "Hartree-Fock solvers on 2D k-meshes in JAX, with C++ kernels for the CPU hot paths"
+description = "OpenMP C++ kernels (FFTW + Eigen) for contimod's Hartree-Fock engine, called through jax.ffi"
 readme = "Readme.md"
 requires-python = ">=3.10"
 authors = [{ name = "Tobias Wolf", email = "public@wolft.xyz" }]
@@ -20,9 +20,8 @@ license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["hartree-fock", "fftw", "eigen", "pybind11", "condensed-matter", "physics"]
 dependencies = [
+    # The kernels are registered only under the jaxlib they were built against.
     "jax>=0.5.3",
-    "numpy",
-    "scipy",
 ]
 classifiers = [
     "Programming Language :: Python",
@@ -35,24 +34,13 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-xdist"]
-docs = [
-    "sphinx>=8",
-    "pydata-sphinx-theme>=0.16",
-    "myst-nb",
-    "sphinx-design",
-    "sphinx-copybutton",
-    "sphinx-autoapi>=3.4",
-    "sphinxcontrib-bibtex",
-    "linkify-it-py",
-    "matplotlib",
-]
 
 [project.urls]
 Homepage = "https://github.com/skilledwolf/cpp_hf"
 Issues   = "https://github.com/skilledwolf/cpp_hf/issues"
 
 [tool.scikit-build]
-wheel.packages = ["src/hartreefock"]
+wheel.packages = ["src/hartreefock_ffi"]
 
 [tool.scikit-build.metadata.version]
 provider = "scikit_build_core.metadata.setuptools_scm"
@@ -83,9 +71,7 @@ pythonpath = ["tests"]
 [tool.cibuildwheel]
 build = "cp311-* cp312-* cp313-*"
 skip = "pp* *-musllinux_*"
-# Exercise an actual native solve from the repaired, installed wheel.  A plain
-# ``import hartreefock`` is not sufficient because the package intentionally
-# remains importable when the native extension fails to load.
+# Load the extension from the repaired, installed wheel and check its kernels.
 test-command = "python {project}/ci/smoke_test.py"
 
 [tool.cibuildwheel.linux]
@@ -102,7 +88,7 @@ archs = ["native"]
 # One script handles both archs: arm64 builds FFTW from source, x86_64 uses brew.
 before-all = "bash ci/macos_arm_fftw.sh"
 repair-wheel-command = """
-delocate-wheel -L hartreefock/.dylibs --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
+delocate-wheel -L hartreefock_ffi/.dylibs --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
 """
 
 # Teach CMake/pkg-config where the cached FFTW (and vendored Boost headers) live.

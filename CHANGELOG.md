@@ -1,10 +1,22 @@
 # Changelog
 
-All notable changes to **hartreefock** (formerly the separate `cpp_hf` and
-`jax_hf` packages) are documented here.
+All notable changes to **hartreefock-ffi**, and before it to **hartreefock**
+(formerly the separate `cpp_hf` and `jax_hf` packages), are documented here.
 This project adheres to [Semantic Versioning](https://semver.org).
 
-## [3.0.0] — unreleased
+## hartreefock-ffi [3.0.0] — unreleased
+
+### Breaking changes
+- The Python engine moved into contimod as `contimod.hf` (and the mesh as
+  `contimod.lattice.Mesh`); its docs and tests moved with it. This package
+  is now `hartreefock-ffi`, only the compiled kernels: the module
+  `hartreefock_ffi._native` with the `jax.ffi` targets
+  `hartreefock_eigh_c128`, `hartreefock_eigvalsh_c128`,
+  `hartreefock_matmul_c128` and `hartreefock_superlattice_fock`. contimod
+  uses it when installed (`contimod[native]`) and plain JAX otherwise.
+  The entries below, for the engine, were made before the move.
+
+## hartreefock [3.0.0] — engine changes before the move
 
 ### Breaking changes
 - `Mesh.pair_index(dq=(0, 0))`, the index map `k -> Q - k`, replaces

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(hartreefock LANGUAGES CXX)
+project(hartreefock_ffi LANGUAGES CXX)
 
 # -----------------------------
 # Options
@@ -187,4 +187,4 @@ if(APPLE AND HF_USE_ACCELERATE)
     target_link_libraries(_native PRIVATE "-framework Accelerate")
 endif()
 
-install(TARGETS _native DESTINATION hartreefock)
+install(TARGETS _native DESTINATION hartreefock_ffi)
