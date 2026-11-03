@@ -16,11 +16,11 @@ from hartreefock import (
     fock_operators,
     solve,
 )
-from hartreefock._jax.utils import find_chemical_potential as _find_mu
+from hartreefock import chemical_potential as _chemical_potential
 
 
 def find_chemical_potential(bands, weights, n_electrons, T):
-    return float(_find_mu(bands, weights, n_electrons, T))
+    return float(_chemical_potential(bands, weights, n_electrons, T))
 
 
 def _exchange_expected(weights, interaction, density):
@@ -150,7 +150,7 @@ def test_chemical_potential_bounds_cover_low_and_high_fillings(target, bandwidth
     np.testing.assert_allclose(count, expected, rtol=2e-8, atol=0.0)
 
 
-@pytest.mark.parametrize("acceleration", ["linear", "oda", "rdiis"])
+@pytest.mark.parametrize("acceleration", ["linear", "rdiis"])
 def test_zero_temperature_scf_preserves_flat_band_particle_count(acceleration):
     h = np.zeros((1, 1, 2, 2), complex)
     kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), T=0.0)

@@ -17,8 +17,8 @@ scalar or orbital-resolved.
 Solvers:
 
 * `solve(kernel, P0, n, config=SolverConfig(method=...))`: Roothaan SCF with
-  the free-energy-safeguarded full-residual `"rdiis"` (the default) and
-  `"anderson"` schemes, optimal damping `"oda"` or `"linear"` mixing, or
+  the free-energy-safeguarded full-residual `"rdiis"` (the default) or
+  `"linear"` mixing, or
   direct minimization by Riemannian `"cg"` or trust-region `"newton"`.
 * `solve_minimum`: RDIIS plus a local stability check and bounded saddle
   recovery; `stability_analysis` is the standalone curvature test.

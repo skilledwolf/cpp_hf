@@ -77,35 +77,6 @@ def test_zero_orbital_gradient_does_not_hide_wrong_occupations(
     assert np.max(np.abs(internal - objective)) > 1.0e-2
 
 
-def test_finite_temperature_oda_descends_free_energy() -> None:
-    h = np.array([[[[-1.0, 0.0], [0.0, 1.0]]]], dtype=np.complex128)
-    kernel = HartreeFockKernel(mesh_for(np.ones((1, 1), dtype=np.float64)), h, np.zeros((1, 1, 1, 1), dtype=np.complex128), hartree=np.zeros((2, 2), dtype=np.float64), T=1.0, exchange=False, reference=np.zeros_like(h))
-    initial = np.array(
-        [[[[1.0, 0.0], [0.0, 0.0]]]], dtype=np.complex128
-    )
-    result = solve(
-        kernel,
-        initial,
-        1.0,
-        config=SolverConfig(
-            method="oda",
-            max_iter=20,
-            density_tol=1.0e-6,
-            comm_tol=1.0e-6,
-        ),
-    )
-
-    assert result.converged
-    np.testing.assert_allclose(
-        np.asarray(result.density[0, 0]),
-        np.diag([0.73105858, 0.26894142]),
-        atol=2.0e-6,
-    )
-    objective = np.asarray(result.history["free_energy"])
-    assert objective.size > 1
-    assert np.all(np.diff(objective) <= 1.0e-12)
-
-
 def test_zero_diis_history_is_rejected_defensively() -> None:
     kernel = _repulsive_hartree()
     with pytest.raises(ValueError, match="diis_size"):
@@ -121,7 +92,7 @@ def test_zero_diis_history_is_rejected_defensively() -> None:
         )
 
 
-@pytest.mark.parametrize("acceleration", ["linear", "oda", "rdiis"])
+@pytest.mark.parametrize("acceleration", ["linear", "rdiis"])
 def test_scf_returns_the_density_whose_stationarity_was_certified(acceleration):
     # The fixed-point map amplifies a density error by 500, so replacing the
     # certified state with its undamped Fermi density would invalidate the stop.
@@ -195,4 +166,3 @@ def test_rdiis_engages_when_the_residual_history_is_nearly_rank_deficient() -> N
     assert int(linear.n_iter) > 60
     assert int(diis.n_iter) < 25, int(diis.n_iter)
     np.testing.assert_allclose(float(diis.energy), float(linear.energy), atol=1e-7)
-

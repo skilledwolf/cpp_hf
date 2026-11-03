@@ -1,15 +1,12 @@
 """Reference SCF solver for generating gold-standard baselines.
 
-Roothaan iteration with selectable acceleration:
+Roothaan iteration with linear mixing or RDIIS:
   1. Build Fock F[P]
   2. Diagonalize -> eigenvalues, eigenvectors
   3. Find mu via Fermi-Dirac, construct P_new = V diag(f) V†
-  4. Update the density via ``acceleration``:
+  4. Update the density per ``config.method``:
        - "linear": P <- (1 - mixing) P + mixing P_new
        - "rdiis":  safeguarded full-density-residual Fock extrapolation
-       - "anderson": safeguarded full-density-residual density extrapolation
-       - "oda":    optimal damping (energy line search at T=0, free-energy
-                   backtracking at finite T)
      optionally clipped to a ``trust_radius`` step.
   5. Check convergence on density change and commutator norm.
 
@@ -28,9 +25,9 @@ from ..config import SolverConfig, SolveResult
 from .fock import fock_builder, free_energy, hf_energy
 from .linalg import adjoint, bmm, eigh, hermitian_eigvalsh
 from .utils import (
+    chemical_potential,
     device_args,
     fermidirac,
-    find_chemical_potential,
     validate_electron_count,
     validate_temperature,
 )
@@ -45,21 +42,16 @@ def _weighted_matrix_norm(matrix, weights, weight_sum):
     return jnp.sqrt(jnp.sum(weights * per_k) / weight_sum)
 
 
-# Relative particle-number mismatch beyond which ODA treats a density as
-# infeasible and steps fully onto the occupied P_new.
-_ODA_N_TOL = 1e-8
-
-
 def _density_from_fock(fock, *, weights, n_electrons, temperature, level_shift, sectors=None):
     """Diagonalize Fock, find mu, build P = V diag(f) V†."""
     eigenvalues, orbitals = eigh(_herm(fock), sectors)
-    mu_raw = find_chemical_potential(eigenvalues, weights, n_electrons, temperature)
+    mu_raw = chemical_potential(eigenvalues, weights, n_electrons, temperature)
     occ_raw = fermidirac(eigenvalues - mu_raw, temperature)
     level_shift = jnp.asarray(level_shift, dtype=eigenvalues.dtype)
 
     def shifted_occupations(_):
         shifted = eigenvalues + level_shift * (1.0 - occ_raw)
-        mu = find_chemical_potential(shifted, weights, n_electrons, temperature)
+        mu = chemical_potential(shifted, weights, n_electrons, temperature)
         return fermidirac(shifted - mu, temperature), mu
 
     # Level shifts are dynamic JIT inputs.  Reuse the occupations at zero
@@ -81,8 +73,8 @@ def roothaan(
     """Reference self-consistent field (SCF) solver.
 
     Standard Roothaan iteration: build Fock, diagonalise, re-occupy via
-    Fermi-Dirac, update the density (linear mixing, Pulay DIIS, or optimal
-    damping per ``config.method``), repeat until converged.  Useful as a
+    Fermi-Dirac, update the density (linear mixing or Pulay DIIS per
+    ``config.method``), repeat until converged.  Useful as a
     baseline or fallback when the direct-minimization solver struggles.
 
     Parameters
@@ -95,19 +87,17 @@ def roothaan(
     n_electrons
         Target electron count.
     config
-        :class:`SolverConfig`.  ``method`` selects rdiis / anderson /
-        oda / linear; ``diis_size``, ``diis_start``, ``diis_damping`` tune the
-        RDIIS and Anderson extrapolation; ``trust_radius``
+        :class:`SolverConfig`.  ``method`` selects rdiis or linear;
+        ``diis_size``, ``diis_start``, ``diis_damping`` tune the RDIIS
+        extrapolation, ``mixing`` the linear step; ``trust_radius``
         clips the per-iteration density step.  Defaults to ``SolverConfig()``.
 
     Notes
     -----
     ``rdiis`` fits the full fixed-particle Fermi-density residual and
-    extrapolates Focks; ``anderson`` extrapolates densities. Both repair
-    occupation bounds and particle count, and safeguard the actual
-    finite-temperature free energy. ``mixing`` controls Anderson's base
-    update; RDIIS uses ``diis_damping`` for its Fock extrapolation instead.
-    Their convergence residual is always the unshifted Fermi map;
+    extrapolates Focks. It repairs occupation bounds and particle count, and
+    safeguards the actual finite-temperature free energy.
+    Its convergence residual is always the unshifted Fermi map;
     ``level_shift`` only modifies an RDIIS proposal. Custom Fock builders
     must be affine and variational, matching ``hf_energy``. A symmetry
     ``project_fn`` must be a linear, orthogonal, trace- and positivity-
@@ -138,8 +128,8 @@ def roothaan(
     validate_temperature(kernel.T, context="kernel.T")
 
     run_scf = _run_scf
-    extra_args = {}
-    if config.method in ("rdiis", "anderson"):
+    extra_args = {"mixing": float(config.mixing)}
+    if config.method == "rdiis":
         from .scf_acceleration import _run_accelerated_scf
         if not bool(jnp.all(jnp.isfinite(P0_arr))):
             raise ValueError("P0 must contain only finite values")
@@ -168,13 +158,11 @@ def roothaan(
             exchange_hermitian_channel_packing=args["exchange_hermitian_channel_packing"],
             contact_g=args["contact_g"], contact_Oi=args["contact_Oi"],
             contact_Oj=args["contact_Oj"],
-            mixing=float(config.mixing),
             level_shift=float(config.level_shift),
             density_tol=float(config.density_tol),
             comm_tol=float(config.comm_tol),
             trust_radius=float(config.trust_radius),
             max_iter=int(config.max_iter),
-            acceleration=config.method,
             project_fn=config.project_fn,
             fock_build_fn=fock_builder(kernel),
             sectors=kernel.sectors,
@@ -211,7 +199,7 @@ def roothaan(
     static_argnames=(
         "include_hartree", "include_exchange",
         "exchange_hermitian_channel_packing",
-        "max_iter", "acceleration", "project_fn", "fock_build_fn", "sectors",
+        "max_iter", "project_fn", "fock_build_fn", "sectors",
     ),
 )
 def _run_scf(
@@ -223,7 +211,7 @@ def _run_scf(
     exchange_hermitian_channel_packing,
     contact_g, contact_Oi, contact_Oj,
     mixing, level_shift, density_tol, comm_tol,
-    trust_radius, max_iter, acceleration, project_fn,
+    trust_radius, max_iter, project_fn,
     fock_build_fn, sectors,
 ):
     real_dtype = jnp.zeros((), dtype=h.dtype).real.dtype
@@ -279,55 +267,7 @@ def _run_scf(
         c_res = _weighted_matrix_norm(comm, weights_2d, ws)
         converged = jnp.logical_and(d_res <= density_tol, c_res <= comm_tol)
 
-        # --- density update per acceleration scheme (branch at trace time) ---
-        if acceleration == "oda":
-            # One extra Fock build at P_new gives the energy endpoint E(lam=1).
-            Sigma_n, H_n, _ = _fock(P_new)
-            E_new = hf_energy(
-                P_new, h=h, Sigma=Sigma_n, H=H_n,
-                weights_b=weights_b, refP=refP,
-            )
-            tr = jnp.real(jnp.einsum("...ij,...ji->...", F, delta))  # tr(F dP) per k
-            c1 = jnp.sum(weights_2d * tr)
-            c2 = (E_new - E) - c1
-            lam_zero_T = jnp.where(
-                c2 > 1e-12, jnp.clip(-c1 / (2.0 * c2), 0.0, 1.0),
-                jnp.where(c1 < 0.0, jnp.asarray(1.0, real_dtype),
-                          jnp.asarray(0.0, real_dtype)),
-            )
-
-            # At finite T the optimized thermodynamic objective is
-            # E[P] - T*S[P], not internal energy.  The energy along the segment
-            # is exactly quadratic; only the density-matrix entropy needs an
-            # eigensolve for each scalar backtracking candidate.
-            def omega_on_segment(lam):
-                P_lam = _herm(density + lam.astype(h.dtype) * delta)
-                eigs = hermitian_eigvalsh(P_lam).astype(real_dtype)
-                E_lam = E + lam * c1 + lam * lam * c2
-                return free_energy(E_lam, eigs, weights_2d, T)
-
-            def bt_body(_i, state):
-                lam_i, accepted = state
-                accepts_i = omega_on_segment(lam_i) < Omega
-                accepted = jnp.logical_or(accepted, accepts_i)
-                lam_next = jnp.where(accepted, lam_i, 0.5 * lam_i)
-                return lam_next, accepted
-
-            lam_finite, accepted = jax.lax.fori_loop(
-                0, 12, bt_body,
-                (jnp.asarray(1.0, real_dtype), jnp.bool_(False)),
-            )
-            lam_finite = jnp.where(accepted, lam_finite, jnp.asarray(0.0, real_dtype))
-            lam = jnp.where(T > 0.0, lam_finite, lam_zero_T)
-            # A start with the wrong particle number is off the constraint
-            # surface, so its energy is no bound: take the full step onto it.
-            n_now = jnp.sum(weights_2d * jnp.real(jnp.trace(density, axis1=-2, axis2=-1)))
-            off_shell = jnp.abs(n_now - n_electrons) > _ODA_N_TOL * jnp.maximum(1.0, jnp.abs(n_electrons))
-            lam = jnp.where(off_shell, jnp.asarray(1.0, real_dtype), lam)
-            updated = _herm(jnp.asarray(
-                _project(density + lam.astype(h.dtype) * delta), dtype=h.dtype))
-        else:  # linear
-            updated = _linear(density, delta)
+        updated = _linear(density, delta)
 
         # --- trust-region clip on the proposed step (when not converged) -----
         step = updated - density

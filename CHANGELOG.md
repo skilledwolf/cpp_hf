@@ -7,6 +7,17 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- One chemical-potential solver: `hartreefock.chemical_potential(bands,
+  weights, n, T, *, mu0=None, maxiter=100)`, a jitted safeguarded Newton
+  iteration on a bracket that runs on NumPy and JAX input. It replaces
+  `_jax.utils.find_chemical_potential` (and its `method="bisection"|"newton"`
+  variants), the NumPy bisection in `kernel.fermi_density` and the private
+  `_jax.occupations._solve_mu`; contimod's finite-temperature chemical
+  potential uses it too. One `validate_temperature`, and `fermidirac` floors
+  `T` at 1e-12 like the solvers (instead of adding 1e-12).
+- `SolverConfig(method=)` drops `"anderson"` and `"oda"`: the Roothaan
+  methods are `"rdiis"` (the default) and `"linear"`, next to `"cg"` and
+  `"newton"`. CG and RDIIS converged as fast or faster on every benchmark.
 - `HartreeFockKernel(..., sectors=)` replaces `SolverConfig(block_sizes=)`.
   Sectors are index sets that nothing couples (spin or valley blocks, in
   any order); the kernel checks `h`, the reference and the contact terms

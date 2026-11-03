@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import lax
 from jax.numpy.fft import fftn, ifftn, ifftshift
 from jax.scipy.special import expit
 
@@ -50,15 +52,16 @@ def validate_electron_count(
         )
 
 
-def validate_temperature(T: Any, *, context: str = "T") -> None:
-    """Reject non-finite or negative temperatures when values are concrete."""
+def validate_temperature(T: Any, *, context: str = "T") -> Any:
+    """``T`` as a float, rejecting non-finite or negative values (a traced ``T`` passes as is)."""
     if _has_tracer(T):
-        return
+        return T
     temperature = float(np.asarray(T))
     if not np.isfinite(temperature):
         raise ValueError(f"{context} must be finite, got {temperature!r}.")
     if temperature < 0.0:
         raise ValueError(f"{context} must be non-negative, got {temperature!r}.")
+    return temperature
 
 
 def hermitize(X: jax.Array) -> jax.Array:
@@ -69,7 +72,7 @@ def hermitize(X: jax.Array) -> jax.Array:
 def fermidirac(x: jax.Array, T: float) -> jax.Array:
     """Finite-T Fermi–Dirac occupation: 1/(1 + exp(x/T))."""
     validate_temperature(T)
-    return expit(-x / (T + 1e-12))
+    return expit(-x / jnp.maximum(T, 1e-12))
 
 
 def electron_density(P: jax.Array) -> jax.Array:
@@ -170,60 +173,6 @@ def _selfenergy_fft_full(
     return -ifftn(P_fft * VR, axes=(0, 1))
 
 
-def find_chemical_potential(
-    bands: jax.Array,
-    weights: jax.Array,
-    n_electrons: float,
-    T: float,
-    *,
-    maxiter: int | None = None,
-    method: str = "bisection",
-) -> jax.Array:
-    """Find μ such that ∑_k w_k Σ_j f(ε_kj − μ) = n_electrons.
-
-    Parameters
-    ----------
-    method : ``"bisection"`` (default) or ``"newton"``.
-        ``"bisection"`` is a pure bracket bisection — unconditionally stable and
-        deterministic, the safe choice inside DIIS-accelerated SCF loops.
-        ``"newton"`` is a Newton-Raphson solver with bracket safeguards, adapted
-        from the variational solver.  Converges in ~10 iterations instead of
-        ~30–54, but produces slightly different mu values from bisection
-        (~1e-8 difference) which can destabilize DIIS.
-
-    When *maxiter* is ``None``, the iteration count is chosen automatically:
-    bisection uses 30 (f32) / 54 (f64); Newton uses 15 (f32) / 25 (f64).
-    """
-    validate_electron_count(
-        weights,
-        bands.shape[-1],
-        n_electrons,
-        context="n_electrons",
-    )
-    validate_temperature(T)
-    method = str(method).lower()
-    if method == "bisection":
-        mu = _find_mu_bisection(bands, weights, n_electrons, T, maxiter=maxiter)
-    elif method == "newton":
-        mu = _find_mu_newton(bands, weights, n_electrons, T, maxiter=maxiter)
-    else:
-        raise ValueError(f"method must be 'bisection' or 'newton', got {method!r}")
-
-    # Exact empty/full fillings require an infinite chemical potential at
-    # finite temperature.  Returning a merely "wide" finite bracket endpoint
-    # leaves exponentially small tails and can make SCF report convergence at
-    # the wrong particle count.
-    real_dtype = bands.real.dtype
-    target = jnp.asarray(n_electrons, dtype=real_dtype)
-    capacity = (
-        jnp.sum(jnp.asarray(weights, dtype=real_dtype))
-        * jnp.asarray(bands.shape[-1], dtype=real_dtype)
-    )
-    neg_inf = jnp.asarray(-jnp.inf, dtype=real_dtype)
-    pos_inf = jnp.asarray(jnp.inf, dtype=real_dtype)
-    return jnp.where(target <= 0.0, neg_inf, jnp.where(target >= capacity, pos_inf, mu))
-
-
 def _chemical_potential_bounds(bands, capacity, target, temperature):
     """Bracket μ using a flat spectrum at each band edge, preserving dtype."""
     dtype = bands.real.dtype
@@ -242,101 +191,109 @@ def _chemical_potential_bounds(bands, capacity, target, temperature):
             hi + epsilon * jnp.maximum(jnp.abs(hi), temperature))
 
 
-def _find_mu_bisection(
-    bands: jax.Array,
-    weights: jax.Array,
-    n_electrons: float,
-    T: float,
+def chemical_potential(
+    bands: Any,
+    weights: Any,
+    n_electrons: Any,
+    T: Any,
     *,
-    maxiter: int | None = None,
+    mu0: Any = None,
+    maxiter: int = 100,
 ) -> jax.Array:
-    """Pure bracket bisection — unconditionally stable."""
-    if maxiter is None:
-        maxiter = 30 if bands.dtype in (jnp.float32, jnp.complex64) else 54
-    real_dtype = bands.real.dtype
-    capacity = jnp.sum(jnp.asarray(weights, dtype=real_dtype)) * bands.shape[-1]
-    temperature = jnp.asarray(T, dtype=real_dtype) + jnp.asarray(1e-12, dtype=real_dtype)
-    lo, hi = _chemical_potential_bounds(bands, capacity, n_electrons, temperature)
+    """The μ with ``Σ_k w_k Σ_j f(ε_kj − μ) = n_electrons`` at temperature ``T``.
 
-    def body(state, _):
-        lo_curr, hi_curr = state
-        mid = 0.5 * (lo_curr + hi_curr)
-        occ = fermidirac(bands - mid, T)
-        count = jnp.sum(jnp.asarray(weights)[..., None] * occ)
-        too_high = count > n_electrons
-        lo_next = jnp.where(too_high, lo_curr, mid)
-        hi_next = jnp.where(too_high, mid, hi_curr)
-        return (lo_next, hi_next), None
-
-    (lo_fin, hi_fin), _ = jax.lax.scan(body, (lo, hi), xs=None, length=int(maxiter))
-    return 0.5 * (lo_fin + hi_fin)
+    Safeguarded Newton iteration on a shrinking bracket, from ``mu0`` (the
+    bracket midpoint by default, or when ``mu0`` is NaN).  ``maxiter`` is an upper bound: the loop
+    stops as soon as the particle count matches to a few ULPs of the occupied
+    or empty fraction, or ``mu`` stops moving at the working precision, which
+    from a warm start takes a handful of steps.  Exactly empty and full
+    fillings give ``-inf`` and ``+inf``.  Runs on NumPy and JAX input, and
+    under ``jit``.
+    """
+    eps = jnp.asarray(bands)
+    validate_electron_count(weights, eps.shape[-1], n_electrons)
+    validate_temperature(T)
+    real_dtype = eps.real.dtype
+    mu0 = jnp.asarray(jnp.nan if mu0 is None else mu0, dtype=real_dtype)
+    return _chemical_potential(eps.real, jnp.asarray(weights, dtype=real_dtype),
+                               jnp.asarray(n_electrons, dtype=real_dtype),
+                               jnp.asarray(T, dtype=real_dtype), mu0, maxiter)
 
 
-def _find_mu_newton(
-    bands: jax.Array,
-    weights: jax.Array,
-    n_electrons: float,
-    T: float,
-    *,
-    maxiter: int | None = None,
-) -> jax.Array:
-    """Newton-Raphson with bracket safeguards — faster convergence (~10 iters)."""
-    if maxiter is None:
-        maxiter = 15 if bands.dtype in (jnp.float32, jnp.complex64) else 25
-    real_dtype = bands.real.dtype
-    Tj = jnp.asarray(T, dtype=real_dtype)
-    Tj = Tj + jnp.asarray(1e-12, dtype=real_dtype)
-    n_target = jnp.asarray(n_electrons, dtype=real_dtype)
+@partial(jax.jit, static_argnums=5)
+def _chemical_potential(eps, w_norm, n_target_norm, T, mu0, maxiter):
+    real_dtype = eps.dtype
+    Tj = jnp.maximum(jnp.asarray(T, dtype=real_dtype), jnp.asarray(1e-12, dtype=real_dtype))
 
-    capacity = jnp.sum(jnp.asarray(weights, dtype=real_dtype)) * bands.shape[-1]
-    lo, hi = _chemical_potential_bounds(bands, capacity, n_target, Tj)
-    mu = 0.5 * (lo + hi)
+    w_b = w_norm[..., None]
+    capacity = jnp.sum(w_norm) * jnp.asarray(eps.shape[-1], dtype=real_dtype)
+    lo, hi = _chemical_potential_bounds(eps, capacity, n_target_norm, Tj)
+    mu = jnp.where(jnp.isnan(mu0), 0.5 * (lo + hi), jnp.clip(mu0, lo, hi))
+    eps_m = jnp.asarray(jnp.finfo(real_dtype).eps, dtype=real_dtype)
+    # Resolve the count to the precision of the *occupied* (or empty) fraction,
+    # not of the total capacity: at low filling the callers' occupations carry
+    # the target count, and a capacity-scaled tolerance would leave a relative
+    # particle error of order capacity/n_target.
+    occ_scale = jnp.minimum(n_target_norm, capacity - n_target_norm)
+    count_tol = 4.0 * eps_m * occ_scale
 
-    w_b = jnp.asarray(weights)[..., None]
+    def cond(state):
+        i, _mu, _lo, _hi, g_prev, step_prev = state
+        return jnp.logical_and(
+            i < maxiter,
+            jnp.logical_and(jnp.abs(g_prev) > count_tol, step_prev > 0.0),
+        )
 
-    def count_and_slope(mu_val):
-        x = (mu_val - bands) / Tj
+    def body(state):
+        i, mu, lo, hi, _g_prev, _step_prev = state
+        x = (mu - eps) / Tj
         p = jax.nn.sigmoid(x)
         N = jnp.sum(w_b * p)
-        dp = (p * (1.0 - p)) / Tj
-        Z = jnp.sum(w_b * dp)
-        return N, Z
-
-    def body(state, _):
-        mu, lo, hi = state
-        N, Z = count_and_slope(mu)
-        g = N - n_target
+        Z = jnp.sum(w_b * p * (1.0 - p) / Tj)
+        g = N - n_target_norm
 
         lo = jnp.where(g < 0, mu, lo)
         hi = jnp.where(g > 0, mu, hi)
 
         mu_bis = 0.5 * (lo + hi)
-        has_slope = Z > 0.0
-        mu_new = mu - g / jnp.where(has_slope, Z, jnp.ones_like(Z))
-        mu_new = jnp.where(has_slope, mu_new, mu_bis)
-        # An update that rounds onto μ must not restart at a distant midpoint.
+        Z_safe = jnp.where(Z > 0.0, Z, jnp.ones_like(Z))
+        mu_new = jnp.where(Z > 0.0, mu - g / Z_safe, mu_bis)
+        # A Newton update that rounds back onto ``mu`` (which has just become
+        # a bracket end) is a converged iterate, not an out-of-bracket step;
+        # bisecting from it would throw the solution away.
         stalled = mu_new == mu
-        out_of = ((mu_new <= lo) | (mu_new >= hi)) & ~stalled
-        mu_new = jnp.where(out_of | ~jnp.isfinite(mu_new), mu_bis, mu_new)
+        out_of = jnp.logical_and(
+            jnp.logical_or(mu_new <= lo, mu_new >= hi),
+            jnp.logical_not(stalled),
+        )
+        mu_new = jnp.where(out_of, mu_bis, mu_new)
         mu_new = jnp.clip(mu_new, lo, hi)
-        mu_new = jnp.where(g == 0.0, mu, mu_new)
-        return (mu_new, lo, hi), None
+        mu_new = jnp.where(jnp.isfinite(mu_new), mu_new, mu_bis)
+        # Keep an iterate whose count already matches in place.
+        mu_new = jnp.where(jnp.abs(g) <= count_tol, mu, mu_new)
+        return (i + 1, mu_new, lo, hi, g, jnp.abs(mu_new - mu))
 
-    (mu_fin, lo_fin, hi_fin), _ = jax.lax.scan(body, (mu, lo, hi), xs=None, length=int(maxiter))
-
-    # Return whichever of the safeguarded Newton iterate and the remaining
-    # bracket midpoint has the smaller particle-count residual.  At very low
-    # temperature an integer filling has a broad, numerically flat gap.  The
-    # old absolute 1e-12 cutoff discarded an already-correct Newton iterate in
-    # that gap and returned the midpoint of a still-asymmetric bracket, which
-    # could occupy an entire extra band.
-    N_fin, _ = count_and_slope(mu_fin)
+    inf = jnp.asarray(jnp.inf, dtype=real_dtype)
+    _, mu_fin, lo_fin, hi_fin, _, _ = lax.while_loop(
+        cond, body, (jnp.int32(0), mu, lo, hi, inf, inf),
+    )
     mu_bis = 0.5 * (lo_fin + hi_fin)
-    N_bis, _ = count_and_slope(mu_bis)
-    return jnp.where(
-        jnp.abs(N_bis - n_target) < jnp.abs(N_fin - n_target),
+
+    def count(mu_value):
+        return jnp.sum(w_b * jax.nn.sigmoid((mu_value - eps) / Tj))
+
+    mu_fin = jnp.where(
+        jnp.abs(count(mu_bis) - n_target_norm)
+        < jnp.abs(count(mu_fin) - n_target_norm),
         mu_bis,
         mu_fin,
+    )
+    neg_inf = jnp.asarray(-jnp.inf, dtype=real_dtype)
+    pos_inf = jnp.asarray(jnp.inf, dtype=real_dtype)
+    return jnp.where(
+        n_target_norm <= 0.0,
+        neg_inf,
+        jnp.where(n_target_norm >= capacity, pos_inf, mu_fin),
     )
 
 
@@ -358,7 +315,7 @@ def density_matrix_from_fock(
         context="n_electrons",
     )
     eps, U = eigh(F, sectors)
-    mu = find_chemical_potential(eps, jnp.asarray(weights), n_electrons=float(n_electrons), T=float(T))
+    mu = chemical_potential(eps, weights, n_electrons, T)
     occ = fermidirac(eps - mu, float(T))
     P = bmm(U * occ[..., None, :].astype(U.dtype), adjoint(U))
     return hermitize(P), mu

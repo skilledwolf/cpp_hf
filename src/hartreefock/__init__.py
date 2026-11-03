@@ -29,6 +29,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 from . import _jax
+from ._jax.utils import chemical_potential
 from .config import (
     DeflatedResult,
     SolverConfig,
@@ -68,8 +69,7 @@ def solve(kernel, P0, n_electrons, *, config: SolverConfig | None = None, coarse
     """Solve the Hartree-Fock problem at fixed particle number.
 
     ``config.method`` picks a Roothaan iteration (``"rdiis"``, the default,
-    ``"anderson"``, ``"oda"``, ``"linear"``: diagonalize the Fock matrix,
-    refill, repeat) or a direct minimization of the free energy (``"cg"``,
+    or ``"linear"``: diagonalize the Fock matrix, refill, repeat) or a direct minimization of the free energy (``"cg"``,
     ``"newton"``).
 
     Parameters
@@ -113,6 +113,7 @@ __all__ = [
     "SolveResult",
     "SolverConfig",
     "StabilityResult",
+    "chemical_potential",
     "fock_operators",
     "solve",
     "solve_deflated",

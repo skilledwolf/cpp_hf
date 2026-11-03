@@ -1,4 +1,4 @@
-"""Independent objective, feasibility and fixed-point checks for RDIIS/Anderson."""
+"""Independent objective, feasibility and fixed-point checks for RDIIS."""
 
 
 import jax.numpy as jnp
@@ -40,13 +40,12 @@ def independent_state(kernel, density, n_electrons, builder=build_fock):
     return F, E, dr, cr
 
 
-@pytest.mark.parametrize("method", ["rdiis", "anderson"])
-def test_strong_hartree_occupation_residual_and_monotone_free_energy(method):
+def test_strong_hartree_occupation_residual_and_monotone_free_energy():
     kernel, P = charge_kernel()
     # These diagonal states have identically zero commutator, including the
     # initial state; convergence must resolve occupations, not just orbitals.
     result = solve(kernel, P, 1.5, config=SolverConfig(
-        method=method, diis_size=8, mixing=1.0, max_iter=120,
+        method="rdiis", diis_size=8, mixing=1.0, max_iter=120,
         density_tol=1e-8, comm_tol=1e-8))
     assert result.converged, result.message
     F, E, dr, cr = independent_state(kernel, result.density, 1.5)
@@ -61,12 +60,11 @@ def test_strong_hartree_occupation_residual_and_monotone_free_energy(method):
     assert result.history["fock_builds"] <= 2 * result.n_iter + 2
 
 
-@pytest.mark.parametrize("method", ["rdiis", "anderson"])
-def test_budget_one_returns_repaired_exact_consistent_state(method):
+def test_budget_one_returns_repaired_exact_consistent_state():
     kernel, P = charge_kernel()
     P[..., 0, 0] = 1.8
     P[..., 2, 2] = -.8
-    result = solve(kernel, P, 1.5, config=SolverConfig(method=method, max_iter=1))
+    result = solve(kernel, P, 1.5, config=SolverConfig(method="rdiis", max_iter=1))
     p = np.linalg.eigvalsh(result.density)
     assert p.min() >= -2e-14 and p.max() <= 1.0 + 2e-14
     np.testing.assert_allclose(np.sum(np.asarray(kernel.w2d)[..., None] * p), 1.5, atol=2e-13)
@@ -89,13 +87,12 @@ def test_duplicate_residual_history_stays_finite_and_affine():
     assert c[3] == 0.0
 
 
-@pytest.mark.parametrize("method", ["rdiis", "anderson"])
-def test_entropy_descent_can_increase_internal_energy_and_shift_does_not_bias_solution(method):
+def test_entropy_descent_can_increase_internal_energy_and_shift_does_not_bias_solution():
     h = np.diag([-1., 1.]).astype(complex)[None, None]
     kernel = HartreeFockKernel(mesh_for(np.ones((1, 1))), h, np.zeros((1, 1, 1, 1)), T=1.0)
     P = np.diag([1., 0.]).astype(complex)[None, None]
     result = solve(kernel, P, 1.0, config=SolverConfig(
-        method=method, mixing=1.0, level_shift=.8,
+        method="rdiis", mixing=1.0, level_shift=.8,
         density_tol=1e-9, comm_tol=1e-9, max_iter=20))
     assert result.converged, result.message
     expected = np.diag([1.0 / (1.0 + np.exp(-1.0)), 1.0 / (1.0 + np.exp(1.0))])
@@ -142,16 +139,15 @@ def test_safeguard_validation_and_nonfinite_input():
         solve(kernel, P, 1.5, config=old)
 
 
-@pytest.mark.parametrize("method", ["rdiis", "anderson"])
 @pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
-def test_complex_coupled_problem_damping_trust_and_precision(method, dtype):
+def test_complex_coupled_problem_damping_trust_and_precision(dtype):
     rng = np.random.default_rng(712)
     A = rng.normal(size=(2, 2, 4, 4)) + 1j * rng.normal(size=(2, 2, 4, 4))
     h = (.5 * (A + A.conj().swapaxes(-1, -2))).astype(dtype)
     kernel = HartreeFockKernel(mesh_for(np.full((2, 2), .25)), h, np.full((2, 2, 1, 1), .4), hartree=2.0 * np.eye(4), T=.4, exchange=True, reference=np.zeros_like(h))
     tol = 3e-6 if dtype == np.complex64 else 1e-8
     result = solve(kernel, np.zeros_like(h), 1.6, config=SolverConfig(
-        method=method, diis_size=8, mixing=.7, diis_damping=.8,
+        method="rdiis", diis_size=8, mixing=.7, diis_damping=.8,
         trust_radius=.2, max_iter=150, density_tol=tol, comm_tol=tol))
     assert result.converged, result.message
     F, E, dr, cr = independent_state(kernel, result.density, 1.6)
@@ -164,7 +160,7 @@ def test_complex_coupled_problem_damping_trust_and_precision(method, dtype):
     assert np.max(np.abs(result.density.imag)) > .01
 
 
-@pytest.mark.parametrize("method", ["linear", "oda", "rdiis"])
+@pytest.mark.parametrize("method", ["linear", "rdiis"])
 def test_legacy_scf_returns_the_density_whose_residual_was_certified(method):
     # This Fermi map amplifies density errors by 500.  A final undamped step
     # would move a certified state outside the requested tolerance.

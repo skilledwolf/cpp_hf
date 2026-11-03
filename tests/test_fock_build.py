@@ -49,25 +49,3 @@ def test_fock_is_energy_gradient(x64):
     directional = np.sum(np.real(np.einsum("...ij,...ji->...", kernel.weights_b * F, dP)))
 
     np.testing.assert_allclose((E_plus - E_minus) / (2 * eps), directional, rtol=1e-7)
-
-
-def test_oda_moves_a_start_with_the_wrong_particle_count_onto_it(x64):
-    """ODA must not keep an infeasible start whose free energy is lower."""
-    nk = 4
-    ks = (np.arange(nk) - nk // 2) * (2 * np.pi / nk)
-    KX, KY = np.meshgrid(ks, ks, indexing="ij")
-    h = np.zeros((nk, nk, 2, 2), complex)
-    h[..., 0, 0], h[..., 1, 1] = 0.3, -0.3
-    h[..., 0, 1], h[..., 1, 0] = KX - 1j * KY, KX + 1j * KY
-    kernel = HartreeFockKernel(mesh_for(np.full((nk, nk), 1.0 / nk**2)), h, np.full((nk, nk, 1, 1), 0.7), T=0.1)
-    n_e = 0.25
-    # The filled lower band (N = 1): its free energy is below every density with N = 1/4.
-    _, U = np.linalg.eigh(h)
-    P0 = U[..., :, :1] @ np.conj(U[..., :, :1]).swapaxes(-1, -2)
-    common = dict(max_iter=400, density_tol=1e-8, comm_tol=1e-7, mixing=0.5)
-    oda = hf.solve(kernel, P0, n_e, config=hf.SolverConfig(method="oda", **common))
-    diis = hf.solve(kernel, P0, n_e, config=hf.SolverConfig(method="rdiis", **common))
-    w = np.full((nk, nk), 1.0 / nk**2)
-    count = np.sum(w * np.real(np.trace(np.asarray(oda.density), axis1=-2, axis2=-1)))
-    np.testing.assert_allclose(count, n_e, atol=1e-8)
-    np.testing.assert_allclose(float(oda.energy), float(diis.energy), atol=1e-6)

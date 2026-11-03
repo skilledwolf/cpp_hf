@@ -1,4 +1,4 @@
-"""Occupations on the capped simplex: logits, active bounds, μ solve and the
+"""Occupations on the capped simplex: logits, active bounds and the
 particle-conserving projections shared by the CG and Newton solvers.
 
 Occupations that have saturated to 0 or 1 at the working precision are treated
@@ -13,10 +13,6 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 from jax import lax
-
-from .utils import (
-    _chemical_potential_bounds,
-)
 
 
 def _logit_clip_eps(dtype) -> jax.Array:
@@ -44,101 +40,6 @@ def _active_occupations(p: jax.Array) -> jax.Array:
     """
     eps = _logit_clip_eps(p.dtype)
     return jnp.logical_and(p > eps, p < 1.0 - eps)
-
-
-# ---------------------------------------------------------------------------
-# Chemical potential solver (Newton-bracket)
-# ---------------------------------------------------------------------------
-
-def _solve_mu(
-    eps: jax.Array,
-    w_norm: jax.Array,
-    n_target_norm: jax.Array,
-    mu0: jax.Array,
-    T: jax.Array,
-    maxiter: int = 25,
-) -> jax.Array:
-    """Find mu so sum_k w_k sum_i sigmoid((mu - eps)/T) = n_target_norm.
-
-    Safeguarded Newton iteration on a shrinking bracket.  ``maxiter`` is an
-    upper bound: the loop stops as soon as the particle count matches to a few
-    ULPs of the occupied or empty fraction, or stops moving ``mu`` at the working
-    precision, which from a warm start takes a handful of steps rather than
-    the full budget.
-    """
-    real_dtype = eps.dtype
-    Tj = jnp.maximum(jnp.asarray(T, dtype=real_dtype), jnp.asarray(1e-12, dtype=real_dtype))
-
-    w_b = w_norm[..., None]
-    capacity = jnp.sum(w_norm) * jnp.asarray(eps.shape[-1], dtype=real_dtype)
-    lo, hi = _chemical_potential_bounds(eps, capacity, n_target_norm, Tj)
-    mu = jnp.clip(jnp.asarray(mu0, dtype=real_dtype), lo, hi)
-    eps_m = jnp.asarray(jnp.finfo(real_dtype).eps, dtype=real_dtype)
-    # Resolve the count to the precision of the *occupied* (or empty) fraction,
-    # not of the total capacity: at low filling the callers' occupations carry
-    # the target count, and a capacity-scaled tolerance would leave a relative
-    # particle error of order capacity/n_target.
-    occ_scale = jnp.minimum(n_target_norm, capacity - n_target_norm)
-    count_tol = 4.0 * eps_m * occ_scale
-
-    def cond(state):
-        i, _mu, _lo, _hi, g_prev, step_prev = state
-        return jnp.logical_and(
-            i < maxiter,
-            jnp.logical_and(jnp.abs(g_prev) > count_tol, step_prev > 0.0),
-        )
-
-    def body(state):
-        i, mu, lo, hi, _g_prev, _step_prev = state
-        x = (mu - eps) / Tj
-        p = jax.nn.sigmoid(x)
-        N = jnp.sum(w_b * p)
-        Z = jnp.sum(w_b * p * (1.0 - p) / Tj)
-        g = N - n_target_norm
-
-        lo = jnp.where(g < 0, mu, lo)
-        hi = jnp.where(g > 0, mu, hi)
-
-        mu_bis = 0.5 * (lo + hi)
-        Z_safe = jnp.where(Z > 0.0, Z, jnp.ones_like(Z))
-        mu_new = jnp.where(Z > 0.0, mu - g / Z_safe, mu_bis)
-        # A Newton update that rounds back onto ``mu`` (which has just become
-        # a bracket end) is a converged iterate, not an out-of-bracket step;
-        # bisecting from it would throw the solution away.
-        stalled = mu_new == mu
-        out_of = jnp.logical_and(
-            jnp.logical_or(mu_new <= lo, mu_new >= hi),
-            jnp.logical_not(stalled),
-        )
-        mu_new = jnp.where(out_of, mu_bis, mu_new)
-        mu_new = jnp.clip(mu_new, lo, hi)
-        mu_new = jnp.where(jnp.isfinite(mu_new), mu_new, mu_bis)
-        # Keep an iterate whose count already matches in place.
-        mu_new = jnp.where(jnp.abs(g) <= count_tol, mu, mu_new)
-        return (i + 1, mu_new, lo, hi, g, jnp.abs(mu_new - mu))
-
-    inf = jnp.asarray(jnp.inf, dtype=real_dtype)
-    _, mu_fin, lo_fin, hi_fin, _, _ = lax.while_loop(
-        cond, body, (jnp.int32(0), mu, lo, hi, inf, inf),
-    )
-    mu_bis = 0.5 * (lo_fin + hi_fin)
-
-    def count(mu_value):
-        return jnp.sum(w_b * jax.nn.sigmoid((mu_value - eps) / Tj))
-
-    mu_fin = jnp.where(
-        jnp.abs(count(mu_bis) - n_target_norm)
-        < jnp.abs(count(mu_fin) - n_target_norm),
-        mu_bis,
-        mu_fin,
-    )
-    neg_inf = jnp.asarray(-jnp.inf, dtype=real_dtype)
-    pos_inf = jnp.asarray(jnp.inf, dtype=real_dtype)
-    return jnp.where(
-        n_target_norm <= 0.0,
-        neg_inf,
-        jnp.where(n_target_norm >= capacity, pos_inf, mu_fin),
-    )
 
 
 def _project_occ(dp: jax.Array, w2d: jax.Array) -> jax.Array:

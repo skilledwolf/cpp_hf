@@ -443,8 +443,7 @@ def solve_minimum(
     for cycle in range(max_escapes + 1):
         result = _jax.solve(kernel, initial, n_electrons, config=cfg)
         iterations += result.n_iter
-        # The new RDIIS/Anderson paths count every build. For legacy methods
-        # without counters, -1 propagates "unavailable" rather than fabricating
+        # RDIIS counts every build. For methods without counters, -1 propagates "unavailable" rather than fabricating
         # a total from iteration counts.
         local_builds = result.history.get("fock_builds", -1)
         if builds >= 0:

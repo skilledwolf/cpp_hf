@@ -17,7 +17,6 @@ from .occupations import (
     _project_capped_occupations,
     _project_occ_curvature,
     _project_occ_masked,
-    _solve_mu,
 )
 from .riemannian import (
     _cayley_spectral_setup,
@@ -31,6 +30,7 @@ from .riemannian import (
     _project_density_eigensystem,
     _skew_hermitian,
 )
+from .utils import chemical_potential
 
 
 def _joint_predicted_reduction(
@@ -260,10 +260,7 @@ def _solve_newton_impl(
         G = _skew_hermitian(diff_p * Ft) * offdiag
         eps, V_fd = eigh(Ft, sectors)
         eps = eps.astype(real_dtype)
-        mu_fd = _solve_mu(
-            eps, w_norm, n_target_norm, jnp.asarray(0.0, dtype=real_dtype),
-            T_r, maxiter=mu_maxiter,
-        )
+        mu_fd = chemical_potential(eps, w_norm, n_target_norm, T_r, mu0=jnp.asarray(0.0, dtype=real_dtype), maxiter=mu_maxiter)
         p_fd = jax.nn.sigmoid((mu_fd - eps) / T_r).astype(real_dtype)
         Q_fd = bmm(Q, V_fd.astype(target_dtype))
         P_fd = _herm(_project(_density_from_Qp(Q_fd, p_fd)))
@@ -280,8 +277,7 @@ def _solve_newton_impl(
     eps0, Q0 = eigh(F0, sectors)
     eps0 = eps0.astype(real_dtype)
     Q0 = Q0.astype(target_dtype)
-    mu0 = _solve_mu(eps0, w_norm, n_target_norm,
-                    jnp.asarray(0.0, dtype=real_dtype), T_r, maxiter=mu_maxiter)
+    mu0 = chemical_potential(eps0, w_norm, n_target_norm, T_r, mu0=jnp.asarray(0.0, dtype=real_dtype), maxiter=mu_maxiter)
     p0 = jax.nn.sigmoid((mu0 - eps0) / T_r).astype(real_dtype)
     E0, Omega0, Ft0, grad0, pen0, Q0, p0 = _eval_state(Q0, p0)
 
@@ -429,7 +425,7 @@ def _solve_newton_impl(
         eps_t = jnp.real(
             jnp.diagonal(Ft_trial, axis1=-2, axis2=-1)
         ).astype(real_dtype)
-        mu_t = _solve_mu(eps_t, w_norm, n_target_norm, mu, T_r, maxiter=mu_maxiter)
+        mu_t = chemical_potential(eps_t, w_norm, n_target_norm, T_r, mu0=mu, maxiter=mu_maxiter)
 
         # Energy-noise floor below which the predicted reduction is meaningless
         # and the step is judged on the gradient instead.  Scaled to the working
@@ -467,10 +463,7 @@ def _solve_newton_impl(
         # by a consistent eigendecomposition (Q,p), and is accepted only on
         # true free-energy descent.
         eps_fd, V_fd = eigh(Ft, sectors)
-        mu_fd = _solve_mu(
-            eps_fd.astype(real_dtype), w_norm, n_target_norm, mu, T_r,
-            maxiter=mu_maxiter,
-        )
+        mu_fd = chemical_potential(eps_fd.astype(real_dtype), w_norm, n_target_norm, T_r, mu0=mu, maxiter=mu_maxiter)
         p_fd = jax.nn.sigmoid((mu_fd - eps_fd) / T_r).astype(real_dtype)
         Q_fd = bmm(Q, V_fd.astype(target_dtype))
         P_cur = _herm(_project(_density_from_Qp(Q, p)))
@@ -492,9 +485,7 @@ def _solve_newton_impl(
             eps_mix = jnp.real(
                 jnp.diagonal(Ft_mix, axis1=-2, axis2=-1)
             ).astype(real_dtype)
-            mu_mix = _solve_mu(
-                eps_mix, w_norm, n_target_norm, mu, T_r, maxiter=mu_maxiter,
-            )
+            mu_mix = chemical_potential(eps_mix, w_norm, n_target_norm, T_r, mu0=mu, maxiter=mu_maxiter)
             delta_O = O_mix - Omega
             accepted_fb = jnp.logical_or(
                 delta_O < 0.0,
@@ -565,10 +556,7 @@ def _solve_newton_impl(
     )
     F_fin = _herm(_project(F_fin))
     eps_check, Q_check = eigh(F_fin, sectors)
-    mu_check = _solve_mu(
-        eps_check.astype(real_dtype), w_norm, n_target_norm, mu_fin, T_r,
-        maxiter=mu_maxiter,
-    )
+    mu_check = chemical_potential(eps_check.astype(real_dtype), w_norm, n_target_norm, T_r, mu0=mu_fin, maxiter=mu_maxiter)
     p_check = jax.nn.sigmoid((mu_check - eps_check) / T_r).astype(real_dtype)
     P_check = _herm(_project(_density_from_Qp(Q_check.astype(target_dtype), p_check)))
     final_res = _norm_matrix(P_fin - P_check, w_norm)
@@ -576,9 +564,7 @@ def _solve_newton_impl(
     eps_return = jnp.real(
         jnp.diagonal(Ft_return, axis1=-2, axis2=-1)
     ).astype(real_dtype)
-    mu_fin = _solve_mu(
-        eps_return, w_norm, n_target_norm, mu_fin, T_r, maxiter=mu_maxiter,
-    )
+    mu_fin = chemical_potential(eps_return, w_norm, n_target_norm, T_r, mu0=mu_fin, maxiter=mu_maxiter)
 
     converged = jnp.logical_and(
         grad_fin <= tol_g,

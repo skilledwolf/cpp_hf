@@ -20,11 +20,10 @@ $0 \le P \le 1$ and fixed $n$ {cite}`Mermin1965`. A stationary point
 satisfies $P = f\big((F[P] - \mu)/T\big)$, with $F = \delta E_{HF}/\delta P$
 the Fock matrix. Two families find it:
 
-- **Roothaan iteration** (`method="rdiis"`, the default, `"anderson"`,
-  `"oda"`, `"linear"`): diagonalize $F[P]$, refill at fixed
-  $n$, repeat. Plain iteration can oscillate; extrapolation over past
-  iterates (DIIS {cite}`Pulay1980`) or a line search on $\Omega$ (optimal
-  damping {cite}`Cances2000`) makes it converge.
+- **Roothaan iteration** (`method="rdiis"`, the default, or `"linear"`):
+  diagonalize $F[P]$, refill at fixed $n$, repeat. Plain iteration can
+  oscillate; extrapolation over past iterates (DIIS {cite}`Pulay1980`)
+  makes it converge.
 - **Direct minimization** (`method="cg"`, `"newton"`): descend $\Omega$ on the manifold of
   densities, with conjugate gradients or a Newton trust region on the exact
   Hessian.
@@ -78,7 +77,7 @@ convergence flag and the per-iteration `history`.
 
 ```{code-cell} ipython3
 rows, residuals = [], {}
-for acceleration in ("rdiis", "anderson", "oda", "linear"):
+for acceleration in ("rdiis", "linear"):
     t = time.perf_counter()
     r = hf.solve(kernel, P0, n, config=hf.SolverConfig(method=acceleration))
     rows.append((acceleration, r.converged, r.n_iter, r.energy, time.perf_counter() - t))
@@ -100,9 +99,6 @@ ax.legend();
 
 - `"rdiis"`, the default: Pulay extrapolation of the Fock matrix fitted to
   the full residual $f(F[P]) - P$, with a free-energy safeguard.
-- `"anderson"`: the same extrapolation on the density.
-- `"oda"`: optimal damping, an exact line search at $T = 0$ and free-energy
-  backtracking at $T > 0$.
 - `"linear"`: plain mixing with `mixing`.
 
 The residual is the full one because the commutator $[F, P]$ vanishes
@@ -130,7 +126,7 @@ for optimizer in ("cg", "newton"):
 ```
 
 Every method reaches the same polarized state. Newton takes three
-iterations, RDIIS, ODA, CG and Anderson five to seven, and linear mixing 22.
+iterations, RDIIS and CG five to seven, and linear mixing 22.
 Linear mixing blends the new density with the old one by `mixing` (0.5 by
 default). On this problem one Roothaan step is already almost exact, so
 the blend only halves the error per iteration.

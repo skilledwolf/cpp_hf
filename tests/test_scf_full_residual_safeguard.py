@@ -13,10 +13,9 @@ def charge_kernel(strength=30.):
     return K,np.broadcast_to(np.diag([.8,.4,.3]),h.shape).astype(complex).copy()
 
 
-@pytest.mark.parametrize('method',['anderson','rdiis'])
-def test_strong_diagonal_hartree_converges_monotonically(method):
+def test_strong_diagonal_hartree_converges_monotonically():
     K,P=charge_kernel()
-    r=solve(K,P,1.5,config=SolverConfig(method=method,
+    r=solve(K,P,1.5,config=SolverConfig(method="rdiis",
         max_iter=100,density_tol=1e-8,comm_tol=1e-8,mixing=1.))
     assert r.converged
     D,_=density_matrix_from_fock(r.fock,K.w2d,1.5,K.T)
@@ -27,11 +26,10 @@ def test_strong_diagonal_hartree_converges_monotonically(method):
     assert r.history['fock_builds'] <= 2*r.n_iter+2
 
 
-@pytest.mark.parametrize('method',['anderson','rdiis'])
-def test_returned_state_is_feasible_even_after_one_iteration(method):
+def test_returned_state_is_feasible_even_after_one_iteration():
     K,P=charge_kernel()
     P[...,0,0]=1.8;P[...,2,2]=-.8
-    r=solve(K,P,1.5,config=SolverConfig(method=method,max_iter=1))
+    r=solve(K,P,1.5,config=SolverConfig(method="rdiis",max_iter=1))
     p=np.linalg.eigvalsh(r.density)
     assert p.min()>=-1e-14 and p.max()<=1+1e-14
     np.testing.assert_allclose(np.sum(K.w2d[...,None]*p),1.5,atol=1e-12)

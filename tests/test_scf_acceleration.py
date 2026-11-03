@@ -1,11 +1,7 @@
-"""Tests for SCF acceleration schemes (linear / DIIS / ODA) and trust_radius.
+"""Tests for the SCF acceleration schemes (linear mixing, RDIIS) and trust_radius.
 
-DIIS (Pulay commutator extrapolation) and ODA (optimal damping) mirror
-cpp_hf's solver_scf.hpp.  DIIS converges in far fewer iterations than linear
-mixing; ODA is a robust energy-monotone line search (it reaches the same
-energy, but as an energy method it does not drive the commutator as hard, so
-its convergence is asserted on the energy).  These run in the suite's default
-float32.
+RDIIS converges in far fewer iterations than linear mixing.  These run in the
+suite's default float32.
 """
 
 import jax.numpy as jnp
@@ -41,7 +37,7 @@ class TestAccelerationAgreement:
         K = _dirac()
         P0 = jnp.zeros_like(K.h)
         energies = {}
-        for acc in ("linear", "oda", "rdiis"):
+        for acc in ("linear", "rdiis"):
             r = solve(K, P0, _NE, config=SolverConfig(
                 max_iter=800, density_tol=1e-6, comm_tol=1e-5,
                 mixing=0.5, method=acc))
@@ -81,38 +77,6 @@ class TestRDIIS:
             max_iter=800, density_tol=1e-6, comm_tol=1e-5,
             method="rdiis", diis_damping=0.7))
         assert r.converged
-
-
-class TestODA:
-    def test_energy_matches_and_is_monotone(self):
-        K = _dirac()
-        P0 = jnp.zeros_like(K.h)
-        cfg = dict(max_iter=800, density_tol=1e-6, comm_tol=1e-5, mixing=0.5)
-        lin = solve(K, P0, _NE, config=SolverConfig(method="linear", **cfg))
-        oda = solve(K, P0, _NE, config=SolverConfig(method="oda", **cfg))
-        # ODA reaches the same energy (its guarantee is energy descent)...
-        np.testing.assert_allclose(float(oda.energy), float(lin.energy), atol=1e-3, rtol=1e-5)
-        # ...and the energy history is non-increasing (robust line search).
-        hO = np.asarray(oda.history["free_energy"])
-        assert hO.size > 1
-        assert np.all(np.diff(hO) <= 1e-4), "ODA free energy not monotonically decreasing"
-
-    def test_finite_temperature_oda_optimizes_free_energy(self):
-        h = jnp.array([[[[-1.0, 0.0], [0.0, 1.0]]]], dtype=jnp.complex64)
-        K = HartreeFockKernel(mesh_for(jnp.ones((1, 1), dtype=jnp.float32)), h, jnp.zeros((1, 1, 1, 1), dtype=jnp.complex64), T=1.0)
-        P0 = jnp.array([[[[1.0, 0.0], [0.0, 0.0]]]], dtype=jnp.complex64)
-        result = solve(
-            K, P0, 1.0,
-            config=SolverConfig(
-                method="oda", max_iter=20,
-                density_tol=1e-6, comm_tol=1e-6,
-            ),
-        )
-        assert result.converged
-        expected = np.diag([0.731059, 0.268941])
-        np.testing.assert_allclose(
-            np.asarray(result.density[0, 0]), expected, atol=2e-5,
-        )
 
 
 class TestSolverConfigValidation:
@@ -169,14 +133,14 @@ def test_density_from_fock_only_resolves_mu_for_nonzero_shift(
     from hartreefock._jax import scf
 
     calls = []
-    original = scf.find_chemical_potential
+    original = scf.chemical_potential
 
     def counted_solve(*args, **kwargs):
         # Count actual executions inside JIT branches, not tracing calls.
         jax.debug.callback(lambda: calls.append(1), ordered=True)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(scf, "find_chemical_potential", counted_solve)
+    monkeypatch.setattr(scf, "chemical_potential", counted_solve)
     fock = jnp.diag(jnp.array([-.3, .4]))[None, None].astype(jnp.complex64)
     evaluate = jax.jit(lambda shift: scf._density_from_fock(
         fock, weights=jnp.ones((1, 1)), n_electrons=1.0,

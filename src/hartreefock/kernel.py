@@ -20,17 +20,8 @@ import numpy as np
 import scipy.fft
 from scipy.special import expit
 
+from ._jax.utils import chemical_potential, validate_temperature
 from .mesh import Mesh
-
-
-def validate_temperature(T, *, context: str = "T") -> float:
-    """Return ``T`` as a float, rejecting non-finite or negative values."""
-    T = float(np.asarray(T))
-    if not np.isfinite(T):
-        raise ValueError(f"{context} must be finite, got {T!r}.")
-    if T < 0.0:
-        raise ValueError(f"{context} must be non-negative, got {T!r}.")
-    return T
 
 
 def _shift_phase(n0: int, n1: int) -> np.ndarray:
@@ -44,21 +35,7 @@ def _shift_phase(n0: int, n1: int) -> np.ndarray:
 def fermi_density(fock, weights, number, temperature):
     """Host diagonalization and a fixed-particle Fermi solve in double precision."""
     eps, orbitals = np.linalg.eigh(fock)
-    capacity = float(weights.sum()) * fock.shape[-1]
-    if number == 0 or number == capacity:
-        mu = -np.inf if number == 0 else np.inf
-    else:
-        shift = temperature * (np.log(number) - np.log(capacity - number))
-        lo = np.nextafter(float(eps.min()) + shift, -np.inf)
-        hi = np.nextafter(float(eps.max()) + shift, np.inf)
-        for _ in range(100):
-            mid = 0.5 * (lo + hi)
-            count = np.sum(weights[..., None] * expit((mid - eps) / temperature))
-            if count < number:
-                lo = mid
-            else:
-                hi = mid
-        mu = 0.5 * (lo + hi)
+    mu = float(chemical_potential(eps, weights, number, temperature))
     p = expit((mu - eps) / temperature)
     density = (orbitals * p[..., None, :]) @ orbitals.conj().swapaxes(-2, -1)
     return density, eps, orbitals, p

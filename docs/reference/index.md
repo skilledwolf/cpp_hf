@@ -15,7 +15,7 @@ everything public.
 
 | Name | What it does | Returns |
 | --- | --- | --- |
-| {func}`~hartreefock.solve` | Roothaan iteration (RDIIS, Anderson, ODA, linear mixing) or direct minimization (CG, Newton), chosen by `SolverConfig(method=)` | {class}`~hartreefock.SolveResult` |
+| {func}`~hartreefock.solve` | Roothaan iteration (RDIIS, linear mixing) or direct minimization (CG, Newton), chosen by `SolverConfig(method=)` | {class}`~hartreefock.SolveResult` |
 | {func}`~hartreefock.solve_deflated` | Several distinct solutions | {class}`~hartreefock.DeflatedResult` |
 
 ## Check a solution

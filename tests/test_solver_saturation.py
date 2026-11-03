@@ -28,7 +28,7 @@ from _meshes import mesh_for
 
 import hartreefock._jax.occupations as O
 import hartreefock._jax.riemannian as R
-from hartreefock import HartreeFockKernel, SolverConfig, solve
+from hartreefock import HartreeFockKernel, SolverConfig, chemical_potential, solve
 from hartreefock._jax.fock import build_fock, free_energy, hf_energy
 
 
@@ -66,7 +66,7 @@ def _initial_state(kernel, n_electrons):
     eps0, Q = jnp.linalg.eigh(F0)
     w_norm = kernel.w2d / kernel.weight_sum
     ntn = n_electrons / float(kernel.weight_sum)
-    mu = O._solve_mu(eps0, w_norm, ntn, 0.0, kernel.T, maxiter=50)
+    mu = chemical_potential(eps0, w_norm, ntn, kernel.T, mu0=0.0, maxiter=50)
     p = jax.nn.sigmoid((mu - eps0) / kernel.T)
     return Q, p, mu, w_norm, ntn
 
@@ -173,7 +173,7 @@ class TestFrozenFockOccupationStep:
         P = R._herm(R._density_from_Qp(Q, p))
         _, _, F = _fock(kernel, P)
         eps = jnp.real(jnp.diagonal(R._fock_in_orbital_basis(Q, F), axis1=-2, axis2=-1))
-        mu = O._solve_mu(eps, w_norm, ntn, 0.0, kernel.T, maxiter=50)
+        mu = chemical_potential(eps, w_norm, ntn, kernel.T, mu0=0.0, maxiter=50)
         return eps, mu, jax.nn.sigmoid((mu - eps) / kernel.T)
 
     def test_direction_descends_and_conserves_particles(self):
@@ -387,17 +387,17 @@ class TestSolveMuEarlyStop:
         rng = np.random.default_rng(7)
         eps = jnp.asarray(rng.uniform(-20.0, 20.0, size=(6, 6, 4)))
         w_norm = jnp.ones((6, 6)) / 36.0
-        mu = O._solve_mu(eps, w_norm, target, 0.0, T, maxiter=50)
+        mu = chemical_potential(eps, w_norm, target, T, mu0=0.0, maxiter=50)
         count = float(jnp.sum(w_norm[..., None] * jax.nn.sigmoid((mu - eps) / T)))
         assert abs(count - target) < 1e-10
         # Warm start from a perturbed guess reaches the same mu.
-        mu_warm = O._solve_mu(eps, w_norm, target, mu + 3.0 * T, T, maxiter=50)
+        mu_warm = chemical_potential(eps, w_norm, target, T, mu0=mu + 3.0 * T, maxiter=50)
         np.testing.assert_allclose(float(mu_warm), float(mu), atol=1e-9 * max(1.0, abs(float(mu))))
 
     def test_float32_low_filling_conserves_particles(self):
         """Particle count at low filling, in float32, where the tolerance bit.
 
-        The CG path takes its occupations straight from ``_solve_mu`` (the
+        The CG path takes its occupations straight from ``chemical_potential`` (the
         capped-simplex projection that used to re-impose the count is gone), so
         the solve is only as particle-conserving as the chemical potential.  A
         count tolerance scaled to the *capacity* rather than to the target left
@@ -460,9 +460,7 @@ class TestSolveMuEarlyStop:
             nk, nb, T, mu0 = 8, 6, 0.1, 25.0
             eps, w_norm, capacity = self._float32_bands(nk=nk, nb=nb, seed=8)
             target = np.float32(0.0005 * capacity)
-            mu = O._solve_mu(
-                eps, w_norm, target, np.float32(mu0), np.float32(T), maxiter=60,
-            )
+            mu = chemical_potential(eps, w_norm, target, np.float32(T), mu0=np.float32(mu0), maxiter=60)
             count = float(jnp.sum(w_norm[..., None] * jax.nn.sigmoid((mu - eps) / T)))
             assert abs(count - float(target)) < 1e-6 * float(target)
         finally:
@@ -484,7 +482,7 @@ class TestSolveMuEarlyStop:
             T = 0.1
             eps, w_norm, capacity = self._float32_bands()
             target = np.float32(filling * capacity)
-            mu = O._solve_mu(eps, w_norm, target, np.float32(0.0), np.float32(T), maxiter=60)
+            mu = chemical_potential(eps, w_norm, target, np.float32(T), mu0=np.float32(0.0), maxiter=60)
             count = float(jnp.sum(w_norm[..., None] * jax.nn.sigmoid((mu - eps) / T)))
             assert abs(count - float(target)) < 8 * np.finfo(np.float32).eps * capacity
         finally:
@@ -493,8 +491,8 @@ class TestSolveMuEarlyStop:
     def test_endpoints_are_infinite(self):
         eps = jnp.asarray(np.linspace(-1.0, 1.0, 8).reshape(2, 2, 2))
         w_norm = jnp.ones((2, 2)) / 4.0
-        assert float(O._solve_mu(eps, w_norm, 0.0, 0.0, 0.1, maxiter=50)) == -np.inf
-        assert float(O._solve_mu(eps, w_norm, 2.0, 0.0, 0.1, maxiter=50)) == np.inf
+        assert float(chemical_potential(eps, w_norm, 0.0, 0.1, mu0=0.0, maxiter=50)) == -np.inf
+        assert float(chemical_potential(eps, w_norm, 2.0, 0.1, mu0=0.0, maxiter=50)) == np.inf
 
     def test_converged_warm_start_is_kept(self):
         """A warm start already at the solution must come back unchanged.
@@ -509,10 +507,10 @@ class TestSolveMuEarlyStop:
         eps = jnp.asarray(rng.uniform(-20.0, 20.0, size=(6, 6, 4)))
         w_norm = jnp.ones((6, 6)) / 36.0
         T, target = 0.01, 1.5
-        mu = float(O._solve_mu(eps, w_norm, target, 0.0, T, maxiter=50))
+        mu = float(chemical_potential(eps, w_norm, target, T, mu0=0.0, maxiter=50))
         tol = 4.0 * np.finfo(np.float64).eps * max(1.0, abs(mu))
         for maxiter in (1, 2, 3, 5, 8, 13, 25, 50):
-            mu_warm = float(O._solve_mu(eps, w_norm, target, mu, T, maxiter=maxiter))
+            mu_warm = float(chemical_potential(eps, w_norm, target, T, mu0=mu, maxiter=maxiter))
             assert abs(mu_warm - mu) <= tol, (maxiter, mu_warm, mu)
 
     def test_result_is_independent_of_the_iteration_budget(self):
@@ -521,7 +519,7 @@ class TestSolveMuEarlyStop:
         eps = jnp.asarray(rng.uniform(-20.0, 20.0, size=(6, 6, 4)))
         w_norm = jnp.ones((6, 6)) / 36.0
         T, target = 0.05, 1.5
-        mus = [float(O._solve_mu(eps, w_norm, target, 0.0, T, maxiter=m)) for m in (25, 50, 200)]
+        mus = [float(chemical_potential(eps, w_norm, target, T, mu0=0.0, maxiter=m)) for m in (25, 50, 200)]
         tol = 8.0 * np.finfo(np.float64).eps * max(1.0, abs(mus[0]))
         for m in mus[1:]:
             assert abs(m - mus[0]) <= tol, mus
@@ -534,7 +532,7 @@ def test_chemical_potential_resolves_low_temperature_despite_remote_bands(dtype,
     weights = jnp.ones((1, 1), dtype=dtype)
     target = jnp.asarray(0.1, dtype=dtype)
     temperature = jnp.asarray(1e-12, dtype=dtype)
-    mu = O._solve_mu(eps, weights, target, 0.0, temperature, maxiter=50)
+    mu = chemical_potential(eps, weights, target, temperature, mu0=0.0, maxiter=50)
     count = jnp.sum(jax.nn.sigmoid((mu - eps) / temperature))
     assert mu.dtype == dtype
     np.testing.assert_allclose(count, target, rtol=16 * np.finfo(dtype).eps, atol=0.0)
@@ -546,7 +544,7 @@ def test_chemical_potential_bracket_reaches_dilute_filling(dtype):
     weights = jnp.ones((1, 1), dtype=dtype)
     target = jnp.asarray(1e-25, dtype=dtype)
     temperature = jnp.asarray(0.1, dtype=dtype)
-    mu = O._solve_mu(eps, weights, target, 0.0, temperature, maxiter=50)
+    mu = chemical_potential(eps, weights, target, temperature, mu0=0.0, maxiter=50)
     count = jnp.sum(jax.nn.sigmoid((mu - eps) / temperature))
     assert mu.dtype == dtype
     np.testing.assert_allclose(count, target, rtol=64 * np.finfo(dtype).eps, atol=0.0)

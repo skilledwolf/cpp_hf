@@ -18,7 +18,7 @@ import jax.numpy as jnp
 from .fock import hf_energy, occupation_entropy
 from .linalg import adjoint, bmm, eigh, hermitian_eigvalsh
 from .scf import _herm, _weighted_matrix_norm
-from .utils import fermidirac, find_chemical_potential
+from .utils import chemical_potential, fermidirac
 
 
 class _State(NamedTuple):
@@ -74,15 +74,15 @@ def _capped_occupations(eigenvalues, weights, count):
 
 @partial(jax.jit, static_argnames=(
     "include_hartree", "include_exchange", "exchange_hermitian_channel_packing",
-    "max_iter", "acceleration", "diis_size", "project_fn", "fock_build_fn", "safeguard",
+    "max_iter", "diis_size", "project_fn", "fock_build_fn", "safeguard",
     "sectors",
 ))
 def _run_accelerated_scf(
     density0, *, h, weights_b, weight_sum, VR, T, refP, HH, w2d,
     n_electrons, include_hartree, include_exchange,
     exchange_hermitian_channel_packing, contact_g, contact_Oi, contact_Oj,
-    mixing, level_shift, density_tol, comm_tol, diis_start, diis_damping,
-    trust_radius, max_iter, acceleration, diis_size, project_fn, fock_build_fn,
+    level_shift, density_tol, comm_tol, diis_start, diis_damping,
+    trust_radius, max_iter, diis_size, project_fn, fock_build_fn,
     safeguard, sectors,
 ):
     dtype = h.real.dtype
@@ -111,12 +111,12 @@ def _run_accelerated_scf(
 
     def fermi_density(F, shift=0.0):
         bands, Q = eigh(_herm(F), sectors)
-        mu = find_chemical_potential(bands, w2d, n_electrons, T)
+        mu = chemical_potential(bands, w2d, n_electrons, T)
         p = fermidirac(bands - mu, T)
 
         def shifted(_):
             shifted_bands = bands + shift * (1.0 - p)
-            shifted_mu = find_chemical_potential(shifted_bands, w2d, n_electrons, T)
+            shifted_mu = chemical_potential(shifted_bands, w2d, n_electrons, T)
             return fermidirac(shifted_bands - shifted_mu, T), shifted_mu
 
         p, mu = jax.lax.cond(jnp.asarray(shift) != 0.0, shifted, lambda _: (p, mu), None)
@@ -201,16 +201,14 @@ def _run_accelerated_scf(
             idx = filled % diis_size
             R = current.D - current.P
             Rh = R_hist.at[idx].set(R)
-            update = current.F if acceleration == "rdiis" else current.P + mixing * R
-            Uh = U_hist.at[idx].set(update)
+            Uh = U_hist.at[idx].set(current.F)
             count = jnp.minimum(filled + 1, diis_size)
             coeffs = _residual_coefficients(Rh, jnp.arange(diis_size) < count, idx, w2d)
             fallback = jnp.zeros(diis_size, dtype=dtype).at[idx].set(1.0)
             coeffs = jnp.where(count >= jnp.maximum(2, diis_start), coeffs, fallback)
-            proposal = jnp.einsum("i,iklab->klab", coeffs.astype(h.dtype), Uh)
-            if acceleration == "rdiis":
-                F = diis_damping * proposal + (1.0 - diis_damping) * current.F
-                proposal, _ = fermi_density(F, level_shift)
+            F = jnp.einsum("i,iklab->klab", coeffs.astype(h.dtype), Uh)
+            F = diis_damping * F + (1.0 - diis_damping) * current.F
+            proposal, _ = fermi_density(F, level_shift)
             direction = proposal - current.P
             distance = _weighted_matrix_norm(direction, w2d, ws)
             scale = jnp.where((trust_radius > 0.0) & (distance > trust_radius),

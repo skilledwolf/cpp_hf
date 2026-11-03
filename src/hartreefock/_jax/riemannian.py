@@ -25,8 +25,8 @@ from .linalg import adjoint, bmm, eigh, hermitian_eigh
 from .occupations import (
     _occupation_gradient,
     _project_capped_occupations,
-    _solve_mu,
 )
+from .utils import chemical_potential
 
 # ---------------------------------------------------------------------------
 # Small linear algebra helpers
@@ -277,8 +277,7 @@ def _solve_impl(
     eps0, Q0 = eigh(F0, sectors)
     eps0 = eps0.astype(real_dtype)
     Q0 = Q0.astype(target_dtype)
-    mu0 = _solve_mu(eps0, w_norm, n_target_norm,
-                    jnp.asarray(0.0, dtype=real_dtype), T_r, maxiter=mu_maxiter)
+    mu0 = chemical_potential(eps0, w_norm, n_target_norm, T_r, mu0=jnp.asarray(0.0, dtype=real_dtype), maxiter=mu_maxiter)
     p0 = jax.nn.sigmoid((mu0 - eps0) / T_r).astype(real_dtype)
 
     # ---- History buffers ----
@@ -395,10 +394,7 @@ def _solve_impl(
         # occupations, where the logit gradient is numerically singular.  Both
         # orbital and occupation stationarity are required for convergence.
         eps_fd, Q_fd = eigh(F, sectors)
-        mu_fd = _solve_mu(
-            eps_fd.astype(real_dtype), w_norm, n_target_norm, mu, T_r,
-            maxiter=mu_maxiter,
-        )
+        mu_fd = chemical_potential(eps_fd.astype(real_dtype), w_norm, n_target_norm, T_r, mu0=mu, maxiter=mu_maxiter)
         p_fd = jax.nn.sigmoid((mu_fd - eps_fd) / T_r).astype(real_dtype)
         P_fd = _herm(_project(_density_from_Qp(Q_fd.astype(target_dtype), p_fd)))
         orbital_norm = _norm_matrix(G_Q, w_norm)
@@ -522,7 +518,7 @@ def _solve_impl(
             ).astype(real_dtype),
             operand=None,
         )
-        mu_new = _solve_mu(eps_new, w_norm, n_target_norm, mu, T_r, maxiter=mu_maxiter)
+        mu_new = chemical_potential(eps_new, w_norm, n_target_norm, T_r, mu0=mu, maxiter=mu_maxiter)
 
         # When near-equal occupations hide a large full FD residual, the local
         # (Q,p) direction can make negligible progress.  Compare it with a
@@ -577,9 +573,7 @@ def _solve_impl(
         eps_fb = jnp.real(
             jnp.diagonal(Ft_fb, axis1=-2, axis2=-1)
         ).astype(real_dtype)
-        mu_fb = _solve_mu(
-            eps_fb, w_norm, n_target_norm, mu, T_r, maxiter=mu_maxiter,
-        )
+        mu_fb = chemical_potential(eps_fb, w_norm, n_target_norm, T_r, mu0=mu, maxiter=mu_maxiter)
         mu_new = jnp.where(use_fb, mu_fb, mu_new)
 
         # ========== 7. Record history + energy change ==========
@@ -621,10 +615,7 @@ def _solve_impl(
 
     # Recheck the full self-consistency residual at the exact returned state.
     eps_check, Q_check = eigh(F_fin, sectors)
-    mu_check = _solve_mu(
-        eps_check.astype(real_dtype), w_norm, n_target_norm, mu_fin, T_r,
-        maxiter=mu_maxiter,
-    )
+    mu_check = chemical_potential(eps_check.astype(real_dtype), w_norm, n_target_norm, T_r, mu0=mu_fin, maxiter=mu_maxiter)
     p_check = jax.nn.sigmoid((mu_check - eps_check) / T_r).astype(real_dtype)
     P_check = _herm(_project(_density_from_Qp(Q_check.astype(target_dtype), p_check)))
     final_res = _norm_matrix(P_fin - P_check, w_norm)
@@ -642,10 +633,7 @@ def _solve_impl(
             sectors=sectors, project_fn=None,
         )
         eps_next, Q_next = eigh(F_polish, sectors)
-        mu_next = _solve_mu(
-            eps_next.astype(real_dtype), w_norm, n_target_norm, mu_check, T_r,
-            maxiter=mu_maxiter,
-        )
+        mu_next = chemical_potential(eps_next.astype(real_dtype), w_norm, n_target_norm, T_r, mu0=mu_check, maxiter=mu_maxiter)
         p_next = jax.nn.sigmoid((mu_next - eps_next) / T_r).astype(real_dtype)
         P_next = _herm(_density_from_Qp(Q_next.astype(target_dtype), p_next))
         polish_res = _norm_matrix(P_check - P_next, w_norm)
@@ -677,9 +665,7 @@ def _solve_impl(
     eps_return = jnp.real(
         jnp.diagonal(Ft_return, axis1=-2, axis2=-1)
     ).astype(real_dtype)
-    mu_fin = _solve_mu(
-        eps_return, w_norm, n_target_norm, mu_fin, T_r, maxiter=mu_maxiter,
-    )
+    mu_fin = chemical_potential(eps_return, w_norm, n_target_norm, T_r, mu0=mu_fin, maxiter=mu_maxiter)
 
     # Convergence flag.  Gradient-primary when tol_grad > 0: grad_fin is the
     # last measured gradient — the entry the loop stopped on, or the final

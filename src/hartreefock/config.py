@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from numbers import Integral
 from typing import Any, NamedTuple
 
-ROOTHAAN_METHODS = ("rdiis", "anderson", "oda", "linear")
+ROOTHAAN_METHODS = ("rdiis", "linear")
 METHODS = (*ROOTHAAN_METHODS, "cg", "newton")
 
 
@@ -31,8 +31,7 @@ class SolverConfig:
 
     ``method`` picks one of two families; each reads only its own options.
 
-    * Roothaan iteration (``"rdiis"``, ``"anderson"``, ``"oda"``,
-      ``"linear"``): diagonalize the Fock matrix, refill, repeat; stops when
+    * Roothaan iteration (``"rdiis"``, ``"linear"``): diagonalize the Fock matrix, refill, repeat; stops when
       the density change is below ``density_tol`` and the commutator
       ``[F, P]`` below ``comm_tol``.
     * Direct minimization of the free energy (``"cg"``, ``"newton"``): with
@@ -44,12 +43,10 @@ class SolverConfig:
 
     Attributes
     ----------
-    method : {"rdiis", "anderson", "oda", "linear", "cg", "newton"}
-        ``"rdiis"`` (the default, Pulay extrapolation of the Fock) and
-        ``"anderson"`` (of the density) fit the full residual ``f(F[P]) - P``
-        and guard the free energy; ``"oda"``, optimal damping (exact line
-        search at T = 0, free-energy backtracking at T > 0); ``"linear"``
-        mixing. ``"cg"``: Riemannian conjugate gradients. ``"newton"``: a
+    method : {"rdiis", "linear", "cg", "newton"}
+        ``"rdiis"`` (the default) is Pulay extrapolation of the Fock that
+        fits the full residual ``f(F[P]) - P`` and guards the free energy;
+        ``"linear"`` mixing. ``"cg"``: Riemannian conjugate gradients. ``"newton"``: a
         Steihaug truncated-CG trust region on the exact (Q, p) Hessian; needs
         float64.
     max_iter : int
@@ -57,18 +54,17 @@ class SolverConfig:
     density_tol, comm_tol : float
         Roothaan stopping tolerances, in the weighted Frobenius norm.
     mixing : float
-        Fraction of the new density taken per step with ``"linear"``, and
-        Anderson's base update.
+        Fraction of the new density taken per step with ``"linear"``.
     level_shift : float
         Shift of the virtual levels, which damps charge sloshing.
     diis_size, diis_start, diis_damping : int, int, float
-        RDIIS/Anderson history length, the iteration they start at, and the
+        RDIIS history length, the iteration they start at, and the
         blend of the extrapolated and current Fock matrices.
     trust_radius : float
         Largest Roothaan density step in the weighted Frobenius norm; 0 turns
         it off.
     safeguard : bool
-        Let RDIIS and Anderson accept a free-energy rise within floating-point
+        Let RDIIS accept a free-energy rise within floating-point
         noise of the objective.
     tol_E, tol_grad, plateau_window : float, float, int
         The direct-minimization stopping rule above.
@@ -76,7 +72,7 @@ class SolverConfig:
         CG step control: occupation-denominator regularization, the largest
         step, the restart period, and the backtracking factor and count.
     mu_maxiter : int
-        Iterations of the chemical-potential bisection (direct minimization).
+        Iteration cap of the chemical-potential solve (direct minimization).
     tr_delta0, tr_cg_max : float, int
         Newton's initial trust radius and inner CG iterations.
     deflation_targets, deflation_sigma, deflation_length : array, float, float
