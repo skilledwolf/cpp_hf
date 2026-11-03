@@ -7,6 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org).
 ## [3.0.0] — unreleased
 
 ### Breaking changes
+- `Mesh.pair_index(dq=(0, 0))`, the index map `k -> Q - k`, replaces
+  `Mesh.minus_k_index()` (its `dq = 0` case). `Mesh.extended_transfer_grid`
+  holds every difference of two mesh points, `(2 nk - 1, 2 nk - 1, 2)`.
 - One config class per method: `hf.RDIIS`, `hf.Linear`, `hf.CG` and
   `hf.Newton` replace the 28-field `SolverConfig(method=...)`. Each takes
   only the options its method reads, so `RDIIS(mixing=0.3)` or

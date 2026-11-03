@@ -24,7 +24,7 @@ def test_gamma_rule_is_the_same_for_both_constructors(make, nk):
     np.testing.assert_allclose(gam.ks[nk // 2, nk // 2], 0.0, atol=1e-14)
     # gamma=False samples Γ exactly when nk is odd, and is closed under k -> -k.
     assert (sym.gamma_index is not None) == (nk % 2 == 1)
-    IX, IY, valid = sym.minus_k_index()
+    IX, IY, valid = sym.pair_index()
     assert np.all(valid)
     np.testing.assert_allclose(sym.ks[IX, IY], -sym.ks, atol=1e-12)
 
@@ -50,6 +50,20 @@ def test_transfer_grid_holds_every_difference_with_q0_at_the_centre(nk, gamma):
         d = (i - j + c, i - j + c)
         if 0 <= d[0] < nk:
             np.testing.assert_allclose(ks[i, i] - ks[j, j], q[d], atol=1e-12)
+
+
+@pytest.mark.parametrize("nk", [4, 5])
+def test_pair_index_maps_k_to_Q_minus_k_and_differences_land_on_the_extended_grid(nk):
+    patch = Mesh.square(1.0, nk)
+    IX, IY, valid = patch.pair_index((1, -1))
+    Q = patch.step @ np.array([1.0, -1.0])
+    np.testing.assert_allclose(patch.ks[IX, IY][valid], (Q - patch.ks)[valid], atol=1e-12)
+    assert not np.all(valid)
+    bz_mesh = Mesh.bz(_B_TRI, nk)
+    assert np.all(bz_mesh.pair_index((1, -1))[2])
+    q, ks = patch.extended_transfer_grid, patch.ks
+    np.testing.assert_allclose(q[nk - 1, nk - 1], 0.0, atol=1e-14)
+    np.testing.assert_allclose(ks[0, nk - 1] - ks[nk - 1, 0], q[0, 2 * nk - 2], atol=1e-12)
 
 
 def test_periodic_shift_wraps_and_patch_shift_marks_the_edge():

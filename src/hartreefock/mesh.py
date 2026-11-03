@@ -18,7 +18,7 @@ Because every momentum is ``cell @ (index + offset) / nk``, differences
 ``k - k'`` are integer multiples of the steps: the transfer grid
 (:attr:`Mesh.transfer_grid`) holds them with ``q = 0`` at index
 ``(nk // 2, nk // 2)`` for every ``nk`` and ``offset``, and ``-k`` / ``k + q``
-lookups are integer operations (:meth:`Mesh.minus_k_index`,
+lookups are integer operations (:meth:`Mesh.pair_index`,
 :meth:`Mesh.shift_index`).
 """
 
@@ -275,27 +275,39 @@ class Mesh:
         q = self.transfer_grid
         return np.hypot(q[..., 0], q[..., 1])
 
-    def minus_k_index(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Index map ``k -> -k``: ``(ix, iy, valid)``, each ``(nk, nk)``.
+    @property
+    def extended_transfer_grid(self) -> np.ndarray:
+        """Every difference ``k - k'`` of two mesh points, shape ``(2 nk - 1, 2 nk - 1, 2)``.
 
-        ``-k`` of point ``(i, j)`` is index ``2 c - 2 offset - (i, j)`` with
-        ``c = nk // 2``; periodic meshes wrap it modulo ``nk``, patches mark
-        points whose partner falls off the grid as invalid.
+        Index ``(i, j)`` holds ``step @ ((i, j) - (nk - 1))``, so ``q = 0`` is
+        at ``(nk - 1, nk - 1)`` and ``k_a - k_b`` at ``a - b + nk - 1``.
+        """
+        n = np.arange(2 * self.nk - 1, dtype=float) - (self.nk - 1)
+        idx = np.stack(np.meshgrid(n, n, indexing="ij"), axis=-1)
+        return np.einsum("ij,...j->...i", self.step, idx)
+
+    def pair_index(self, dq=(0, 0)) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Index map ``k -> Q - k`` with ``Q = step @ dq``: ``(ix, iy, valid)``, each ``(nk, nk)``.
+
+        The partner of point ``(i, j)`` is index ``dq + 2 c - 2 offset - (i, j)``
+        with ``c = nk // 2``; ``dq = (0, 0)`` is ``k -> -k``.  Periodic meshes
+        wrap it modulo ``nk``; patches mark points whose partner falls off
+        the grid as invalid (and clip their index).
         """
         m = 2 * self.center_index - int(round(2 * self.offset))
-        partner = m - np.arange(self.nk)
+        p0, p1 = (int(d) + m - np.arange(self.nk) for d in dq)
         if self.periodic:
-            valid1 = np.ones(self.nk, dtype=bool)
-            partner = np.mod(partner, self.nk)
+            v0 = v1 = np.ones(self.nk, dtype=bool)
+            p0, p1 = np.mod(p0, self.nk), np.mod(p1, self.nk)
         else:
-            valid1 = (partner >= 0) & (partner < self.nk)
-            partner = np.clip(partner, 0, self.nk - 1)
-        IX, IY = np.meshgrid(partner, partner, indexing="ij")
-        return IX, IY, valid1[:, None] & valid1[None, :]
+            v0, v1 = (p0 >= 0) & (p0 < self.nk), (p1 >= 0) & (p1 < self.nk)
+            p0, p1 = np.clip(p0, 0, self.nk - 1), np.clip(p1, 0, self.nk - 1)
+        IX, IY = np.meshgrid(p0, p1, indexing="ij")
+        return IX, IY, v0[:, None] & v1[None, :]
 
     def minus_k(self, values) -> np.ndarray:
         """``values`` at ``-k`` (leading axes ``(nk, nk)``); needs a grid closed under ``k -> -k``."""
-        IX, IY, valid = self.minus_k_index()
+        IX, IY, valid = self.pair_index()
         if not np.all(valid):
             raise ValueError("This mesh is not closed under k -> -k; use gamma=False.")
         return np.asarray(values)[IX, IY]

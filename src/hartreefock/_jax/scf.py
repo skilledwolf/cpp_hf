@@ -24,7 +24,6 @@ import jax.numpy as jnp
 from ..config import RDIIS, SolveResult
 from .fock import fock_builder, free_energy, hf_energy
 from .linalg import adjoint, bmm, eigh, hermitian_eigvalsh
-from .utils import hermitize as _herm
 from .utils import (
     chemical_potential,
     device_args,
@@ -32,7 +31,7 @@ from .utils import (
     validate_electron_count,
     validate_temperature,
 )
-
+from .utils import hermitize as _herm
 
 
 def _weighted_matrix_norm(matrix, weights, weight_sum):
