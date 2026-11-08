@@ -65,12 +65,9 @@ addopts = "--import-mode=importlib"
 pythonpath = ["tests"]
 
 # ---------------------------------------------------------------------------
-# cibuildwheel: cross-platform wheel provisioning.  Restored after fb81931
-# ("reorganize native extension package") dropped this block — manylinux ships
-# no FFTW, so before-all builds it from source into .cache/fftw-3.3.10-<arch>,
-# the environment block points CMake's pkg-config finder at it, and repair
-# bundles the shared lib into the wheel.  wheels.yml and ci/*.sh are unchanged
-# from the last good release (v1.0.3).
+# cibuildwheel: manylinux ships no FFTW, so before-all builds it from source
+# into .cache/fftw-3.3.10-<arch>, the environment block points CMake's
+# pkg-config finder at it, and repair bundles the shared lib into the wheel.
 # ---------------------------------------------------------------------------
 [tool.cibuildwheel]
 build = "cp311-* cp312-* cp313-*"

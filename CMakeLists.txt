@@ -8,15 +8,10 @@ project(hartreefock_ffi LANGUAGES CXX)
 option(HF_USE_OPENMP       "Enable OpenMP parallelization"   ON)
 option(HF_USE_FFTW_THREADS "Link FFTW threads and call init" ON)
 option(HF_USE_ACCELERATE   "Route Eigen dense products to Apple Accelerate (AMX) on macOS" ON)
-# A source build tunes Eigen's kernels to the build machine (-march=native);
-# on an AVX-512 box that is ~6x faster complex gemm than the SSE2 baseline.
-# Wheels (cibuildwheel sets CIBUILDWHEEL) stay portable.
-if(DEFINED ENV{CIBUILDWHEEL})
-    set(_hf_native_arch_default OFF)
-else()
-    set(_hf_native_arch_default ON)
-endif()
-option(HF_NATIVE_ARCH "Compile for the build machine's CPU (-march=native)" ${_hf_native_arch_default})
+# Opt-in: tune Eigen's kernels to the build machine (-march=native), ~6x faster
+# complex gemm on AVX-512 than the SSE2 baseline, but the binary may then fail
+# with SIGILL on an older CPU (mixed cluster nodes).
+option(HF_NATIVE_ARCH "Compile for the build machine's CPU (-march=native)" OFF)
 
 # -----------------------------
 # C++ standard
@@ -55,7 +50,7 @@ if(NOT Eigen3_FOUND)
 endif()
 
 # -----------------------------
-# FFTW (single + double; we use single)
+# FFTW (double precision)
 # -----------------------------
 find_package(PkgConfig QUIET)
 

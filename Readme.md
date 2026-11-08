@@ -26,11 +26,15 @@ brew install fftw eigen
 # Linux
 sudo apt install libfftw3-dev libeigen3-dev
 
-pip install "contimod[native]"   # or: pip install -e .  in this checkout
+pip install scikit-build-core pybind11 setuptools_scm
+pip install --no-build-isolation -e .   # in this checkout, next to contimod
 ```
 
-The wheel is built against the installed jaxlib's FFI headers and requires
-exactly that jaxlib (`ci/jaxlib_pin.py` writes the pin into its metadata);
+`--no-build-isolation` builds against the installed jaxlib's FFI headers; the
+wheel requires exactly that jaxlib (an isolated build would pull the newest
+one). Builds are portable; `-C cmake.define.HF_NATIVE_ARCH=ON` compiles for
+this CPU (`-march=native`). `contimod.hf.native_kernels()` lists the kernels
+in use. `ci/jaxlib_pin.py` writes the pin into the metadata;
 `python ci/smoke_test.py` checks that the four targets register and that
 jaxlib matches the build.
 
