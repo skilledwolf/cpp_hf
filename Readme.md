@@ -29,7 +29,8 @@ sudo apt install libfftw3-dev libeigen3-dev
 pip install "contimod[native]"   # or: pip install -e .  in this checkout
 ```
 
-The wheel is built against the installed jaxlib's FFI headers;
+The wheel is built against the installed jaxlib's FFI headers and requires
+exactly that jaxlib (`ci/jaxlib_pin.py` writes the pin into its metadata);
 `python ci/smoke_test.py` checks that the four targets register and that
 jaxlib matches the build.
 
