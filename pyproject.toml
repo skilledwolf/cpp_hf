@@ -92,10 +92,9 @@ repair-wheel-command = """
 delocate-wheel -L hartreefock_ffi/.dylibs --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
 """
 
-# Teach CMake/pkg-config where the cached FFTW (and vendored Boost headers) live.
+# Teach CMake/pkg-config where the cached FFTW lives.
 [tool.cibuildwheel.linux.environment]
 PKG_CONFIG_PATH   = "/project/.cache/fftw-3.3.10-x86_64/lib/pkgconfig:/project/.cache/fftw-3.3.10-aarch64/lib/pkgconfig:$PKG_CONFIG_PATH"
 CMAKE_PREFIX_PATH = "/project/.cache/fftw-3.3.10-x86_64:/project/.cache/fftw-3.3.10-aarch64:$CMAKE_PREFIX_PATH"
 LIBRARY_PATH      = "/project/.cache/fftw-3.3.10-x86_64/lib:/project/.cache/fftw-3.3.10-aarch64/lib:$LIBRARY_PATH"
 CPATH             = "/project/.cache/fftw-3.3.10-x86_64/include:/project/.cache/fftw-3.3.10-aarch64/include:$CPATH"
-BOOST_INCLUDEDIR  = "/project/.cache/boost-1.89.0/include"

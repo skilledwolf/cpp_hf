@@ -1,40 +1,9 @@
 #!/usr/bin/env bash
-# Build & cache FFTW (shared + threads) and vendor Boost headers for manylinux.
+# Build & cache FFTW (shared + threads) for manylinux.
 set -euxo pipefail
 
 REPO_ROOT="${REPO_ROOT:-/project}"
 ARCH="$(uname -m)"
-
-# ------------------ Boost (headers only) ------------------
-BOOST_VERSION=1.89.0
-BOOST_U=1_89_0
-BOOST_TARBALL="https://archives.boost.io/release/${BOOST_VERSION}/source/boost_${BOOST_U}.tar.bz2"
-BOOST_SHA256="85a33fa22621b4f314f8e85e1a5e2a9363d22e4f4992925d4bb3bc631b5a0c7a"
-BOOST_PREFIX="${REPO_ROOT}/.cache/boost-${BOOST_VERSION}"
-
-if [ ! -f "${BOOST_PREFIX}/include/boost/math/tools/toms748_solve.hpp" ]; then
-  rm -rf "${BOOST_PREFIX}"
-  mkdir -p "${BOOST_PREFIX}/include"
-  workdir="$(mktemp -d)"; trap 'rm -rf "$workdir"' EXIT
-  cd "$workdir"
-  curl -L -o "boost_${BOOST_U}.tar.bz2" "${BOOST_TARBALL}"
-  if command -v sha256sum >/dev/null 2>&1; then
-    echo "${BOOST_SHA256}  boost_${BOOST_U}.tar.bz2" | sha256sum -c
-  else
-    echo "${BOOST_SHA256}  boost_${BOOST_U}.tar.bz2" | shasum -a 256 -c
-  fi
-  # Extract only headers (keep it light)
-  tar -xf "boost_${BOOST_U}.tar.bz2" \
-      -C "${BOOST_PREFIX}/include" \
-      --strip-components=1 \
-      "boost_${BOOST_U}/boost"
-fi
-
-export BOOST_ROOT="${BOOST_PREFIX}"
-export BOOST_INCLUDEDIR="${BOOST_PREFIX}/include"
-# Keep CPATH to help local dev shells; cibuildwheel sets BOOST_INCLUDEDIR explicitly.
-export CPATH="${BOOST_PREFIX}/include:${CPATH:-}"
-test -f "${BOOST_PREFIX}/include/boost/math/tools/toms748_solve.hpp"
 
 # ---------------------- FFTW 3.3.10 -----------------------
 FFTW_VERSION=3.3.10
@@ -79,6 +48,5 @@ export LIBRARY_PATH="${PREFIX}/lib:${PREFIX}/lib64:${LIBRARY_PATH:-}"
 export CPATH="${PREFIX}/include:${CPATH:-}"
 
 # Diagnostics (optional)
-echo "Using BOOST_INCLUDEDIR=${BOOST_INCLUDEDIR}"
 echo "Using PKG_CONFIG_PATH=${PKG_CONFIG_PATH}"
 echo "Using CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}"
